@@ -12,7 +12,7 @@ export default function MobileHeader() {
   return (
     <div className="nc-header-bg sticky top-0 z-40 border-b border-neutral-200 lg:hidden dark:border-neutral-700">
       <div className="flex h-16 items-center justify-between gap-2 px-4">
-        <Logo className="w-24" />
+        <Logo markClassName="size-8" />
         <div className="flex items-center gap-2">
           <ActiveSessionPill />
           <HamburgerBtnMenu />

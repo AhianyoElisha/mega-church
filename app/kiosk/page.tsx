@@ -26,6 +26,7 @@ import {
   ArrowsPointingOutIcon,
   FingerPrintIcon,
 } from '@heroicons/react/24/outline'
+import Logo from '@/shared/Logo'
 import { useAuth } from '@/components/auth'
 import { useDialog } from '@/components/dialog'
 import { BRIDGE_URL, bridgeScan } from '@/lib/queries/biometrics'
@@ -487,8 +488,13 @@ export default function KioskPage() {
     <div className="flex min-h-screen flex-col bg-neutral-950 text-white">
       {/* Chrome */}
       <header className="flex items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
-        <div className="rounded-full bg-primary-500 px-4 py-1.5 text-sm font-bold text-neutral-950">
-          {user.station ?? 'Check-in'}
+        <div className="flex items-center gap-3">
+          {/* Points at /kiosk, not / — a kiosk account is redirected away from
+              the app root, so a home link here would be a dead end. */}
+          <Logo href="/kiosk" markOnly markClassName="size-8" />
+          <div className="rounded-full bg-primary-500 px-4 py-1.5 text-sm font-bold text-neutral-950">
+            {user.station ?? 'Check-in'}
+          </div>
         </div>
         <div className="font-mono text-base text-white/60 tabular-nums">{wallClock}</div>
         <div className="flex items-center gap-2">
@@ -734,8 +740,8 @@ function ResultCard({
   }[tone]
   const [border, bg, text] = styles.split(' ')
   return (
-    <div className={`w-full max-w-2xl rounded-3xl border-4 p-8 text-center ${border} ${bg}`}>
-      <p className={`mb-4 text-2xl font-bold tracking-wide uppercase ${text}`}>{label}</p>
+    <div className={`w-full max-w-md rounded-2xl border-2 p-6 text-center shadow-lg ${border} ${bg}`}>
+      <p className={`mb-3 text-base font-bold tracking-wide uppercase ${text}`}>{label}</p>
       {children}
     </div>
   )
@@ -756,14 +762,16 @@ function MemberBlock({
         <img
           src={photo}
           alt={name}
-          className="mx-auto mb-5 size-40 rounded-2xl border-4 border-white/15 object-cover"
+          // The photo, not the name, is what an usher actually checks a face
+          // against — so it gets the space. See the note on `kiosk-name`.
+          className="mx-auto mb-4 size-48 rounded-2xl border-2 border-white/15 object-cover"
         />
       ) : (
-        <div className="mx-auto mb-5 flex size-40 items-center justify-center rounded-2xl border-4 border-dashed border-white/15 text-sm text-white/40">
+        <div className="mx-auto mb-4 flex size-48 items-center justify-center rounded-2xl border-2 border-dashed border-white/15 text-sm text-white/40">
           No photo
         </div>
       )}
-      {/* PRD §2.4 — the member's name is never below 48pt. */}
+      {/* Sized in styles/tailwind.css — see the note on `kiosk-name`. */}
       <p className="kiosk-name text-white">{name}</p>
     </>
   )
@@ -773,7 +781,7 @@ function ResultPanel({ result, onNext }: { result: ScanResult; onNext: () => voi
   const next = (
     <button
       onClick={onNext}
-      className="mt-6 cursor-pointer rounded-xl border border-white/20 px-8 py-3 text-base text-white"
+      className="mt-5 cursor-pointer rounded-xl border border-white/20 px-6 py-2.5 text-sm text-white"
     >
       Next person
     </button>
@@ -785,7 +793,7 @@ function ResultPanel({ result, onNext }: { result: ScanResult; onNext: () => voi
         <ResultCard tone="success" label="✓ Marked present">
           <MemberBlock photoFileId={result.member.photo_file_id} name={result.member.full_name} />
           {result.sequence > 0 && (
-            <p className="mt-4 text-lg text-white/60">
+            <p className="mt-3 text-sm text-white/60">
               Number {result.sequence} in today&apos;s session
             </p>
           )}
@@ -800,7 +808,7 @@ function ResultPanel({ result, onNext }: { result: ScanResult; onNext: () => voi
       <div className="flex w-full max-w-2xl flex-col items-center">
         <ResultCard tone="warning" label="✓ Already marked present">
           <MemberBlock photoFileId={result.member.photo_file_id} name={result.member.full_name} />
-          <p className="mt-4 text-lg text-white/70">
+          <p className="mt-3 text-sm text-white/70">
             Your attendance was already recorded — nothing new was saved.
           </p>
         </ResultCard>
@@ -817,12 +825,12 @@ function ResultPanel({ result, onNext }: { result: ScanResult; onNext: () => voi
       <div className="flex w-full max-w-2xl flex-col items-center">
         <ResultCard tone="error" label="✕ Not on this meeting's list">
           <MemberBlock photoFileId={result.member.photo_file_id} name={result.member.full_name} />
-          <p className="mt-4 text-xl leading-snug text-white/90">
+          <p className="mt-3 text-base leading-snug text-white/90">
             You are not authorised to attend{' '}
             <strong className="text-white">{result.meeting_name}</strong>, so your attendance
             cannot be marked for it.
           </p>
-          <p className="mt-3 text-base text-white/60">
+          <p className="mt-2 text-sm text-white/60">
             Speak to an administrator if you think this is wrong.
           </p>
         </ResultCard>
@@ -836,7 +844,7 @@ function ResultPanel({ result, onNext }: { result: ScanResult; onNext: () => voi
       <div className="flex w-full max-w-2xl flex-col items-center">
         <ResultCard tone="error" label="✕ Membership inactive">
           <MemberBlock photoFileId={result.member.photo_file_id} name={result.member.full_name} />
-          <p className="mt-4 text-lg text-white/80">
+          <p className="mt-3 text-sm text-white/80">
             This membership is marked inactive. Please see an administrator.
           </p>
         </ResultCard>
@@ -848,14 +856,14 @@ function ResultPanel({ result, onNext }: { result: ScanResult; onNext: () => voi
   return (
     <div className="flex w-full max-w-2xl flex-col items-center">
       <ResultCard tone="error" label="✕ Fingerprint not recognised">
-        <p className="text-xl leading-snug text-white/85">
+        <p className="text-base leading-snug text-white/85">
           Try again, pressing firmly and covering the whole sensor. If it still does not work, use
           manual check-in.
         </p>
       </ResultCard>
       <button
         onClick={onNext}
-        className="mt-6 cursor-pointer rounded-xl border border-white/20 px-8 py-3 text-base text-white"
+        className="mt-5 cursor-pointer rounded-xl border border-white/20 px-6 py-2.5 text-sm text-white"
       >
         Try again
       </button>
@@ -877,7 +885,7 @@ function ConfirmPanel({
   if (result.kind !== 'marked') return null
   return (
     <div className="w-full max-w-2xl rounded-3xl border border-white/15 bg-white/5 p-8 text-center">
-      <p className="mb-5 text-lg font-semibold tracking-wide text-primary-400 uppercase">
+      <p className="mb-4 text-sm font-semibold tracking-wide text-primary-400 uppercase">
         Confirm identity
       </p>
       <MemberBlock photoFileId={result.member.photo_file_id} name={result.member.full_name} />
@@ -904,7 +912,8 @@ function ConfirmPanel({
   )
 }
 
-type MemberHit = { $id: string; first_name: string; last_name: string; other_names: string | null }
+/** Exactly what /api/members/search returns — deliberately minimal. */
+type MemberHit = { $id: string; full_name: string }
 
 function ManualPanel({
   query,
@@ -937,11 +946,16 @@ function ManualPanel({
     setSearching(true)
     const id = window.setTimeout(async () => {
       try {
-        const res = await fetch(`/api/members?search=${encodeURIComponent(q)}&status=active`, {
+        // /api/members/search, NOT /api/members — a kiosk account is forbidden
+        // from the registry (403), which silently emptied this list and left
+        // manual check-in unusable on the one device that needs it when a
+        // finger will not read. The search endpoint returns an id and a name
+        // and nothing else.
+        const res = await fetch(`/api/members/search?q=${encodeURIComponent(q)}`, {
           cache: 'no-store',
         })
         const data = (await res.json()) as { ok: boolean; members?: MemberHit[] }
-        if (!cancelled) setHits(data.ok ? (data.members ?? []).slice(0, 8) : [])
+        if (!cancelled) setHits(data.ok ? (data.members ?? []) : [])
       } catch {
         if (!cancelled) setHits([])
       } finally {
@@ -992,7 +1006,7 @@ function ManualPanel({
                     disabled={pending}
                     className="w-full cursor-pointer rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-lg hover:bg-white/10 disabled:opacity-50"
                   >
-                    {[m.first_name, m.other_names, m.last_name].filter(Boolean).join(' ')}
+                    {m.full_name}
                   </button>
                 </li>
               ))}

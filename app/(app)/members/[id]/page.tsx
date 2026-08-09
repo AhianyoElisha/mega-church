@@ -192,7 +192,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                   {(history.data?.ok ? history.data.history : []).slice(0, 12).map((h) => (
                     <li
                       key={h.occurrence.$id}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-700"
+                      className="flex items-center justify-between gap-3 rounded-xl bg-neutral-50 px-3 py-2.5 text-sm dark:bg-neutral-700/40"
                     >
                       <span className="min-w-0 truncate text-neutral-800 dark:text-neutral-200">
                         {h.meeting_name}

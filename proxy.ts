@@ -100,9 +100,21 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // `nbis` is the WebAssembly matcher the tablet kiosk fetches at runtime. It
-  // is static, carries no user data, and is loaded by a dynamic import that
-  // does not send credentials — routing it through auth turns a 200 into a 307
-  // to /login and the tablet silently loses fingerprint capture.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|assets|fonts|nbis).*)'],
+  /**
+   * Everything listed here is static, carries no user data, and must be
+   * reachable WITHOUT a session. Gating any of it does not fail loudly — it
+   * turns a 200 into a 307 to /login, and the asset just silently does not
+   * appear.
+   *
+   *   nbis          the WebAssembly matcher a tablet kiosk fetches at runtime,
+   *                 via a dynamic import that sends no credentials. Gate it and
+   *                 the tablet quietly loses fingerprint capture.
+   *   logo / icon   the brand mark. The login page is by definition
+   *                 unauthenticated, so a gated logo is broken exactly where
+   *                 it is most visible. Same for the favicon and the iOS
+   *                 home-screen icon, which browsers fetch out-of-band.
+   */
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|logo.png|logo@2x.png|assets|fonts|nbis).*)',
+  ],
 }

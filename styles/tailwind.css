@@ -166,15 +166,26 @@
  * These are the only styles in the app that are not PickLT's.
  */
 @utility kiosk-name {
-  /* PRD §2.4 — the member's name is never smaller than 48pt. */
-  font-size: clamp(48px, 7vw, 96px);
-  line-height: 1.05;
+  /* Sized for the distance this is actually read from.
+   *
+   * This started at clamp(48px, 7vw, 96px), inherited from SEMP, where the
+   * kiosk faced a queue in an exam hall and the name had to carry across a
+   * room. A church kiosk sits on a counter and the reader is at arm's length,
+   * where that was shouting — it overflowed the card and pushed the rest of
+   * the result off the fold. Set against the real hardware, not from theory.
+   *
+   * At this size the PHOTO is doing the identifying and the name confirms it,
+   * which is the right division of labour for someone standing right at the
+   * machine. If a kiosk is ever mounted where people read it from a distance,
+   * raise the clamp. */
+  font-size: clamp(15px, 1.6vw, 22px);
+  line-height: 1.15;
   font-weight: 700;
 }
 
 @utility kiosk-headline {
-  font-size: clamp(28px, 4vw, 44px);
-  line-height: 1.1;
+  font-size: clamp(22px, 2.6vw, 34px);
+  line-height: 1.15;
   font-weight: 700;
 }
 

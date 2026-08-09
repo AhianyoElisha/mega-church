@@ -184,9 +184,17 @@ async function main() {
     console.log('    vendor driver by hand once (install.cmd prints the link).')
   }
 
-  // --- 4. installer --------------------------------------------------------
+  // --- 4. installer + acceptance check -------------------------------------
   cpSync(path.join(NATIVE, 'pack-install.cmd'), path.join(OUT, 'install.cmd'))
   console.log('  ✓ install.cmd')
+
+  // Ships WITH the pack, not just in the repo. On a multi-machine rollout the
+  // person standing at kiosk #5 has no checkout to run this from, and "is it
+  // running?" is not the question that matters — "did the MACHINE start it, or
+  // did I?" is, because only the second one survives a reboot with nobody
+  // logged in.
+  cpSync(path.join(NATIVE, 'check-service.ps1'), path.join(OUT, 'check-install.ps1'))
+  console.log('  ✓ check-install.ps1')
 
   // --- 5. manifest ---------------------------------------------------------
   const files: string[] = []

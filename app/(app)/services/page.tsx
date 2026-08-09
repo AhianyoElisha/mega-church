@@ -94,7 +94,7 @@ export default function ServicesPage() {
 
       {/* The open session, if any. */}
       {session ? (
-        <Card className="mb-8 border-primary-500! bg-primary-50! dark:bg-primary-900/20!">
+        <Card className="mb-8 bg-primary-50! ring-2 ring-primary-500! dark:bg-primary-900/20!">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="mb-1 flex items-center gap-2">
@@ -154,7 +154,7 @@ export default function ServicesPage() {
             const isOpen = session?.meeting.$id === m.$id
             const disabled = !!session
             return (
-              <Card key={m.$id} className={isOpen ? 'border-primary-500!' : undefined}>
+              <Card key={m.$id} className={isOpen ? 'ring-2 ring-primary-500!' : undefined}>
                 <div className="flex h-full flex-col">
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div>
@@ -233,7 +233,7 @@ export default function ServicesPage() {
             const isOpen = session?.meeting.$id === m.$id
             const disabled = !!session
             return (
-              <Card key={m.$id} className={isOpen ? 'border-primary-500!' : undefined}>
+              <Card key={m.$id} className={isOpen ? 'ring-2 ring-primary-500!' : undefined}>
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <h3 className="font-semibold text-neutral-950 dark:text-white">{m.name}</h3>
                   {isOpen && <Badge color="green">Open</Badge>}

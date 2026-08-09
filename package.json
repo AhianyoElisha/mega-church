@@ -19,7 +19,8 @@
     "verify:appwrite": "tsx --conditions=react-server scripts/verify-setup.ts",
     "e2e": "node scripts/e2e-smoke.mjs",
     "seed:users": "tsx scripts/seed-users.ts",
-    "build:kiosk-pack": "tsx scripts/build-kiosk-pack.ts"
+    "build:kiosk-pack": "tsx scripts/build-kiosk-pack.ts",
+    "build:brand": "tsx scripts/build-brand-assets.ts"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.2",
@@ -36,7 +37,8 @@
     "next": "16.2.4",
     "node-appwrite": "^24.0.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
