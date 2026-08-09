@@ -33,6 +33,26 @@ const env = Object.fromEntries(
     .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
 )
 
+/**
+ * This suite is destructive-adjacent: it registers members, and it OPENS AND
+ * CLOSES a real First Service occurrence. Run against a project in use, that
+ * puts phantom sessions in the congregation's history and can collide with a
+ * service actually being taken — which happened on 2026-08-09, while real
+ * members were being registered in another tab.
+ *
+ * So it now refuses by default. Set E2E_ALLOW_LIVE=1 when you genuinely mean
+ * to run it, ideally against a scratch project.
+ */
+if (process.env.E2E_ALLOW_LIVE !== '1') {
+  console.error(
+    '\n  Refusing to run.\n\n' +
+      '  This writes to the live project and opens/closes a real First Service\n' +
+      '  session. On a project in use that leaves phantom sessions in the history.\n\n' +
+      '  If you mean it:  E2E_ALLOW_LIVE=1 npm run e2e\n',
+  )
+  process.exit(1)
+}
+
 let cookie = ''
 let failures = 0
 const ok = (m) => console.log(`  ✓ ${m}`)
@@ -318,6 +338,18 @@ async function main() {
     usherActivate.status === 403
       ? ok('usher cannot activate a session (403)')
       : bad(`usher activate gave ${usherActivate.status}`)
+    // An usher and an admin must both be able to SCAN, not just mark
+    // manually. The scan route was kiosk-only, which meant an admin running
+    // the kiosk page from their own laptop got 403 on every press while the
+    // scanner sat there working perfectly.
+    const usherScan = await api('/api/attendance/scan', {
+      method: 'POST',
+      body: JSON.stringify({ fingerprint_data: `sim:${memberId}` }),
+    })
+    usherScan.status === 200
+      ? ok('usher can scan (403 here means the role gate drifted from manual)')
+      : bad(`usher scan gave ${usherScan.status} — scan and manual roles have drifted`)
+
     const usherRead = await api('/api/members')
     usherRead.status === 200 ? ok('usher can read the registry') : bad('usher cannot read members')
   } else {

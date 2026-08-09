@@ -53,7 +53,7 @@ A *meeting* is a recurring **definition**, not an occurrence.
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | string(96) | "First Service (Sun Chapel)", "Youth Committee" |
+| `name` | string(96) | "First Service (Psalms Chapel)", "Youth Committee" |
 | `description` | string(512) | |
 | `kind` | enum | `service` \| `meeting` |
 | `service_slot` | enum \| null | `first` \| `second`, only when `kind = service` |
@@ -63,7 +63,7 @@ A *meeting* is a recurring **definition**, not an occurrence.
 
 Two `service` rows are seeded and are **not deletable**:
 
-- `first-service` — *First Service (Sun Chapel)*, `restricted = false`
+- `first-service` — *First Service (Psalms Chapel)*, `restricted = false`
 - `second-service` — *Second Service*, `restricted = false`
 
 Every other row is admin-created, `kind = meeting`, `restricted = true`.

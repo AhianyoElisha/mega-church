@@ -76,7 +76,7 @@ export const SERVICE_DEFINITIONS = [
   {
     id: SERVICE_IDS.first,
     name: 'First Service',
-    alias: 'Sun Chapel',
+    alias: 'Psalms Chapel',
     description: 'The early service, attended mostly by students.',
     service_slot: 'first' as const,
     sort_order: 1,

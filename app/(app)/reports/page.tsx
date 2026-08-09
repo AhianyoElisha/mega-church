@@ -7,6 +7,7 @@ import { Badge } from '@/shared/Badge'
 import Select from '@/shared/Select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/table'
 import { Card, EmptyState, LoadingRow, PageHeader, PageWrap, StatCard } from '@/components/ui'
+import DayExport from '@/components/day-export'
 import { useMeetings } from '@/lib/queries/meetings'
 import { useOccurrences } from '@/lib/queries/occurrences'
 
@@ -30,6 +31,12 @@ export default function ReportsPage() {
         title="Reports"
         subtitle="Every session ever held, and the register behind it."
       />
+
+      <DayExport />
+
+      <h2 className="mt-10 mb-3 text-sm font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+        Session history
+      </h2>
 
       <Card className="mb-6" padded={false}>
         <div className="p-4">

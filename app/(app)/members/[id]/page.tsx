@@ -140,7 +140,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
               <DescriptionTerm>Usual service</DescriptionTerm>
               <DescriptionDetails>
-                {member.home_service === 'first' ? 'First Service (Sun Chapel)' : 'Second Service'}
+                {member.home_service === 'first' ? 'First Service (Psalms Chapel)' : 'Second Service'}
               </DescriptionDetails>
             </DescriptionList>
             <p className="mt-4 text-xs text-neutral-400 dark:text-neutral-500">
