@@ -189,7 +189,7 @@ export default function MemberForm({
                 value={homeService}
                 onChange={(e) => setHomeService(e.target.value as 'first' | 'second')}
               >
-                <option value="first">First Service (Sun Chapel)</option>
+                <option value="first">First Service (Psalms Chapel)</option>
                 <option value="second">Second Service</option>
               </Select>
               <Description>
