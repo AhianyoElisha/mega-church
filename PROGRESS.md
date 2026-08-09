@@ -53,20 +53,58 @@ One schema bug was found and fixed doing this: Appwrite rejects an attribute
 that is both `required` and defaulted. Seven attributes had both. The helpers
 now throw on that combination before the API is called.
 
+## Accounts
+
+`npm run seed:users` created three, one per role, with generated passwords in
+`.env.local` (gitignored). Re-running reports "exists — password left
+unchanged", so it will never silently reset a password someone has changed.
+
+| Role | Email | |
+|---|---|---|
+| admin | `admin@megachurch.local` | everything |
+| usher | `usher@megachurch.local` | live monitor, manual check-in, member lookup |
+| kiosk | `kiosk@megachurch.local` | `/kiosk` only; `station = "Main entrance"` |
+
+The domain is a placeholder. Nothing depends on it — there is no
+forgot-password flow — but change it when the church has a real domain.
+
+## End-to-end, against the live project
+
+`npm run e2e` (needs `npm run dev` running) drives the real HTTP API against
+Cloud. 38 checks, all passing, verified twice:
+
+- wrong password → 401; each role signs in with the right label
+- `024…` normalised to `+233…`; WhatsApp kept independent; 29 February accepted
+- bad phone and missing call number rejected **server-side**
+- roster persists and reads back ticked; a roster on a service is refused
+- First Service open ⇒ Second Service **409**, and a *meeting* is blocked too —
+  proving the rule is global, not "the two services are exclusive"
+- mark → `marked`; mark again → `already_marked` with no second row
+- unauthorised member comes back **`not_authorised` with their name and the
+  meeting's name**, not `no_match`
+- an inactive member is refused even while on the roster
+- usher cannot create members or activate a session (403); kiosk cannot read
+  the registry (403); anonymous callers get 401
+- kiosk scan path resolves a `sim:` payload end to end
+
+It writes real data and cascades it away afterwards; `npm run verify:appwrite`
+confirms the project is left at 0 members with no session open.
+
+**Do not run `npm run e2e` during a service** — it opens and closes a real
+session on First Service.
+
 ## Not yet done
 
-These need people and hardware, not more code:
+Needs people and hardware, not more code:
 
-1. **`npm run seed:users`** — needs the `SEED_*` email/password pairs filled in
-   in `.env.local`. Nothing can be signed into until this runs.
-2. **End-to-end enrolment on hardware** — capture twelve real prints for one
+1. **End-to-end enrolment on hardware** — capture twelve real prints for one
    member and check them in at the kiosk. The pipeline is the one proven in
    SEMP, but it has not been run on a member of this congregation.
-3. **Publish the kiosk pack.** `npm run build:kiosk-pack` works — it produced a
+2. **Publish the kiosk pack.** `npm run build:kiosk-pack` works — it produced a
    4.2 MB zip, and the bundled bridge inside it was run standalone and reported
    `{"ok":true,"device":true,"scanBin":true,"nbis":true}` against the real
-   scanner. Publishing it needs the Appwrite bucket to exist, so run it after
-   step 1.
-4. **Threshold calibration.** 33 is evidence-backed on a small corpus
+   scanner. The `kiosk-downloads` bucket now exists, so the `--no-upload` flag
+   can come off whenever you want it published.
+3. **Threshold calibration.** 33 is evidence-backed on a small corpus
    (`lib/biometrics/matching.ts`). Widen the corpus before trusting it against
    a large congregation — false-accept probability grows with gallery size.
