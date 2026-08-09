@@ -27,8 +27,8 @@ When a question is about *how something looks*, the answer is in PickLT.
 - **UI kit:** `shared/` is PickLT's Catalyst-style library, copied with its
   APIs intact. `@headlessui/react`, `@heroicons/react`, `@hugeicons/react`,
   `clsx`, `framer-motion`.
-- **Backend:** Appwrite, **self-hosted**. Databases, Auth (email/password +
-  User Labels), Storage, Realtime. Never Appwrite Cloud.
+- **Backend:** Appwrite **Cloud**, `fra` region, project `mega-church`.
+  Databases, Auth (email/password + User Labels), Storage, Realtime.
 - **SDKs:** `node-appwrite` (server) in Route Handlers and scripts;
   `appwrite` (client) in browser components for Realtime.
 - **Data layer:** TanStack Query hooks in `lib/queries/*`.
@@ -52,7 +52,10 @@ large type; body text is black. Never yellow text on white below 18pt.
 
 ## Rules
 
-- **Do not use Appwrite Cloud.** Every endpoint targets the self-hosted URL.
+- **This project runs on Appwrite Cloud.** Its sibling SEMP is self-hosted-only
+  for KNUST/Oracle reasons; that constraint was carried over here by mistake in
+  the first draft and does not apply. If a comment or doc still says
+  "self-hosted only", it is stale — fix it.
 - **Read `PRD.md` before writing code.** Collection names, attribute shapes,
   the session lifecycle, and each module's success criteria are defined there.
 - **Read `node_modules/next/dist/docs/` before writing Next.js code.**
@@ -90,7 +93,18 @@ large type; body text is black. Never yellow text on white below 18pt.
   `biometric_templates`, `meeting_members` and `attendance_records` first.
 - **Idempotent setup:** `scripts/setup-appwrite.ts` is the single source of
   truth for schema and must be safe to re-run. New attributes go there, not
-  into the console by hand.
+  into the console by hand. `npm run verify:appwrite` reads the live project
+  back through the app's own code and checks the things that break attendance
+  quietly — run it after any schema change.
+- **An attribute is never both `required` and defaulted.** Appwrite rejects it
+  (`attribute_default_unsupported`), and the helpers in the setup script now
+  throw before the API can. Every writer supplies these values explicitly;
+  `meetings.restricted` in particular must never acquire a default, because a
+  defaulted `false` silently opens a private meeting to everyone.
+- **A `tsx` script that imports any `lib/**/server.ts` needs
+  `--conditions=react-server`,** or `server-only` throws
+  "cannot be imported from a Client Component". `setup:appwrite` avoids it by
+  importing nothing that pulls `server-only`; `verify:appwrite` passes the flag.
 - **`listDocuments(...).total` is capped server-side** by
   `_APP_DATABASE_COUNT_LIMIT` on the Appwrite container. Code that needs an
   accurate total above the cap must paginate. "Are there any?" (≥1) checks may

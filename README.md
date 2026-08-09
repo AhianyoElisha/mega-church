@@ -24,14 +24,18 @@ SEMP. When it is about **how something looks**, it traces back to PickLT.
 
 ```bash
 npm install
-cp .env.local.example .env.local      # fill in your self-hosted Appwrite
+cp .env.local.example .env.local      # fill in endpoint, project id, API key
 npm run setup:appwrite                # idempotent; safe to re-run
 npm run seed:users                    # creates admin / usher / kiosk accounts
 npm run dev
 ```
 
-Appwrite must be **self-hosted**. The setup script refuses to run against
-`cloud.appwrite.io`.
+The backend is **Appwrite Cloud** (`fra` region), project `mega-church`. A
+self-hosted instance works identically — only the endpoint changes.
+
+`APPWRITE_API_KEY` is a project API key, not your CLI login. Create one in the
+console under **Overview → Integrations → API keys**, or with
+`appwrite project create-key` (the scopes are listed in `.env.local.example`).
 
 ## The two rules worth knowing before you change anything
 

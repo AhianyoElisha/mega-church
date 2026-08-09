@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "bridge": "tsx tools/fingerprint-bridge/bridge.ts",
     "setup:appwrite": "tsx scripts/setup-appwrite.ts",
+    "verify:appwrite": "tsx --conditions=react-server scripts/verify-setup.ts",
     "seed:users": "tsx scripts/seed-users.ts",
     "build:kiosk-pack": "tsx scripts/build-kiosk-pack.ts"
   },

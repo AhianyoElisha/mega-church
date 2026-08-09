@@ -34,13 +34,31 @@ See `.agent/plans/1.foundation.md` for the phase breakdown.
   healthy, and `/api/biometrics/matcher-health` confirms the server matches
   in-process via the NBIS WebAssembly artifact.
 
+## Live backend
+
+Appwrite **Cloud**, `fra` region, project `mega-church`, server version 1.9.6.
+(An early draft of `CLAUDE.md` said "self-hosted only" — that is SEMP's
+constraint, carried over here by mistake and since removed.)
+
+Applied 2026-08-09 with `npm run setup:appwrite`:
+
+- 6 collections, 46 attributes, 19 indexes, 2 buckets, both services seeded.
+- A second run reports `created 0` across the board — idempotency confirmed,
+  not assumed.
+- `npm run verify:appwrite` passes every check: no attribute stuck
+  `processing`, both services `restricted: false`, both unique indexes present
+  and actually unique, both buckets reachable, and the biometric gallery loads.
+
+One schema bug was found and fixed doing this: Appwrite rejects an attribute
+that is both `required` and defaulted. Seven attributes had both. The helpers
+now throw on that combination before the API is called.
+
 ## Not yet done
 
-These need infrastructure that does not exist yet, not more code:
+These need people and hardware, not more code:
 
-1. **Run `npm run setup:appwrite`** against the real self-hosted Appwrite, then
-   `npm run seed:users`. Everything above ran against a stub, so the schema is
-   written but unexercised.
+1. **`npm run seed:users`** — needs the `SEED_*` email/password pairs filled in
+   in `.env.local`. Nothing can be signed into until this runs.
 2. **End-to-end enrolment on hardware** — capture twelve real prints for one
    member and check them in at the kiosk. The pipeline is the one proven in
    SEMP, but it has not been run on a member of this congregation.

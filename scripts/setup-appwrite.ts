@@ -89,6 +89,7 @@ async function ensureStringAttribute(
   required: boolean,
   xdefault?: string,
 ) {
+  rejectDefaultOnRequired(collId, key, required, xdefault)
   try {
     await databases.createStringAttribute(DATABASE_ID, collId, key, size, required, xdefault)
     stats.attributes.created++
@@ -121,12 +122,33 @@ async function ensureStringAttribute(
   stats.attributes.exists++
 }
 
+/**
+ * Appwrite rejects a default value on a required attribute
+ * (`attribute_default_unsupported`) — the two are contradictory: "you must
+ * always supply this" and "here is what to use when you don't".
+ *
+ * Caught here rather than as a 400 halfway through a run, because a partially
+ * applied schema is a confusing thing to debug. If you hit this, decide which
+ * one you meant: drop the default and let the writers supply the value (that
+ * is what every writer in this codebase already does), or make the attribute
+ * optional.
+ */
+function rejectDefaultOnRequired(collId: string, key: string, required: boolean, xdefault: unknown) {
+  if (required && xdefault !== undefined) {
+    throw new Error(
+      `${collId}.${key}: an attribute cannot be both required and have a default. ` +
+        'Drop one.',
+    )
+  }
+}
+
 async function ensureIntegerAttribute(
   collId: string,
   key: string,
   required: boolean,
   opts: { min?: number; max?: number; xdefault?: number } = {},
 ) {
+  rejectDefaultOnRequired(collId, key, required, opts.xdefault)
   try {
     await databases.createIntegerAttribute(
       DATABASE_ID,
@@ -151,6 +173,7 @@ async function ensureBooleanAttribute(
   required: boolean,
   xdefault?: boolean,
 ) {
+  rejectDefaultOnRequired(collId, key, required, xdefault)
   try {
     await databases.createBooleanAttribute(DATABASE_ID, collId, key, required, xdefault)
     stats.attributes.created++
@@ -168,6 +191,7 @@ async function ensureEnumAttribute(
   required: boolean,
   xdefault?: string,
 ) {
+  rejectDefaultOnRequired(collId, key, required, xdefault)
   try {
     await databases.createEnumAttribute(DATABASE_ID, collId, key, elements, required, xdefault)
     stats.attributes.created++
@@ -323,8 +347,10 @@ async function setupMembers() {
   await ensureStringAttribute(COLLECTIONS.members, 'address', 256, false)
   await ensureStringAttribute(COLLECTIONS.members, 'call_number', 32, true)
   await ensureStringAttribute(COLLECTIONS.members, 'whatsapp_number', 32, false)
-  await ensureEnumAttribute(COLLECTIONS.members, 'home_service', ['first', 'second'], true, 'second')
-  await ensureEnumAttribute(COLLECTIONS.members, 'status', ['active', 'inactive'], true, 'active')
+  // No defaults on these: `validateMemberInput` fills both in on create, so a
+  // schema default would only ever mask a writer that forgot to.
+  await ensureEnumAttribute(COLLECTIONS.members, 'home_service', ['first', 'second'], true)
+  await ensureEnumAttribute(COLLECTIONS.members, 'status', ['active', 'inactive'], true)
   await ensureStringAttribute(COLLECTIONS.members, 'created_by', 128, false)
 
   await waitForAttributes(COLLECTIONS.members)
@@ -371,11 +397,14 @@ async function setupMeetings() {
   await ensureCollection(COLLECTIONS.meetings, 'Meetings')
   await ensureStringAttribute(COLLECTIONS.meetings, 'name', 96, true)
   await ensureStringAttribute(COLLECTIONS.meetings, 'description', 512, false)
-  await ensureEnumAttribute(COLLECTIONS.meetings, 'kind', ['service', 'meeting'], true, 'meeting')
+  await ensureEnumAttribute(COLLECTIONS.meetings, 'kind', ['service', 'meeting'], true)
   await ensureEnumAttribute(COLLECTIONS.meetings, 'service_slot', ['first', 'second'], false)
-  await ensureBooleanAttribute(COLLECTIONS.meetings, 'restricted', true, true)
-  await ensureBooleanAttribute(COLLECTIONS.meetings, 'archived', true, false)
-  await ensureIntegerAttribute(COLLECTIONS.meetings, 'sort_order', true, { xdefault: 100 })
+  // `restricted` especially must not have a default. Getting it wrong in
+  // either direction is bad — a defaulted `false` silently opens a committee
+  // meeting to the whole congregation — so every writer states it outright.
+  await ensureBooleanAttribute(COLLECTIONS.meetings, 'restricted', true)
+  await ensureBooleanAttribute(COLLECTIONS.meetings, 'archived', true)
+  await ensureIntegerAttribute(COLLECTIONS.meetings, 'sort_order', true)
   await ensureStringAttribute(COLLECTIONS.meetings, 'created_by', 128, false)
 
   await waitForAttributes(COLLECTIONS.meetings)
@@ -428,9 +457,8 @@ async function setupOccurrences() {
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'closed_at', 32, false)
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'opened_by', 128, false)
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'closed_by', 128, false)
-  await ensureIntegerAttribute(COLLECTIONS.meeting_occurrences, 'present_count', true, {
-    xdefault: 0,
-  })
+  // Written as 0 by activateOccurrence and frozen to the real tally on close.
+  await ensureIntegerAttribute(COLLECTIONS.meeting_occurrences, 'present_count', true)
 
   await waitForAttributes(COLLECTIONS.meeting_occurrences)
   // The hot query: "is anything open?" — asked on every page load and every
@@ -491,13 +519,10 @@ async function main() {
     console.error(`Missing env: ${missing.join(', ')}. Put them in .env.local.`)
     process.exit(1)
   }
-  if (/cloud\.appwrite\.io/i.test(process.env.APPWRITE_ENDPOINT!)) {
-    // CLAUDE.md: self-hosted only. Failing loudly here beats discovering it
-    // after a congregation's data is in the wrong place.
-    console.error('APPWRITE_ENDPOINT points at Appwrite Cloud. This project is self-hosted only.')
-    process.exit(1)
-  }
-
+  // This project runs on Appwrite Cloud. (An earlier draft refused to run
+  // against Cloud — that rule belongs to the sibling SEMP project, which is
+  // self-hosted for institutional reasons, and was carried over here by
+  // mistake.) Both work; the endpoint is simply whatever .env.local says.
   console.log(`Setting up ${DATABASE_ID} at ${process.env.APPWRITE_ENDPOINT}`)
   await ensureDatabase()
   await setupMembers()
