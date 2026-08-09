@@ -68,13 +68,13 @@ describe('rowsForScope', () => {
     }
   })
 
-  it('the combined sheet lists every active member exactly once', () => {
+  it('the all scope is every active member, exactly once', () => {
     const all = rowsForScope(report, 'all')
     expect(all).toHaveLength(report.totals.active)
     expect(new Set(all.map((r) => r.member.$id)).size).toBe(report.totals.active)
   })
 
-  it('every member on the combined sheet carries a call number', () => {
+  it('every member carries a call number', () => {
     // These lists exist to be phoned down; a row without a number is useless.
     for (const r of rowsForScope(report, 'all')) {
       expect(r.member.call_number).toMatch(/^\+?\d+$/)

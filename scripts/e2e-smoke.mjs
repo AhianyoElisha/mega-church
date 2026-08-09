@@ -338,6 +338,18 @@ async function main() {
     usherActivate.status === 403
       ? ok('usher cannot activate a session (403)')
       : bad(`usher activate gave ${usherActivate.status}`)
+    // An usher and an admin must both be able to SCAN, not just mark
+    // manually. The scan route was kiosk-only, which meant an admin running
+    // the kiosk page from their own laptop got 403 on every press while the
+    // scanner sat there working perfectly.
+    const usherScan = await api('/api/attendance/scan', {
+      method: 'POST',
+      body: JSON.stringify({ fingerprint_data: `sim:${memberId}` }),
+    })
+    usherScan.status === 200
+      ? ok('usher can scan (403 here means the role gate drifted from manual)')
+      : bad(`usher scan gave ${usherScan.status} — scan and manual roles have drifted`)
+
     const usherRead = await api('/api/members')
     usherRead.status === 200 ? ok('usher can read the registry') : bad('usher cannot read members')
   } else {

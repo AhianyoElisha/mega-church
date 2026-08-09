@@ -15,14 +15,25 @@ import type { ScanRequest, ScanResponse } from '@/lib/attendance/types'
  *   200 — a ScanResult (marked | already_marked | not_authorised |
  *         inactive_member | no_match)
  *   401 — not authenticated
- *   403 — not a kiosk account
+ *   403 — the account has no role that may take attendance
  *   400 — malformed body
  *   423 — no session is open (locked)
  *   503 — this server cannot match fingerprints at all. NOT the same as
  *         no_match, and the kiosk renders it completely differently.
  */
 export async function POST(request: NextRequest) {
-  const auth = await requireRole('kiosk')
+  // Same roles as /api/attendance/manual, and they must stay in step.
+  //
+  // This was `requireRole('kiosk')`, inherited from SEMP where a kiosk is a
+  // dedicated appliance. Here an admin runs the kiosk page from their own
+  // laptop, and the mismatch was invisible until it mattered: `proxy.ts` lets
+  // an admin open /kiosk, the scanner arms, the capture succeeds — and every
+  // single scan comes back 403 Forbidden. Mid-service, with people queuing.
+  //
+  // There was never a security argument for the narrower rule. An admin can
+  // already mark anyone present through manual check-in; refusing them the
+  // fingerprint path only made the safer, faster route the forbidden one.
+  const auth = await requireRole(['admin', 'usher', 'kiosk'])
   if ('error' in auth) return auth.error
 
   let body: Partial<ScanRequest>

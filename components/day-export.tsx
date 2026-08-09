@@ -33,8 +33,8 @@ const SCOPES: { scope: Scope; label: string; hint: string; primary?: boolean }[]
   },
   {
     scope: 'all',
-    label: 'Everyone, one sheet',
-    hint: 'Every active member with a status column: First, Second, Both or Absent.',
+    label: 'All three, one workbook',
+    hint: 'One file with three tabs — First Service, Second Service, Absent.',
     primary: true,
   },
 ]

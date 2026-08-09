@@ -11,7 +11,6 @@ import {
 import { listMembers } from '@/lib/members/server'
 import { fullName } from '@/lib/members/types'
 import {
-  STATUS_LABEL,
   buildDayReport,
   isDayScope,
   rowsForScope,
@@ -74,20 +73,26 @@ function titleBlock(ws: ExcelJS.Worksheet, span: string, title: string, subtitle
   ws.addRow([])
 }
 
-const SCOPE_TITLE: Record<DayScope, string> = {
+const SCOPE_TITLE: Record<Exclude<DayScope, 'all'>, string> = {
   first: 'First Service attendance',
   second: 'Second Service attendance',
   absent: 'Absent members',
-  all: 'Attendance — all members',
 }
 
-function buildDaySheet(wb: ExcelJS.Workbook, report: DayReport, scope: DayScope) {
+const SHEET_NAME: Record<Exclude<DayScope, 'all'>, string> = {
+  first: 'First Service',
+  second: 'Second Service',
+  absent: 'Absent',
+}
+
+/** One tab. `all` is not a tab — it is the three of these in one workbook. */
+function buildDaySheet(
+  wb: ExcelJS.Workbook,
+  report: DayReport,
+  scope: Exclude<DayScope, 'all'>,
+) {
   const rows = rowsForScope(report, scope)
-  const ws = wb.addWorksheet(
-    { first: 'First Service', second: 'Second Service', absent: 'Absent', all: 'All members' }[
-      scope
-    ],
-  )
+  const ws = wb.addWorksheet(SHEET_NAME[scope])
 
   // The "nobody opened a service" case. Without saying so, a day with no
   // service looks exactly like a day the whole congregation missed, and the
@@ -97,30 +102,6 @@ function buildDaySheet(wb: ExcelJS.Workbook, report: DayReport, scope: DayScope)
   if (!report.held.second && scope !== 'first') notHeld.push('Second Service')
   const caveat =
     notHeld.length > 0 ? `  ·  NOT HELD on this date: ${notHeld.join(', ')}` : ''
-
-  if (scope === 'all') {
-    titleBlock(
-      ws,
-      'F',
-      `${SCOPE_TITLE.all} — ${report.date}`,
-      `${report.totals.active} active members  ·  First ${report.totals.first}  ·  ` +
-        `Second ${report.totals.second}  ·  Both ${report.totals.both}  ·  ` +
-        `Absent ${report.totals.absent}${caveat}`,
-    )
-    header(ws, ['Name', 'Call number', 'WhatsApp', 'Status', 'First service', 'Second service'])
-    ws.columns = [{ width: 30 }, { width: 18 }, { width: 18 }, { width: 16 }, { width: 14 }, { width: 14 }]
-    for (const r of rows) {
-      ws.addRow([
-        fullName(r.member),
-        r.member.call_number,
-        r.member.whatsapp_number ?? '',
-        STATUS_LABEL[r.status],
-        time(r.first_marked_at),
-        time(r.second_marked_at),
-      ])
-    }
-    return ws
-  }
 
   if (scope === 'absent') {
     titleBlock(
@@ -192,10 +173,22 @@ export async function GET(request: NextRequest) {
     const wb = new ExcelJS.Workbook()
     wb.creator = 'Mega Church Attendance'
     wb.created = new Date()
-    buildDaySheet(wb, report, scopeRaw)
+
+    if (scopeRaw === 'all') {
+      // One workbook, three tabs, in the order a Sunday happens. A member at
+      // BOTH services appears on the first two tabs — the same as downloading
+      // them separately, so the tabs cannot disagree with the single-scope
+      // sheets.
+      buildDaySheet(wb, report, 'first')
+      buildDaySheet(wb, report, 'second')
+      buildDaySheet(wb, report, 'absent')
+    } else {
+      buildDaySheet(wb, report, scopeRaw)
+    }
 
     const buffer = await wb.xlsx.writeBuffer()
-    const filename = `attendance-${scopeRaw}-${date}.xlsx`
+    const filename =
+      scopeRaw === 'all' ? `attendance-${date}.xlsx` : `attendance-${scopeRaw}-${date}.xlsx`
     return new Response(buffer as ArrayBuffer, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
