@@ -1,0 +1,521 @@
+/**
+ * Idempotent schema setup. This file is the single source of truth for the
+ * database — new attributes go here, never into the console by hand, or the
+ * next person to provision an environment gets a subtly different one.
+ *
+ *   npm run setup:appwrite
+ *
+ * Safe to re-run: everything is create-if-absent, and re-running against a
+ * provisioned project should report only "exists".
+ */
+import { config as loadEnv } from 'dotenv'
+loadEnv({ path: '.env.local' })
+
+import {
+  AppwriteException,
+  Compression,
+  DatabasesIndexType,
+  Permission,
+  Role,
+} from 'node-appwrite'
+import { createAdminClient } from '../lib/appwrite/server'
+import {
+  BUCKETS,
+  COLLECTIONS,
+  DATABASE_ID,
+  FINGER_LABELS,
+  SERVICE_DEFINITIONS,
+} from '../lib/appwrite/config'
+
+const { databases, storage } = createAdminClient()
+
+type Counter = { created: number; exists: number }
+const stats = {
+  databases: { created: 0, exists: 0 } as Counter,
+  collections: { created: 0, exists: 0 } as Counter,
+  attributes: { created: 0, exists: 0 } as Counter,
+  indexes: { created: 0, exists: 0 } as Counter,
+  buckets: { created: 0, exists: 0 } as Counter,
+  documents: { created: 0, exists: 0 } as Counter,
+}
+
+const isAlreadyExists = (err: unknown) =>
+  err instanceof AppwriteException && (err.code === 409 || /already exists/i.test(err.message))
+
+// --- helpers ---------------------------------------------------------------
+
+async function ensureDatabase() {
+  try {
+    await databases.create(DATABASE_ID, 'Mega Church')
+    stats.databases.created++
+    console.log(`  ✓ database ${DATABASE_ID} created`)
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err
+    stats.databases.exists++
+    console.log(`  · database ${DATABASE_ID} exists`)
+  }
+}
+
+/**
+ * Collection-level permissions are `Role.users()` because every write routes
+ * through a Route Handler gated by `requireRole()` — the server is the
+ * authorisation boundary, not the collection ACL. The one client-SDK reader is
+ * the live monitor's Realtime subscription, which needs read on
+ * `attendance_records`.
+ */
+const DEFAULT_PERMS = [
+  Permission.read(Role.users()),
+  Permission.create(Role.users()),
+  Permission.update(Role.users()),
+  Permission.delete(Role.users()),
+]
+
+async function ensureCollection(id: string, name: string) {
+  try {
+    await databases.createCollection(DATABASE_ID, id, name, DEFAULT_PERMS, false, true)
+    stats.collections.created++
+    console.log(`  ✓ collection ${id} created`)
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err
+    stats.collections.exists++
+    console.log(`  · collection ${id} exists`)
+  }
+}
+
+async function ensureStringAttribute(
+  collId: string,
+  key: string,
+  size: number,
+  required: boolean,
+  xdefault?: string,
+) {
+  try {
+    await databases.createStringAttribute(DATABASE_ID, collId, key, size, required, xdefault)
+    stats.attributes.created++
+    console.log(`    ✓ ${collId}.${key} (string ${size}) created`)
+    return
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err
+  }
+  // Exists — grow it if the schema now wants more room.
+  try {
+    const existing = (await databases.getAttribute(DATABASE_ID, collId, key)) as { size?: number }
+    if (typeof existing.size === 'number' && existing.size < size) {
+      // SDK quirk: the positional update treats `undefined` for xdefault as a
+      // missing parameter and rejects. Coerce to null.
+      await databases.updateStringAttribute(
+        DATABASE_ID,
+        collId,
+        key,
+        required,
+        (xdefault ?? null) as unknown as string,
+        size,
+      )
+      stats.attributes.created++
+      console.log(`    ↑ ${collId}.${key} resized ${existing.size} → ${size}`)
+      return
+    }
+  } catch {
+    // Older SDK/server — fall through.
+  }
+  stats.attributes.exists++
+}
+
+async function ensureIntegerAttribute(
+  collId: string,
+  key: string,
+  required: boolean,
+  opts: { min?: number; max?: number; xdefault?: number } = {},
+) {
+  try {
+    await databases.createIntegerAttribute(
+      DATABASE_ID,
+      collId,
+      key,
+      required,
+      opts.min,
+      opts.max,
+      opts.xdefault,
+    )
+    stats.attributes.created++
+    console.log(`    ✓ ${collId}.${key} (int) created`)
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err
+    stats.attributes.exists++
+  }
+}
+
+async function ensureBooleanAttribute(
+  collId: string,
+  key: string,
+  required: boolean,
+  xdefault?: boolean,
+) {
+  try {
+    await databases.createBooleanAttribute(DATABASE_ID, collId, key, required, xdefault)
+    stats.attributes.created++
+    console.log(`    ✓ ${collId}.${key} (bool) created`)
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err
+    stats.attributes.exists++
+  }
+}
+
+async function ensureEnumAttribute(
+  collId: string,
+  key: string,
+  elements: string[],
+  required: boolean,
+  xdefault?: string,
+) {
+  try {
+    await databases.createEnumAttribute(DATABASE_ID, collId, key, elements, required, xdefault)
+    stats.attributes.created++
+    console.log(`    ✓ ${collId}.${key} (enum ${elements.join('|')}) created`)
+    return
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err
+  }
+  // Exists — widen the value set rather than failing, so adding an enum member
+  // later does not require dropping the attribute (and its indexes).
+  try {
+    const existing = (await databases.getAttribute(DATABASE_ID, collId, key)) as {
+      elements?: string[]
+    }
+    const current = new Set(existing.elements ?? [])
+    const missing = elements.filter((v) => !current.has(v))
+    if (missing.length > 0) {
+      await databases.updateEnumAttribute(
+        DATABASE_ID,
+        collId,
+        key,
+        [...(existing.elements ?? []), ...missing],
+        required,
+        (xdefault ?? null) as unknown as string,
+      )
+      stats.attributes.created++
+      console.log(`    ↑ ${collId}.${key} (enum) widened: +${missing.join(',')}`)
+      return
+    }
+  } catch {
+    // Older SDK/server — fall through.
+  }
+  stats.attributes.exists++
+}
+
+async function ensureIndex(
+  collId: string,
+  key: string,
+  type: 'key' | 'unique' | 'fulltext',
+  attributes: string[],
+) {
+  const indexType =
+    type === 'unique'
+      ? DatabasesIndexType.Unique
+      : type === 'fulltext'
+        ? DatabasesIndexType.Fulltext
+        : DatabasesIndexType.Key
+  try {
+    await databases.createIndex(DATABASE_ID, collId, key, indexType, attributes)
+    stats.indexes.created++
+    console.log(`    ✓ index ${collId}.${key} (${type}) created`)
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err
+    stats.indexes.exists++
+  }
+}
+
+/**
+ * Appwrite creates attributes asynchronously. Creating an index over an
+ * attribute that is still `processing` fails, so wait between the two.
+ */
+async function waitForAttributes(collId: string, timeoutMs = 60_000) {
+  const started = Date.now()
+  for (;;) {
+    const coll = await databases.getCollection(DATABASE_ID, collId)
+    const pending = coll.attributes.filter(
+      (a: { status?: string }) => a.status && a.status !== 'available',
+    )
+    if (pending.length === 0) return
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(
+        `Timed out waiting for attributes in ${collId}: ` +
+          pending.map((a: { key?: string; status?: string }) => `${a.key}=${a.status}`).join(', '),
+      )
+    }
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+}
+
+async function ensureBucket(
+  id: string,
+  name: string,
+  opts: { maxSizeBytes?: number; extensions?: string[] } = {},
+) {
+  const permissions = [
+    Permission.read(Role.users()),
+    Permission.create(Role.users()),
+    Permission.update(Role.users()),
+    Permission.delete(Role.users()),
+  ]
+  const maxSize = opts.maxSizeBytes ?? 5 * 1024 * 1024
+  const extensions = opts.extensions ?? ['jpg', 'jpeg', 'png', 'webp']
+
+  try {
+    await storage.createBucket(
+      id,
+      name,
+      permissions,
+      true, // fileSecurity
+      true, // enabled
+      maxSize,
+      extensions,
+      Compression.None,
+      false, // encryption
+      true, // antivirus
+    )
+    stats.buckets.created++
+    console.log(`  ✓ bucket ${id} created`)
+    return
+  } catch (err) {
+    if (!isAlreadyExists(err)) {
+      if (err instanceof AppwriteException && /maximum file size/i.test(err.message)) {
+        console.error(
+          `  ✗ bucket ${id}: the server rejected a ${maxSize}-byte limit. Raise ` +
+            `_APP_STORAGE_LIMIT on the Appwrite container and re-run.`,
+        )
+        return
+      }
+      throw err
+    }
+    stats.buckets.exists++
+    console.log(`  · bucket ${id} exists`)
+  }
+}
+
+async function ensureDocument(collId: string, docId: string, data: Record<string, unknown>) {
+  try {
+    await databases.createDocument(DATABASE_ID, collId, docId, data)
+    stats.documents.created++
+    console.log(`    ✓ ${collId}/${docId} seeded`)
+  } catch (err) {
+    if (!isAlreadyExists(err)) throw err
+    stats.documents.exists++
+  }
+}
+
+// --- schema ----------------------------------------------------------------
+
+async function setupMembers() {
+  console.log('\nmembers')
+  await ensureCollection(COLLECTIONS.members, 'Members')
+  await ensureStringAttribute(COLLECTIONS.members, 'first_name', 64, true)
+  await ensureStringAttribute(COLLECTIONS.members, 'last_name', 64, true)
+  await ensureStringAttribute(COLLECTIONS.members, 'other_names', 96, false)
+  // Denormalised so search can hit ONE fulltext index instead of three, and so
+  // list responses do not have to recompute it per row.
+  await ensureStringAttribute(COLLECTIONS.members, 'full_name', 224, true)
+  await ensureStringAttribute(COLLECTIONS.members, 'photo_file_id', 64, false)
+  // Month and day only. There is deliberately no birth_year attribute — PRD
+  // §1.1. Adding one later is a decision, not an oversight to be corrected.
+  await ensureIntegerAttribute(COLLECTIONS.members, 'birth_month', false, { min: 1, max: 12 })
+  await ensureIntegerAttribute(COLLECTIONS.members, 'birth_day', false, { min: 1, max: 31 })
+  await ensureStringAttribute(COLLECTIONS.members, 'address', 256, false)
+  await ensureStringAttribute(COLLECTIONS.members, 'call_number', 32, true)
+  await ensureStringAttribute(COLLECTIONS.members, 'whatsapp_number', 32, false)
+  await ensureEnumAttribute(COLLECTIONS.members, 'home_service', ['first', 'second'], true, 'second')
+  await ensureEnumAttribute(COLLECTIONS.members, 'status', ['active', 'inactive'], true, 'active')
+  await ensureStringAttribute(COLLECTIONS.members, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.members)
+  await ensureIndex(COLLECTIONS.members, 'by_status', 'key', ['status'])
+  await ensureIndex(COLLECTIONS.members, 'by_last_name', 'key', ['last_name'])
+  await ensureIndex(COLLECTIONS.members, 'search_name', 'fulltext', ['full_name'])
+  // Ushers look people up by the number they were called on.
+  await ensureIndex(COLLECTIONS.members, 'by_call_number', 'key', ['call_number'])
+  // Birthday lists for a given month.
+  await ensureIndex(COLLECTIONS.members, 'by_birthday', 'key', ['birth_month', 'birth_day'])
+}
+
+async function setupBiometricTemplates() {
+  console.log('\nbiometric_templates')
+  await ensureCollection(COLLECTIONS.biometric_templates, 'Biometric Templates')
+  await ensureStringAttribute(COLLECTIONS.biometric_templates, 'member_id', 64, true)
+  await ensureEnumAttribute(
+    COLLECTIONS.biometric_templates,
+    'finger_label',
+    [...FINGER_LABELS],
+    true,
+  )
+  await ensureIntegerAttribute(COLLECTIONS.biometric_templates, 'variation', true, {
+    min: 1,
+    max: 3,
+  })
+  // 16384 is over Appwrite's 16383 VARCHAR ceiling, so this is stored as TEXT
+  // (off-row) and cannot hit MariaDB's 64KB row limit the way a large VARCHAR
+  // would. A real .xyt is 1-4 KB; the headroom is for a dense capture.
+  await ensureStringAttribute(COLLECTIONS.biometric_templates, 'template', 16384, true)
+  await ensureIntegerAttribute(COLLECTIONS.biometric_templates, 'minutiae', false, { xdefault: 0 })
+  await ensureStringAttribute(COLLECTIONS.biometric_templates, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.biometric_templates)
+  await ensureIndex(COLLECTIONS.biometric_templates, 'by_member', 'key', ['member_id'])
+  await ensureIndex(COLLECTIONS.biometric_templates, 'by_member_finger', 'key', [
+    'member_id',
+    'finger_label',
+  ])
+}
+
+async function setupMeetings() {
+  console.log('\nmeetings')
+  await ensureCollection(COLLECTIONS.meetings, 'Meetings')
+  await ensureStringAttribute(COLLECTIONS.meetings, 'name', 96, true)
+  await ensureStringAttribute(COLLECTIONS.meetings, 'description', 512, false)
+  await ensureEnumAttribute(COLLECTIONS.meetings, 'kind', ['service', 'meeting'], true, 'meeting')
+  await ensureEnumAttribute(COLLECTIONS.meetings, 'service_slot', ['first', 'second'], false)
+  await ensureBooleanAttribute(COLLECTIONS.meetings, 'restricted', true, true)
+  await ensureBooleanAttribute(COLLECTIONS.meetings, 'archived', true, false)
+  await ensureIntegerAttribute(COLLECTIONS.meetings, 'sort_order', true, { xdefault: 100 })
+  await ensureStringAttribute(COLLECTIONS.meetings, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.meetings)
+  await ensureIndex(COLLECTIONS.meetings, 'by_kind', 'key', ['kind'])
+  await ensureIndex(COLLECTIONS.meetings, 'by_archived', 'key', ['archived'])
+
+  console.log('  seeding the two services…')
+  for (const s of SERVICE_DEFINITIONS) {
+    await ensureDocument(COLLECTIONS.meetings, s.id, {
+      name: s.name,
+      description: s.description,
+      kind: 'service',
+      service_slot: s.service_slot,
+      // A service is open to every active member. This must stay false — see
+      // PRD §2.1. Setting it true would gate the services behind a roster and
+      // silently lock out anyone who attends the other one.
+      restricted: false,
+      archived: false,
+      sort_order: s.sort_order,
+      created_by: null,
+    })
+  }
+}
+
+async function setupMeetingMembers() {
+  console.log('\nmeeting_members')
+  await ensureCollection(COLLECTIONS.meeting_members, 'Meeting Members (roster)')
+  await ensureStringAttribute(COLLECTIONS.meeting_members, 'meeting_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.meeting_members, 'member_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.meeting_members, 'added_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.meeting_members)
+  await ensureIndex(COLLECTIONS.meeting_members, 'by_meeting', 'key', ['meeting_id'])
+  await ensureIndex(COLLECTIONS.meeting_members, 'by_member', 'key', ['member_id'])
+  // One row per pair. The roster editor diffs and writes only the delta, but a
+  // unique index is what actually guarantees it.
+  await ensureIndex(COLLECTIONS.meeting_members, 'pair_unique', 'unique', [
+    'meeting_id',
+    'member_id',
+  ])
+}
+
+async function setupOccurrences() {
+  console.log('\nmeeting_occurrences')
+  await ensureCollection(COLLECTIONS.meeting_occurrences, 'Meeting Occurrences')
+  await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'meeting_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'occurrence_date', 10, true)
+  await ensureEnumAttribute(COLLECTIONS.meeting_occurrences, 'status', ['open', 'closed'], true)
+  await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'opened_at', 32, true)
+  await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'closed_at', 32, false)
+  await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'opened_by', 128, false)
+  await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'closed_by', 128, false)
+  await ensureIntegerAttribute(COLLECTIONS.meeting_occurrences, 'present_count', true, {
+    xdefault: 0,
+  })
+
+  await waitForAttributes(COLLECTIONS.meeting_occurrences)
+  // The hot query: "is anything open?" — asked on every page load and every
+  // scan. PRD §2.2 makes the answer at most one row.
+  await ensureIndex(COLLECTIONS.meeting_occurrences, 'by_status', 'key', ['status'])
+  await ensureIndex(COLLECTIONS.meeting_occurrences, 'by_meeting', 'key', ['meeting_id'])
+  await ensureIndex(COLLECTIONS.meeting_occurrences, 'by_date', 'key', ['occurrence_date'])
+}
+
+async function setupAttendanceRecords() {
+  console.log('\nattendance_records')
+  await ensureCollection(COLLECTIONS.attendance_records, 'Attendance Records')
+  await ensureStringAttribute(COLLECTIONS.attendance_records, 'occurrence_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.attendance_records, 'meeting_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.attendance_records, 'member_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.attendance_records, 'marked_at', 32, true)
+  await ensureEnumAttribute(
+    COLLECTIONS.attendance_records,
+    'method',
+    ['biometric', 'manual'],
+    true,
+  )
+  await ensureStringAttribute(COLLECTIONS.attendance_records, 'marked_by', 128, false)
+  await ensureStringAttribute(COLLECTIONS.attendance_records, 'station', 64, false)
+  await ensureStringAttribute(COLLECTIONS.attendance_records, 'note', 512, false)
+
+  await waitForAttributes(COLLECTIONS.attendance_records)
+  await ensureIndex(COLLECTIONS.attendance_records, 'by_occurrence', 'key', ['occurrence_id'])
+  await ensureIndex(COLLECTIONS.attendance_records, 'by_member', 'key', ['member_id'])
+  await ensureIndex(COLLECTIONS.attendance_records, 'by_meeting', 'key', ['meeting_id'])
+  // One mark per member per occurrence. The scan path checks first and returns
+  // `already_marked`, but two kiosks can race — this index is what makes the
+  // guarantee real rather than merely likely.
+  await ensureIndex(COLLECTIONS.attendance_records, 'occurrence_member_unique', 'unique', [
+    'occurrence_id',
+    'member_id',
+  ])
+}
+
+async function setupBuckets() {
+  console.log('\nbuckets')
+  await ensureBucket(BUCKETS.member_photos, 'Member Photos')
+  // The kiosk provisioning pack: bridge bundle, native binaries, WHQL driver,
+  // installer. A few MB today. 256 MB leaves room for a pack that bundles its
+  // own Node runtime rather than assuming one (node.exe is ~80 MB).
+  await ensureBucket(BUCKETS.kiosk_downloads, 'Kiosk Downloads', {
+    maxSizeBytes: 268_435_456,
+    extensions: ['zip'],
+  })
+}
+
+// --- main ------------------------------------------------------------------
+
+async function main() {
+  const required = ['APPWRITE_ENDPOINT', 'APPWRITE_PROJECT_ID', 'APPWRITE_API_KEY']
+  const missing = required.filter((k) => !process.env[k])
+  if (missing.length > 0) {
+    console.error(`Missing env: ${missing.join(', ')}. Put them in .env.local.`)
+    process.exit(1)
+  }
+  if (/cloud\.appwrite\.io/i.test(process.env.APPWRITE_ENDPOINT!)) {
+    // CLAUDE.md: self-hosted only. Failing loudly here beats discovering it
+    // after a congregation's data is in the wrong place.
+    console.error('APPWRITE_ENDPOINT points at Appwrite Cloud. This project is self-hosted only.')
+    process.exit(1)
+  }
+
+  console.log(`Setting up ${DATABASE_ID} at ${process.env.APPWRITE_ENDPOINT}`)
+  await ensureDatabase()
+  await setupMembers()
+  await setupBiometricTemplates()
+  await setupMeetings()
+  await setupMeetingMembers()
+  await setupOccurrences()
+  await setupAttendanceRecords()
+  await setupBuckets()
+
+  console.log('\n─── summary ───')
+  for (const [k, v] of Object.entries(stats)) {
+    console.log(`  ${k.padEnd(12)} created ${v.created}   existing ${v.exists}`)
+  }
+  console.log('\nDone. Re-running this script should report only "existing".')
+}
+
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})

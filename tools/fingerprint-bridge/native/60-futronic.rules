@@ -1,0 +1,10 @@
+# the church app — Futronic fingerprint scanner access for non-root users.
+# Futronic's readme says "run as root"; that is unacceptable for a kiosk process.
+# This grants access to the logged-in user (uaccess) and the plugdev group instead.
+#
+# 1491:0020 = Futronic FS80/FS81 family (vendor-specific class 0xff, no kernel driver).
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1491", ATTRS{idProduct}=="0020", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# Futronic's other models, so a swapped/upgraded scanner works without edits.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1491", ATTRS{idProduct}=="0088", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1491", ATTRS{idProduct}=="0090", MODE="0660", GROUP="plugdev", TAG+="uaccess"

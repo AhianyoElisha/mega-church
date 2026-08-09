@@ -1,0 +1,12 @@
+# Built/downloaded artifacts — recreate with native/setup.sh (Linux) or native/setup.ps1 (Windows)
+native/vendor/
+# Futronic's WHQL driver, exported from a working machine by native/export-driver.ps1.
+# Vendor binaries are never committed; regenerate it, or ship it out-of-band with
+# the kiosk payload.
+native/driver/
+native/nbis/
+native/church-scan
+native/church-scan.exe
+# Makefile.win's `install` target drops the vendor DLL next to the exe.
+native/*.dll
+bridge.log

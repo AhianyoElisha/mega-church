@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+build/
+.env
+.env.local
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+bridge-*.log
+bridge.log
+
+# Build output of scripts/build-kiosk-pack.ts — regenerate, never commit.
+.kiosk-pack/
+church-kiosk-pack-*.zip

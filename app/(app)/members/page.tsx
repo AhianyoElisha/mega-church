@@ -1,0 +1,175 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import Link from 'next/link'
+import { UsersIcon } from '@heroicons/react/24/outline'
+import { Button } from '@/shared/Button'
+import { Badge } from '@/shared/Badge'
+import Avatar from '@/shared/Avatar'
+import Input from '@/shared/Input'
+import Select from '@/shared/Select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/table'
+import { Card, EmptyState, LoadingRow, PageHeader, PageWrap } from '@/components/ui'
+import { useAuth } from '@/components/auth'
+import { useMembers } from '@/lib/queries/members'
+import { memberPhotoUrl } from '@/lib/members/photo'
+import { birthdayLabel, fullName, initials } from '@/lib/members/types'
+import { TEMPLATES_PER_MEMBER } from '@/lib/appwrite/config'
+
+export default function MembersPage() {
+  const { user } = useAuth()
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('')
+  const [enrolment, setEnrolment] = useState('')
+
+  // The API's fulltext search needs two characters; below that, send nothing
+  // and let the client filter the full list rather than firing a useless query.
+  const { data, isLoading } = useMembers({
+    search: search.trim().length >= 2 ? search.trim() : undefined,
+    status: status || undefined,
+  })
+
+  const rows = useMemo(() => {
+    let list = data?.ok ? data.members : []
+    if (search.trim().length === 1) {
+      const q = search.trim().toLowerCase()
+      list = list.filter((m) => fullName(m).toLowerCase().includes(q))
+    }
+    if (enrolment === 'complete') list = list.filter((m) => m.enrolment.complete)
+    if (enrolment === 'incomplete') list = list.filter((m) => !m.enrolment.complete)
+    return list
+  }, [data, search, enrolment])
+
+  const isAdmin = user?.label === 'admin'
+
+  return (
+    <PageWrap>
+      <PageHeader
+        title="Members"
+        subtitle="Everyone registered with the church."
+        actions={
+          isAdmin && (
+            <Button color="primary" href="/members/new">
+              Register a member
+            </Button>
+          )
+        }
+      />
+
+      <Card className="mb-6" padded={false}>
+        <div className="grid gap-3 p-4 sm:grid-cols-3">
+          <Input
+            placeholder="Search by name…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">All statuses</option>
+            <option value="active">Active only</option>
+            <option value="inactive">Inactive only</option>
+          </Select>
+          <Select value={enrolment} onChange={(e) => setEnrolment(e.target.value)}>
+            <option value="">Any enrolment</option>
+            <option value="complete">Fully enrolled</option>
+            <option value="incomplete">Needs enrolment</option>
+          </Select>
+        </div>
+      </Card>
+
+      {isLoading ? (
+        <Card padded={false}>
+          <LoadingRow label="Loading members…" />
+        </Card>
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={UsersIcon}
+          title={search || status || enrolment ? 'No members match those filters' : 'No members yet'}
+          message={
+            search || status || enrolment
+              ? 'Try widening the search.'
+              : 'Register the first member to start taking attendance.'
+          }
+          action={
+            isAdmin && !search && !status && !enrolment ? (
+              <Button color="primary" href="/members/new">
+                Register a member
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <>
+          <p className="mb-3 text-sm text-neutral-500 dark:text-neutral-400">
+            {rows.length} member{rows.length === 1 ? '' : 's'}
+          </p>
+          <Table dense grid striped>
+            <TableHead>
+              <TableRow>
+                <TableHeader>Name</TableHeader>
+                <TableHeader>Call number</TableHeader>
+                <TableHeader>Birthday</TableHeader>
+                <TableHeader>Fingerprints</TableHeader>
+                <TableHeader>Status</TableHeader>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.map((m) => {
+                const photo = memberPhotoUrl(m.photo_file_id, 64)
+                return (
+                  <TableRow key={m.$id} href={`/members/${m.$id}`}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <Avatar
+                          src={photo}
+                          initials={photo ? undefined : initials(m)}
+                          className="size-9 bg-primary-500 text-neutral-950"
+                          alt={fullName(m)}
+                        />
+                        <div className="min-w-0">
+                          <span className="block truncate font-medium text-neutral-950 dark:text-white">
+                            {fullName(m)}
+                          </span>
+                          <span className="block text-xs text-neutral-500 dark:text-neutral-400">
+                            {m.home_service === 'first' ? 'First Service' : 'Second Service'}
+                          </span>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="tabular-nums">{m.call_number}</TableCell>
+                    <TableCell>
+                      {birthdayLabel(m) ?? <span className="text-neutral-400">—</span>}
+                    </TableCell>
+                    <TableCell>
+                      {/* Both a colour and a word. Someone half-enrolled will
+                          be turned away by a scanner, so it has to be legible
+                          at a glance. */}
+                      <Badge color={m.enrolment.complete ? 'green' : m.enrolment.template_count > 0 ? 'yellow' : 'zinc'}>
+                        {m.enrolment.complete
+                          ? 'Complete'
+                          : m.enrolment.template_count > 0
+                            ? `${m.enrolment.template_count}/${TEMPLATES_PER_MEMBER}`
+                            : 'None'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge color={m.status === 'active' ? 'green' : 'zinc'}>
+                        {m.status === 'active' ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </>
+      )}
+
+      {!isAdmin && (
+        <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
+          You are signed in as an usher. <Link href="/monitor" className="underline">Go to the live view</Link>{' '}
+          to mark attendance.
+        </p>
+      )}
+    </PageWrap>
+  )
+}

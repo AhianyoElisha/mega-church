@@ -1,0 +1,196 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+@plugin '@tailwindcss/forms';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Copied from PickLT (src/styles/tailwind.css) so the component library behaves
+ * identically. Only the two @theme colour ramps below differ: the church brand
+ * is white / yellow / black, not indigo / teal / blue-grey.
+ */
+@theme {
+  /* ── Yellow ──────────────────────────────────────────────────────────
+   * The brand colour. primary-500 (#F5B301) is the church gold; 600 is the
+   * hover/pressed step. The ramp is warm all the way down so a yellow tint
+   * over white never reads green.
+   *
+   * Contrast note: yellow on white fails WCAG AA below ~18pt. Yellow is for
+   * fills, accents and large type. Body text is black. See CLAUDE.md.
+   */
+  --color-primary-50: rgb(255, 251, 235);
+  --color-primary-100: rgb(254, 243, 199);
+  --color-primary-200: rgb(253, 230, 138);
+  --color-primary-300: rgb(252, 211, 77);
+  --color-primary-400: rgb(251, 191, 36);
+  --color-primary-500: rgb(245, 179, 1);
+  --color-primary-600: rgb(209, 148, 0);
+  --color-primary-700: rgb(168, 116, 0);
+  --color-primary-800: rgb(124, 86, 0);
+  --color-primary-900: rgb(87, 60, 0);
+
+  /* ── Black ───────────────────────────────────────────────────────────
+   * `secondary` is the third brand colour, so it is charcoal→black rather
+   * than PickLT's teal. Used for solid dark surfaces that must not read as
+   * "just a grey", e.g. the kiosk chrome.
+   */
+  --color-secondary-50: rgb(247, 247, 247);
+  --color-secondary-100: rgb(237, 237, 237);
+  --color-secondary-200: rgb(212, 212, 212);
+  --color-secondary-300: rgb(163, 163, 163);
+  --color-secondary-400: rgb(115, 115, 115);
+  --color-secondary-500: rgb(64, 64, 64);
+  --color-secondary-600: rgb(38, 38, 38);
+  --color-secondary-700: rgb(23, 23, 23);
+  --color-secondary-800: rgb(10, 10, 10);
+  --color-secondary-900: rgb(0, 0, 0);
+
+  /* ── Neutrals ────────────────────────────────────────────────────────
+   * A TRUE-grey ramp. PickLT overrode this with Tailwind's blue-tinted
+   * `gray`, which turns every card and border faintly cold — wrong next to
+   * yellow. 950 is pure #000 so "black" in this app is actually black.
+   */
+  --color-neutral-50: rgb(250, 250, 250);
+  --color-neutral-100: rgb(245, 245, 245);
+  --color-neutral-200: rgb(229, 229, 229);
+  --color-neutral-300: rgb(212, 212, 212);
+  --color-neutral-400: rgb(163, 163, 163);
+  --color-neutral-500: rgb(115, 115, 115);
+  --color-neutral-600: rgb(82, 82, 82);
+  --color-neutral-700: rgb(64, 64, 64);
+  --color-neutral-800: rgb(38, 38, 38);
+  --color-neutral-900: rgb(23, 23, 23);
+  --color-neutral-950: rgb(0, 0, 0);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    @apply border-neutral-200 dark:border-neutral-700;
+  }
+
+  [type='button'] {
+    -webkit-appearance: none !important;
+  }
+
+  hr {
+    @apply border-t border-neutral-200 dark:border-neutral-700;
+  }
+
+  input[type='time']::-webkit-calendar-picker-indicator {
+    @apply rounded-md dark:bg-neutral-500;
+  }
+}
+
+@utility container {
+  margin-inline: auto;
+  padding-inline: 1rem;
+  @media screen and (min-width: 1536px) {
+    padding-inline: 8rem;
+  }
+}
+
+@utility pl-container {
+  @apply pl-4 sm:pl-[calc((100vw-40rem+2rem)/2)] md:pl-[calc((100vw-48rem+2rem)/2)] lg:pl-[calc((100vw-64rem+2rem)/2)] xl:pl-[calc((100vw-80rem+2rem)/2)] 2xl:pl-[calc((100vw-96rem+16rem)/2)];
+}
+
+/* // some quick customizations */
+@utility mySnapItem {
+  @apply shrink-0 snap-start;
+}
+
+@utility nc-header-bg {
+  @apply bg-white/70 backdrop-blur-2xl backdrop-filter dark:bg-neutral-900/60;
+}
+
+@utility menu-item {
+  @apply flex;
+
+  &:hover {
+    > .sub-menu {
+      @apply block;
+    }
+  }
+}
+
+@utility sub-menu {
+  @apply hidden;
+}
+
+/* // ================== CUSTOM ============================== */
+@utility root {
+  overflow: hidden;
+}
+#headlessui-portal-root {
+  @apply text-base text-neutral-900 dark:text-neutral-200;
+}
+@utility hidden-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+@utility z-max {
+  z-index: 999;
+}
+
+@utility nc-box-has-hover {
+  @apply rounded-3xl border border-neutral-200/79 bg-white dark:border-neutral-700 dark:bg-neutral-800/30;
+}
+
+@utility listingSection__wrap {
+  @apply flex w-full flex-col gap-y-6 border-b border-neutral-200 px-0 pb-10 leading-relaxed sm:gap-y-8 sm:rounded-2xl sm:border sm:p-4 xl:p-8 dark:border-neutral-700;
+}
+
+@keyframes myblur {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@utility custom-shadow-1 {
+  box-shadow:
+    rgba(17, 17, 26, 0.05) 0px 4px 16px,
+    rgba(17, 17, 26, 0.05) 0px 8px 32px;
+}
+
+/* ── Kiosk ─────────────────────────────────────────────────────────────
+ * The kiosk runs full-screen on a counter and is read from across a room.
+ * These are the only styles in the app that are not PickLT's.
+ */
+@utility kiosk-name {
+  /* PRD §2.4 — the member's name is never smaller than 48pt. */
+  font-size: clamp(48px, 7vw, 96px);
+  line-height: 1.05;
+  font-weight: 700;
+}
+
+@utility kiosk-headline {
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+/* The idle scanner ring. Deliberately a slow pulse — a fast one reads as an
+ * error indicator to people who have never used the machine before. */
+@keyframes kiosk-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.06);
+  }
+}
+@utility kiosk-pulse {
+  animation: kiosk-pulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}

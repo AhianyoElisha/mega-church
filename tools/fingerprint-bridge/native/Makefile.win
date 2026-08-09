@@ -1,0 +1,117 @@
+# Plan 40 Phase A — Windows build of church-scan (MSYS2 / MinGW-w64, **i686/32-bit**).
+#
+#   pacman -S --needed mingw-w64-i686-gcc make
+#   # from the "MSYS2 MINGW32" shell (NOT MINGW64), in this directory:
+#   mingw32-make -f Makefile.win
+#
+# *** 32-BIT, AND NOT BY CHOICE ***
+# Plan 40 assumed "Futronic ships an x64 SDK only". That is true of the LINUX
+# download (Linux_gtk_demo_x64.zip -> a 64-bit libScanAPI.so) but FALSE of the
+# Windows one. Both Windows packages Futronic publishes —
+#   ftrScanApiEx_v4.5.zip  (ftrScanAPI demo for Windows)
+#   WorkedEx.zip           (SDK Worked Example for Windows)
+# — ship a PE32 **i386** ftrScanAPI.dll. Verified 2026-08-07:
+#   $ file ftrScanAPI.dll
+#   PE32 executable for MS Windows 5.01 (DLL), Intel i386, 6 sections
+# A 64-bit process cannot load a 32-bit DLL, so church-scan.exe MUST be i686.
+# This costs nothing: WoW64 runs it on x64 Windows, and the bridge only ever
+# spawns it as a separate process, so it never shares an ABI with Node or with
+# the (64-bit) NBIS binaries. If Futronic ever supplies an x64 ftrScanAPI.dll,
+# switch MINGW to mingw64 and this file needs no other change.
+#
+# Differences from the Linux Makefile, all forced by the toolchain:
+#   * no `-l:libScanAPI.so`  — the `-l:<exact filename>` form is GNU-ld/ELF only.
+#   * no `-Wl,-rpath,$ORIGIN` — PE has no rpath; the loader finds ftrScanAPI.dll
+#     because it sits next to church-scan.exe (see LAYOUT below).
+#   * MinGW-w64 is preferred over MSVC: the vendor header declares every entry
+#     point `__stdcall` and MinGW links that straight off the DLL, with no .def
+#     file and no name-decoration dance.
+#   * `--enable-stdcall-fixup` is REQUIRED and is not cosmetic. The header
+#     declares `__stdcall`, so the compiler emits references to the decorated
+#     names (`_ftrScanOpenDevice@0`), but the vendor exports its symbols
+#     UNDECORATED (`ftrScanOpenDevice`) — they built the DLL with a .def file.
+#     ld can bridge that, and does so silently with this flag instead of
+#     printing five "resolving _x@n by linking to _x" warnings per build.
+#     The calling convention itself matches on both sides (callee cleans the
+#     stack), so this is a name-decoration fixup only, not an ABI override.
+#
+# LAYOUT expected by tools/fingerprint-bridge/bridge.ts (it spawns
+# native/church-scan.exe, and the OS resolves the DLL from the exe's directory):
+#
+#   native/
+#     church-scan.exe          <- built here
+#     ftrScanAPI.dll         <- copied from vendor/ by the `install` target
+#     vendor/                <- gitignored; NEVER commit vendor binaries
+#       ftrScanAPI.dll       <- from Futronic's *Windows* SDK, not the Linux zip
+#       ftrScanAPI.lib       <- optional MSVC import lib, used if present
+#     nbis/install/bin/{cwsq,mindtct,bozorth3}.exe   <- Phase B artifact
+#
+# setup.ps1 runs `install` for you; this file is also usable standalone.
+
+# Default to the i686 compiler by absolute path so `mingw32-make -f Makefile.win`
+# builds a working exe even when invoked from the MINGW64 shell or from plain
+# cmd.exe — picking up a 64-bit `gcc` here produces an exe that cannot load the
+# 32-bit vendor DLL, and the failure surfaces only at runtime. Override with
+# `make -f Makefile.win CC=gcc` from a MINGW32 shell if you prefer.
+MINGW   ?= /mingw32
+# MSYS2's coreutils (cp, file, grep) live here. They are NOT on the Windows PATH
+# in a stock install, so a recipe that just says `cp` works from an MSYS2/Git
+# Bash shell and dies with "cp: No such file or directory" when setup.ps1 invokes
+# make from PowerShell -- which is exactly how a kiosk install runs it.
+# Every recipe below therefore fixes up PATH rather than trusting the caller's.
+MSYSBIN ?= /usr/bin
+RPATH   := PATH="$(MINGW)/bin:$(MSYSBIN):$$PATH"
+# NB: `CC ?= ...` does NOT work here. make predefines CC (to `cc`), so `?=`
+# never fires and the build silently uses whichever gcc is first on PATH — the
+# 64-bit one if you are in the MINGW64 shell. Test `origin` instead: that
+# overrides make's built-in default while still honouring a CC the caller set
+# on the command line or in the environment.
+ifeq ($(origin CC),default)
+CC      := $(MINGW)/bin/gcc
+endif
+CFLAGS  ?= -O2 -Wall
+VENDOR  := vendor
+TARGET  := church-scan.exe
+DLL     := $(VENDOR)/ftrScanAPI.dll
+
+# MinGW can link against the DLL itself; if Futronic's import library happens to
+# be in vendor/ (either MinGW `.a` or MSVC `.lib`), prefer it.
+IMPLIB  := $(firstword $(wildcard $(VENDOR)/libftrScanAPI.a $(VENDOR)/ftrScanAPI.lib))
+LINKLIB := $(if $(IMPLIB),$(IMPLIB),$(DLL))
+
+# -static-libgcc keeps the exe from needing libgcc_s_dw2-1.dll off a kiosk PC
+# that has no MSYS2 installed. --enable-stdcall-fixup: see the header comment.
+LDFLAGS ?= -static-libgcc -Wl,--enable-stdcall-fixup
+
+# $(MINGW)/bin must lead PATH for the duration of the compile: gcc.exe loads its
+# own runtime DLLs (libisl, libmpc, libwinpthread…) from beside itself, and if
+# the MINGW64 copies are found first it dies with exit 1 and NO message at all.
+# That is the exact failure you get running `make -f Makefile.win` from the
+# MINGW64 shell, which is an easy shell to be in by accident.
+$(TARGET): church-scan.c ftrScanAPI.h $(DLL)
+	$(RPATH) $(CC) $(CFLAGS) -o $@ church-scan.c $(LINKLIB) $(LDFLAGS) -lm
+	@$(RPATH); if command -v file >/dev/null 2>&1; then \
+	  if file $@ | grep -q 'Intel i386'; then \
+	    echo "OK: $@ is 32-bit (matches the vendor DLL)"; \
+	  else \
+	    echo "WARNING: $@ is NOT 32-bit - it will fail with no_device at runtime."; \
+	  fi; \
+	else \
+	  echo "NOTE: 'file' unavailable - skipped the 32-bit check on $@"; \
+	fi
+
+$(DLL):
+	@echo "$(DLL) missing - run setup.ps1, or copy ftrScanAPI.dll from the" && \
+	 echo "Futronic Windows SDK into $(VENDOR)\\ by hand." && exit 1
+
+# Put the DLL beside the exe so the loader finds it without touching PATH.
+install: $(TARGET)
+	$(RPATH); cp -f $(DLL) .
+	@echo "Built $(TARGET) + ftrScanAPI.dll in $(CURDIR)"
+	@echo "Sanity check (no finger needed):"
+	@echo "  .\\$(TARGET) %TEMP%\\church-probe.pgm 2   # expect no_finger, exit 2"
+
+clean:
+	$(RPATH); rm -f $(TARGET) ftrScanAPI.dll
+
+.PHONY: clean install
