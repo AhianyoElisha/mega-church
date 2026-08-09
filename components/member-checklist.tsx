@@ -78,7 +78,7 @@ export default function MemberChecklist({
         </span>
       </div>
 
-      <div className="max-h-96 overflow-y-auto rounded-xl border border-neutral-200 dark:border-neutral-700">
+      <div className="max-h-96 overflow-y-auto rounded-xl bg-neutral-50 ring-1 ring-neutral-900/5 dark:bg-neutral-900/40 dark:ring-white/10">
         {isLoading ? (
           <LoadingRow label="Loading members…" />
         ) : visible.length === 0 ? (

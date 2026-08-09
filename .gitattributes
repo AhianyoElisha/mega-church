@@ -1,0 +1,23 @@
+# Binary artifacts. Marked explicitly rather than left to git's autodetection,
+# because a line-ending conversion applied to one of these produces a file that
+# still looks fine in a listing and fails only at runtime with `no_device` —
+# which is exactly what happened once during the port from SEMP.
+*.exe   binary
+*.dll   binary
+*.wasm  binary
+*.cat   binary
+*.zip   binary
+*.png   binary
+*.jpg   binary
+*.ico   binary
+
+# Windows shells choke on LF line endings in a script they are asked to run.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# The driver INF is parsed by pnputil on Windows and wants CRLF.
+*.inf   text eol=crlf
+
+# Shell scripts are the reverse: CRLF gives `bad interpreter: /bin/sh^M`.
+*.sh    text eol=lf

@@ -100,7 +100,7 @@ export default function DashboardPage() {
               {d!.recent.map((r) => (
                 <li
                   key={r.$id}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2.5 text-sm dark:border-neutral-700"
+                  className="flex items-center justify-between gap-3 rounded-xl bg-neutral-50 px-3 py-2.5 text-sm dark:bg-neutral-700/40"
                 >
                   <span className="min-w-0 truncate font-medium text-neutral-800 dark:text-neutral-200">
                     {r.meeting_name}

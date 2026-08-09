@@ -33,6 +33,16 @@ export function PageHeader({
   )
 }
 
+/**
+ * PickLT's panel card: `rounded-2xl`, solid surface, a soft shadow, and NO
+ * border (see `(account)/account/page.tsx` there — `rounded-2xl p-6 shadow-sm`
+ * throughout).
+ *
+ * This previously carried a hard 1px `border-neutral-200` and no shadow, which
+ * is SEMP's flat administrative look rather than PickLT's. The two are easy to
+ * confuse in isolation and obvious side by side: the border version reads as a
+ * dense data tool, the shadow version as a consumer app.
+ */
 export function Card({
   children,
   className,
@@ -45,8 +55,8 @@ export function Card({
   return (
     <div
       className={clsx(
-        'rounded-2xl border border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-800/40',
-        padded && 'p-5 sm:p-6',
+        'rounded-2xl bg-white shadow-sm ring-1 ring-neutral-900/5 dark:bg-neutral-800 dark:ring-white/10',
+        padded && 'p-6',
         className,
       )}
     >
@@ -69,10 +79,10 @@ export function StatCard({
   return (
     <div
       className={clsx(
-        'rounded-2xl border p-5',
+        'rounded-2xl p-5 shadow-sm',
         accent
-          ? 'border-primary-500 bg-primary-50 dark:border-primary-600 dark:bg-primary-900/20'
-          : 'border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-800/40',
+          ? 'bg-primary-50 ring-1 ring-primary-500/40 dark:bg-primary-900/20 dark:ring-primary-500/30'
+          : 'bg-white ring-1 ring-neutral-900/5 dark:bg-neutral-800 dark:ring-white/10',
       )}
     >
       <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">{label}</p>
@@ -96,7 +106,7 @@ export function EmptyState({
   icon?: React.ComponentType<{ className?: string }>
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-neutral-300 px-6 py-16 text-center dark:border-neutral-700">
+    <div className="flex flex-col items-center justify-center rounded-2xl bg-neutral-50 px-6 py-16 text-center ring-1 ring-neutral-900/5 dark:bg-neutral-800/60 dark:ring-white/10">
       {Icon && <Icon className="mb-4 size-10 text-neutral-300 dark:text-neutral-600" />}
       <p className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">{title}</p>
       {message && (

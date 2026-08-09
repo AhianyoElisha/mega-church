@@ -152,8 +152,17 @@ two stages (§3.3).
 ### 2.4 Kiosk accessibility
 
 - Pass/fail is signalled by **colour and a text label**, never colour alone.
-- The member's name renders at **≥ 48pt** on the result screen.
 - The member's photo is shown on the result screen for visual confirmation.
+- The member's name is the largest element on the result screen, and is sized
+  for the distance a **counter** kiosk is read from — roughly 28-44px
+  (`kiosk-name` in `styles/tailwind.css`).
+
+  This inherited a "≥ 48pt" rule from SEMP, whose kiosk faced a queue across an
+  exam hall. Applied to a machine someone is standing directly in front of, it
+  produced a ~90px name that overflowed its card. If a kiosk is ever mounted
+  where people read it from a distance, raise the clamp rather than the
+  minimum — the constraint is legibility at the actual viewing distance, not a
+  number.
 
 ### 2.5 Server-side everything
 

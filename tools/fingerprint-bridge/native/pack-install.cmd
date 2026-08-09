@@ -142,7 +142,12 @@ if defined OK (
     echo   If "scanner detected" is False, plug the scanner in now -
     echo   the driver is staged and it will bind automatically.
     echo(
-    echo   Now open the church app in Chrome on THIS PC and go to /setup.
+    echo   Now open the church app in Chrome on THIS PC and sign in as the
+    echo   kiosk account. It will find this bridge automatically.
+    echo(
+    echo   To confirm the bridge survives a reboot ^(the thing that actually
+    echo   matters on an unattended kiosk^), restart this PC and then run:
+    echo      powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-install.ps1"
     echo ==========================================================
 ) else (
     echo ==========================================================

@@ -55,7 +55,7 @@ function LoginContent() {
   return (
     <div className="container pb-16">
       <div className="my-16 flex justify-center">
-        <Logo className="w-44" href="/login" />
+        <Logo markClassName="size-20" href="/login" />
       </div>
 
       <div className="mx-auto max-w-md space-y-6">
