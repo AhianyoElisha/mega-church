@@ -58,6 +58,55 @@ function die(msg: string): never {
   process.exit(1)
 }
 
+/**
+ * Upload the zip to Storage.
+ *
+ * More care than this looks like it needs, because of a dual-package hazard.
+ * The SDK picks the file out of the request payload with
+ *
+ *     value instanceof File || value instanceof InputFile
+ *
+ * comparing against ITS OWN copies of those classes. `node-appwrite` ships
+ * both CJS and ESM builds, `tsx` runs this script as CJS, and a dynamic
+ * `await import('node-appwrite/file')` therefore hands back the *ESM* class —
+ * a different object from the CJS one the client checks against. The
+ * `instanceof` fails and the SDK reports "File not found in payload", which
+ * says nothing at all about the real cause.
+ *
+ * So: resolve `InputFile` through `require()`, matching how the client itself
+ * was loaded, and keep a fallback for the day the loader flips to ESM.
+ * `globalThis.File` is the escape hatch — measured, the SDK's `File` IS the
+ * global one, so that identity cannot drift. It costs chunking (the whole
+ * file goes in one request), which is why it is the fallback and not the
+ * default: today's pack is 4 MB, but a future one that bundles a Node runtime
+ * would be ~80 MB and wants chunks.
+ */
+async function uploadZip(
+  storage: { createFile(bucket: string, id: string, file: unknown): Promise<unknown> },
+  fileId: string,
+  zipPath: string,
+): Promise<void> {
+  const { createRequire } = await import('node:module')
+  try {
+    const require_ = createRequire(__filename)
+    const { InputFile } = require_('node-appwrite/file') as {
+      InputFile: { fromPath(p: string, name?: string): unknown }
+    }
+    await storage.createFile(BUCKETS.kiosk_downloads, fileId, InputFile.fromPath(zipPath, ZIP_NAME))
+    return
+  } catch (e) {
+    if (!/File not found in payload/.test(e instanceof Error ? e.message : String(e))) throw e
+    console.log('  ! InputFile identity mismatch — falling back to a single-shot upload')
+  }
+
+  const bytes = readFileSync(zipPath)
+  await storage.createFile(
+    BUCKETS.kiosk_downloads,
+    fileId,
+    new File([new Uint8Array(bytes)], ZIP_NAME, { type: 'application/zip' }),
+  )
+}
+
 /** Windows PE machine type, straight from the COFF header. */
 function peMachine(file: string): string {
   const b = readFileSync(file)
@@ -190,12 +239,7 @@ async function main() {
   } catch {
     // First publish.
   }
-  const { InputFile } = await import('node-appwrite/file')
-  await storage.createFile(
-    BUCKETS.kiosk_downloads,
-    FILE_ID,
-    InputFile.fromPath(zipPath, ZIP_NAME),
-  )
+  await uploadZip(storage, FILE_ID, zipPath)
   console.log(`  ✓ published to ${BUCKETS.kiosk_downloads}/${FILE_ID}`)
   console.log('\n  Operators download it from /api/kiosk-pack while signed in as an admin.')
 }

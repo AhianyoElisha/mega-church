@@ -93,6 +93,25 @@ confirms the project is left at 0 members with no session open.
 **Do not run `npm run e2e` during a service** — it opens and closes a real
 session on First Service.
 
+## Kiosk pack — published
+
+`npm run build:kiosk-pack` built and published `church-kiosk-pack-20260809.zip`
+(4.2 MB) to `kiosk-downloads/current`. Verified after publishing, not before:
+
+- `/api/kiosk-pack` returns 401 anonymous, **403 to a kiosk account** (it is a
+  provisioning artifact, not something a kiosk needs), 200 to an admin.
+- All 10 files verify against the pack's own `SHA256SUMS.txt` after a full
+  round trip through Storage, and `church-scan.exe` is still i386 — the check
+  that would catch the byte-level corruption that bit this port once already.
+- The downloaded pack was unzipped into an empty folder with no repo, no
+  `node_modules` and no `.env`, and its bridge started and reported
+  `{"ok":true,"device":true,"scanBin":true,"nbis":true}` **against the real
+  Futronic scanner**.
+
+To provision a PC: sign in as admin, download `/api/kiosk-pack`, run
+`install.cmd`. Re-publish with `npm run build:kiosk-pack` — it overwrites the
+same `current` id, so the link never has to change.
+
 ## Not yet done
 
 Needs people and hardware, not more code:
@@ -100,11 +119,6 @@ Needs people and hardware, not more code:
 1. **End-to-end enrolment on hardware** — capture twelve real prints for one
    member and check them in at the kiosk. The pipeline is the one proven in
    SEMP, but it has not been run on a member of this congregation.
-2. **Publish the kiosk pack.** `npm run build:kiosk-pack` works — it produced a
-   4.2 MB zip, and the bundled bridge inside it was run standalone and reported
-   `{"ok":true,"device":true,"scanBin":true,"nbis":true}` against the real
-   scanner. The `kiosk-downloads` bucket now exists, so the `--no-upload` flag
-   can come off whenever you want it published.
-3. **Threshold calibration.** 33 is evidence-backed on a small corpus
+2. **Threshold calibration.** 33 is evidence-backed on a small corpus
    (`lib/biometrics/matching.ts`). Widen the corpus before trusting it against
    a large congregation — false-accept probability grows with gallery size.
