@@ -7,6 +7,7 @@
 import clsx from 'clsx'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { WrenchScrewdriverIcon } from '@heroicons/react/24/outline'
 import SwitchDarkMode from '@/shared/SwitchDarkMode'
 import Aside, { useAside } from './aside'
 import { useAuth } from './auth'
@@ -58,6 +59,23 @@ export default function AsideSidebarNavigation() {
                 </Link>
               )
             })}
+
+            {/* Diagnostic rather than a daily destination, so it sits apart
+                from the main items — but it must be reachable on a phone too,
+                and this drawer is the mobile equivalent of the account menu. */}
+            <Link
+              href="/setup"
+              onClick={close}
+              className={clsx(
+                'mt-2 flex items-center gap-3 rounded-xl px-4 py-3 text-base font-medium transition',
+                pathname.startsWith('/setup')
+                  ? 'bg-primary-500 text-neutral-950'
+                  : 'text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700',
+              )}
+            >
+              <WrenchScrewdriverIcon className="size-5 shrink-0" />
+              Kiosk setup check
+            </Link>
           </nav>
         </div>
 

@@ -4,7 +4,11 @@
 // bottom-end, white rounded-3xl panel with a shadow and a ring.
 
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react'
-import { ArrowRightOnRectangleIcon, UserCircleIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowRightOnRectangleIcon,
+  UserCircleIcon,
+  WrenchScrewdriverIcon,
+} from '@heroicons/react/24/outline'
 import Link from 'next/link'
 import Avatar from '@/shared/Avatar'
 import { useAuth } from './auth'
@@ -86,6 +90,16 @@ export default function AccountDropdown() {
               Member registry
             </Link>
           )}
+          {/* Every role can reach /setup. It is the page you go to when the
+              scanner is not working, and the person who needs it is whoever is
+              signed in at the machine that is not working. */}
+          <Link
+            href="/setup"
+            className="-m-2 flex items-center gap-3 rounded-lg p-2 text-sm text-neutral-700 transition hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700"
+          >
+            <WrenchScrewdriverIcon className="size-5 text-neutral-400" />
+            Kiosk setup check
+          </Link>
           <button
             onClick={handleSignOut}
             className="-m-2 flex cursor-pointer items-center gap-3 rounded-lg p-2 text-left text-sm text-red-600 transition hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"

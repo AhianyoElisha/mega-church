@@ -520,6 +520,16 @@ export default function KioskPage() {
           </button>
           {/* Hidden in full screen — the kiosk is locked to this view during a
               service; exit full screen to reveal the way out. */}
+          {/* Hidden in full screen along with sign-out: during a service the
+              kiosk is locked to this view. Exit full screen to get both. */}
+          {!isFullscreen && (
+            <Link
+              href="/setup"
+              className="rounded-md border border-white/20 bg-white/10 px-3 py-1.5 text-sm"
+            >
+              Setup
+            </Link>
+          )}
           {!isFullscreen &&
             (user.label === 'kiosk' ? (
               <button
@@ -568,6 +578,15 @@ export default function KioskPage() {
             <p className="mt-2 text-base font-semibold text-white/80">
               Use manual check-in below. Members can still be marked present.
             </p>
+            {/* The one place this link matters most: whoever is reading this
+                banner is the person who needs the diagnostic, and they are
+                signed in as the kiosk with no account menu to find it in. */}
+            <Link
+              href="/setup"
+              className="mt-3 inline-block rounded-lg border border-white/25 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10"
+            >
+              Run the setup check →
+            </Link>
           </div>
         )}
 
