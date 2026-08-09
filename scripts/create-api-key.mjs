@@ -15,8 +15,25 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-const PROJECT_ID = process.env.APPWRITE_PROJECT_ID_OVERRIDE ?? '6a782a65003672af80ff'
 const ENV_PATH = path.join(process.cwd(), '.env.local')
+
+/** Read the project id from .env.local rather than hardcoding it, so this
+ *  script works against any environment and the repo carries no ids. */
+function projectIdFromEnv() {
+  if (process.env.APPWRITE_PROJECT_ID) return process.env.APPWRITE_PROJECT_ID
+  if (!existsSync(ENV_PATH)) return null
+  const line = readFileSync(ENV_PATH, 'utf8')
+    .split(/\r?\n/)
+    .find((l) => l.startsWith('APPWRITE_PROJECT_ID='))
+  const value = line?.slice('APPWRITE_PROJECT_ID='.length).trim()
+  return value || null
+}
+
+const PROJECT_ID = projectIdFromEnv()
+if (!PROJECT_ID) {
+  console.error('\n✗ APPWRITE_PROJECT_ID is not set in .env.local (or the environment).')
+  process.exit(1)
+}
 
 // Exactly what the app uses, and nothing more:
 //   users/sessions — seed-users, and createEmailPasswordSession on /api/auth/login

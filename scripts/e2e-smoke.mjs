@@ -344,6 +344,27 @@ async function main() {
     kioskMembers.status === 403
       ? ok('kiosk cannot read the registry (403)')
       : bad(`kiosk registry read gave ${kioskMembers.status}`)
+
+    // ...but it MUST be able to search by name, or manual check-in is dead on
+    // the one device that needs it when a finger will not read. This shipped
+    // broken once: the kiosk called /api/members, got a 403, and silently
+    // showed an empty result list with no error anywhere.
+    // 'Ama' is a whole token in the member's full name. Appwrite fulltext
+    // matches tokens, not prefixes, so 'Testmember' (part of
+    // 'Testmember<stamp>') finds nothing and would make the field-leak check
+    // below vacuously pass against an empty result.
+    const kioskSearch = await api('/api/members/search?q=Ama')
+    if (kioskSearch.status !== 200) {
+      bad(`kiosk name search gave ${kioskSearch.status} — manual check-in is broken`)
+    } else {
+      ok('kiosk CAN search by name (manual check-in fallback works)')
+      const leaked = Object.keys(kioskSearch.body?.members?.[0] ?? {}).filter(
+        (k) => !['$id', 'full_name'].includes(k),
+      )
+      leaked.length === 0
+        ? ok('  and the search returns only an id and a name')
+        : bad(`  search leaks fields to the kiosk: ${leaked.join(', ')}`)
+    }
   } else {
     bad('kiosk login failed')
   }
