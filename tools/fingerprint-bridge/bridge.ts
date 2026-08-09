@@ -134,6 +134,18 @@ function send(res: ServerResponse, status: number, body: unknown): void {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
     'access-control-allow-headers': 'content-type',
+    // Chrome's Private Network Access: a page on a PUBLIC origin (a hosted
+    // deployment) reaching a private address (this loopback service) has its
+    // preflight rejected unless the target opts in with exactly this header.
+    //
+    // Without it, capture works when the app is served from localhost and
+    // fails the moment it is served from anywhere else — leaving only a CORS
+    // error in a console nobody standing at a kiosk is looking at.
+    //
+    // Safe to send: the bridge binds to 127.0.0.1, so only software already
+    // running on this machine can reach it. This widens nothing that
+    // `access-control-allow-origin: *` had not already opened.
+    'access-control-allow-private-network': 'true',
   });
   res.end(json);
 }
