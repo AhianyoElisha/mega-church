@@ -23,9 +23,12 @@ const LABEL_HOMES: Record<UserLabel, string> = {
 const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
   // An usher works the live monitor and does manual check-ins, and needs to be
   // able to look a member up to confirm who they are.
-  usher: ['/monitor', '/members'],
-  // A kiosk is a locked appliance. One page.
-  kiosk: ['/kiosk'],
+  usher: ['/monitor', '/members', '/setup'],
+  // A kiosk is a locked appliance — but /setup is the diagnostic for a kiosk
+  // that is not working, and the person who needs it is standing at that
+  // machine, signed in as that account. Locking them out of the page that
+  // explains the fault helps nobody.
+  kiosk: ['/kiosk', '/setup'],
 }
 
 function isPublic(pathname: string) {
