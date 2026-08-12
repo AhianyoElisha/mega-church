@@ -44,14 +44,20 @@ const isAlreadyExists = (err: unknown) =>
 
 // --- helpers ---------------------------------------------------------------
 
+const DATABASE_NAME = 'The Mega Church'
+
 async function ensureDatabase() {
   try {
-    await databases.create(DATABASE_ID, 'Mega Church')
+    await databases.create(DATABASE_ID, DATABASE_NAME)
     stats.databases.created++
     console.log(`  ✓ database ${DATABASE_ID} created`)
   } catch (err) {
     if (!isAlreadyExists(err)) throw err
     stats.databases.exists++
+    // The display name is the one thing `create` cannot fix on a re-run, and
+    // the project was first set up under a different one. Idempotent means the
+    // live project ends up matching this file, not merely surviving it.
+    await databases.update(DATABASE_ID, DATABASE_NAME)
     console.log(`  · database ${DATABASE_ID} exists`)
   }
 }

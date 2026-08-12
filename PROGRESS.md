@@ -1,6 +1,6 @@
 # Progress
 
-Module status for the Mega Church Biometric Attendance System.
+Module status for the The Mega Church Biometric Attendance System.
 See `.agent/plans/1.foundation.md` for the phase breakdown.
 
 | Phase | Module | Status |

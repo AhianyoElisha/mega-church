@@ -2,7 +2,7 @@
 
 # CLAUDE.md
 
-**Mega Church Biometric Attendance System** — fingerprint attendance for a
+**The Mega Church Biometric Attendance System** — fingerprint attendance for a
 church running two Sunday services plus an open-ended set of smaller meetings.
 
 `PRD.md` is the source of truth for data shapes, collection schema, the session

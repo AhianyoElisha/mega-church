@@ -1,4 +1,4 @@
-# Mega Church Biometric Attendance System — PRD
+# The Mega Church Biometric Attendance System — PRD
 
 This document is the source of truth for data shapes, collection schema, the
 session lifecycle, and every module's scope. Read it before writing code.
