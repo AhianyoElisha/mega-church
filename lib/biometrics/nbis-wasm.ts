@@ -40,16 +40,70 @@ let modulePromise: Promise<NbisModule> | null = null;
  * promise — a kiosk that fires two scans while loading must not instantiate
  * two copies of a 121 KB module.
  */
+/**
+ * Add the glue to the page as a CLASSIC script, once, and resolve when the
+ * global it defines is there.
+ *
+ * It must be a script tag, not `import()`. `tools/nbis-wasm/build.sh` builds
+ * with `MODULARIZE=1 EXPORT_NAME=createNbis` and *without* `EXPORT_ES6=1`, so
+ * the output is UMD: it assigns a global `createNbis` and a CommonJS export,
+ * and has no `export default`. A file with no `export` statements is still a
+ * valid ES module — one with no exports — so `import()` resolves happily and
+ * `mod.default` is `undefined`, which surfaces at the first scan as
+ * "mod.default is not a function". `verify.mjs` gets away with a default
+ * import only because Node has CommonJS interop; a browser has none.
+ *
+ * A script tag is also what the build expects: it reads
+ * `document.currentScript.src` to find its `.wasm` sibling, and under
+ * `import()` there is no currentScript to read.
+ */
+function loadNbisScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      `script[data-nbis="${src}"]`,
+    );
+    if (existing) {
+      if (existing.dataset.loaded === '1') return resolve();
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error(`failed to load ${src}`)), {
+        once: true,
+      });
+      return;
+    }
+    const el = document.createElement('script');
+    el.src = src;
+    el.async = true;
+    el.dataset.nbis = src;
+    el.addEventListener(
+      'load',
+      () => {
+        el.dataset.loaded = '1';
+        resolve();
+      },
+      { once: true },
+    );
+    el.addEventListener('error', () => reject(new Error(`failed to load ${src}`)), {
+      once: true,
+    });
+    document.head.appendChild(el);
+  });
+}
+
 export function loadNbis(): Promise<NbisModule> {
   if (!modulePromise) {
     modulePromise = (async () => {
-      // webpackIgnore: the file is a public asset fetched at runtime, not a
-      // build-time dependency. Bundling it would break Emscripten's own
-      // locateFile logic for the .wasm sibling.
-      const mod = (await import(/* webpackIgnore: true */ WASM_URL)) as {
-        default: NbisFactory;
-      };
-      return mod.default();
+      if (typeof document === 'undefined') {
+        throw new Error('the NBIS wasm module can only be loaded in a browser');
+      }
+      await loadNbisScript(WASM_URL);
+      const factory = (globalThis as unknown as { createNbis?: NbisFactory })
+        .createNbis;
+      if (typeof factory !== 'function') {
+        throw new Error(
+          `${WASM_URL} loaded but did not define createNbis — is public/nbis in step with tools/nbis-wasm/build.sh?`,
+        );
+      }
+      return factory();
     })().catch((e) => {
       // Don't cache a failure — a kiosk that loses the network briefly should
       // be able to retry rather than being poisoned until reload.

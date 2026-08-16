@@ -67,13 +67,26 @@ per-origin (it is, but that only affects the picker) — because the *device* is
 shared, so a localhost tab that captured earlier leaves its tail for the
 deployed tab to read.
 
-**Fix: reset before the handshake.** A USB port reset is the only thing that
-empties the endpoint. `Fs81Device.open()` calls `device.reset()`, re-claims,
-and only then sends `E0`. Where reset is refused it falls back to re-sending
-`E0` and discarding packets until one parses — then discards the duplicate
-replies that hunt caused, because each round enqueues a reply as well as
-consuming a packet and a resync that ends one packet off has only moved the
-fault into the handshake reads.
+**`USBDevice.reset()` does not save you.** It looks like the obvious cure and
+it is not available where it matters: on Windows 11 + Chrome, with the scanner
+freshly replugged and nothing else holding the device, it rejects with
+`NetworkError: Unable to reset the device.` `Fs81Device.open()` still attempts
+it — it is free and works on platforms that support it — but the fix cannot
+depend on it.
+
+**Fix: drain the backlog.** `open()` sends `E0` and then reads packets,
+discarding each one that does not parse as geometry, until the real reply
+turns up. Measured against a page killed mid-frame: 299 packets of pixels
+discarded, the info packet found in the 300th, `320x480` — a whole frame, as
+expected.
+
+**Do not `await` that `E0` write.** With a backlog queued, a one-byte
+`transferOut` was observed both landing immediately *and* never settling until
+the backlog had been read. Awaiting it deadlocks in the second case, which is
+precisely the case being repaired. Fire it, then read; it lands on its own and
+its reply arrives behind the stale packets. Issuing exactly one `E0` is also
+what bounds the drain — one reply is in flight, so the loop terminates at it
+rather than reading an empty pipe forever.
 
 **Never run two command sequences at once,** for the same reason: they do not
 race, they desynchronise the pipe permanently. `Fs81Device` serialises every
