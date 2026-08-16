@@ -46,10 +46,13 @@ const Logo: React.FC<LogoProps> = ({
         priority
         className={clsx('shrink-0 object-contain', markClassName)}
       />
+      {/* Two lines, not three: "THE MEGA" over "CHURCH" keeps the lockup the
+          same height as the badge beside it. A separate "THE" line would make
+          the wordmark taller than the mark it sits next to. */}
       {!markOnly && (
         <span className="flex flex-col leading-none">
           <span className="text-sm font-bold tracking-tight text-neutral-950 dark:text-white">
-            MEGA
+            THE MEGA
           </span>
           <span className="text-sm font-bold tracking-tight text-primary-500">CHURCH</span>
         </span>

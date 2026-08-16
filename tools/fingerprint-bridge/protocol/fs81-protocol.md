@@ -46,6 +46,40 @@ per frame OUT DD 32 00              lamp on
 close     OUT DD 00 00              lamp off
 ```
 
+## The IN endpoint is a queue, and it survives your page
+
+There is no request id anywhere in this protocol: a reply belongs to whoever
+reads next, not to whoever asked. Two consequences, both observed as "the
+scanner is broken" on hardware that is fine.
+
+**A frame outlives the page that asked for it.** A frame is 153,600 bytes —
+exactly 300 packets of 512. Reload the tab, close it, or lose the capture
+mid-read, and the rest of that frame stays queued on `0x82`. Nothing in
+`open()` tells the device to drop it, so the next `E0` read returns *pixels*:
+bytes 4..7 are four greyscale values and the geometry parses as nonsense.
+
+> Seen at a live kiosk: `implausible geometry 14149x22119` — `0x3745`, `0x5667`,
+> i.e. the bytes `37 45 56 67`, greyscale 55/69/86/103. A brightness ramp, not
+> a geometry. The scanner was plugged in and working.
+
+Switching origins makes it likelier, not because WebUSB permission is
+per-origin (it is, but that only affects the picker) — because the *device* is
+shared, so a localhost tab that captured earlier leaves its tail for the
+deployed tab to read.
+
+**Fix: reset before the handshake.** A USB port reset is the only thing that
+empties the endpoint. `Fs81Device.open()` calls `device.reset()`, re-claims,
+and only then sends `E0`. Where reset is refused it falls back to re-sending
+`E0` and discarding packets until one parses — then discards the duplicate
+replies that hunt caused, because each round enqueues a reply as well as
+consuming a packet and a resync that ends one packet off has only moved the
+fault into the handshake reads.
+
+**Never run two command sequences at once,** for the same reason: they do not
+race, they desynchronise the pipe permanently. `Fs81Device` serialises every
+public method behind one lock, and aborts are honoured only *between* frames —
+abandoning a half-read frame is precisely what strands the tail.
+
 ## The vertical flip — do not skip this
 
 `libScanAPI` returns the image with **row order reversed** relative to the

@@ -1,4 +1,4 @@
-# Mega Church — Biometric Attendance
+# The Mega Church — Biometric Attendance
 
 Fingerprint attendance for a church running two Sunday services plus an
 open-ended set of smaller meetings.

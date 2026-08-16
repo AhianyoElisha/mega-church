@@ -171,7 +171,7 @@ export async function GET(request: NextRequest) {
     const report = await buildDayReport(databases, date)
 
     const wb = new ExcelJS.Workbook()
-    wb.creator = 'Mega Church Attendance'
+    wb.creator = 'The Mega Church Attendance'
     wb.created = new Date()
 
     if (scopeRaw === 'all') {
@@ -241,7 +241,7 @@ export async function GET(request: NextRequest) {
   const members = await listMembers(databases, { status: 'active' })
 
   const wb = new ExcelJS.Workbook()
-  wb.creator = 'Mega Church Attendance'
+  wb.creator = 'The Mega Church Attendance'
   wb.created = new Date()
   const ws = wb.addWorksheet(meeting.name.slice(0, 28) || 'Attendance')
 

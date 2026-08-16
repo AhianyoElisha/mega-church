@@ -17,8 +17,8 @@ const poppins = Poppins({
 
 export const metadata: Metadata = {
   title: {
-    template: '%s · Mega Church',
-    default: 'Mega Church — Attendance',
+    template: '%s · The Mega Church',
+    default: 'The Mega Church — Attendance',
   },
   description: 'Biometric attendance for services and meetings.',
 }

@@ -9,7 +9,7 @@ export default function AppFooter() {
       <div className="container flex flex-col items-center justify-between gap-4 sm:flex-row">
         <Logo markClassName="size-7" />
         <p className="text-sm text-neutral-400 dark:text-neutral-500">
-          Mega Church attendance · biometric check-in
+          The Mega Church · biometric attendance
         </p>
       </div>
     </footer>

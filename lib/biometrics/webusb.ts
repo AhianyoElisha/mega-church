@@ -40,7 +40,24 @@ export const FINGER_OFF_THRESHOLD = 150;
 const MIN_DIM = 64;
 const MAX_DIM = 2048;
 
+/**
+ * How many packets `open()` will discard while hunting for the real `E0`
+ * reply. A whole 320x480 frame is 300 packets of 512, so anything short of
+ * that could still be a frame tail left queued by a previous page.
+ */
+const MAX_RESYNC_PACKETS = 320;
+
 export type Geometry = { width: number; height: number };
+
+/** True when bytes 4..7 could be a real FS81 geometry rather than pixels. */
+export function looksLikeInfoPacket(info: Uint8Array): boolean {
+  try {
+    parseDeviceInfo(info);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Parse the `E0` reply. Bytes 4..5 are width and 6..7 height, big-endian
@@ -59,7 +76,12 @@ export function parseDeviceInfo(info: Uint8Array): Geometry {
     height < MIN_DIM ||
     height > MAX_DIM
   ) {
-    throw new Error(`FS81 reported implausible geometry ${width}x${height}`);
+    // Name the usual culprit. These four bytes being ordinary greyscale values
+    // means we are reading the tail of a queued frame, not an info packet.
+    throw new Error(
+      `FS81 reported implausible geometry ${width}x${height} ` +
+        `(bytes 4..7 = ${[...info.slice(4, 8)].map((b) => b.toString(16).padStart(2, '0')).join(' ')})`,
+    );
   }
   return { width, height };
 }
@@ -173,8 +195,26 @@ export type CaptureResult = {
 export class Fs81Device {
   private geometry: Geometry | null = null;
   private framesRead = 0;
+  /**
+   * Serialises everything that touches the endpoints.
+   *
+   * The bulk pipe has no request ids: a reply belongs to whoever reads next,
+   * not to whoever asked. Two overlapping command sequences — the kiosk's
+   * capture loop re-arming while the previous long-poll capture is still
+   * running, say — therefore do not merely race, they permanently desynchronise
+   * the pipe, and every read from then on is offset by somebody else's payload.
+   * Queueing costs a capture a few hundred ms; interleaving costs the scanner.
+   */
+  private lock: Promise<unknown> = Promise.resolve();
 
   private constructor(private readonly device: USBDevice) {}
+
+  private withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.lock.then(fn, fn);
+    // Keep the chain alive even when a caller's promise rejects.
+    this.lock = run.catch(() => {});
+    return run;
+  }
 
   /** Prompt the user to pick the scanner. MUST be called from a click. */
   static async request(): Promise<Fs81Device> {
@@ -206,15 +246,92 @@ export class Fs81Device {
 
   /** Open, claim, and run the three-command handshake. Idempotent. */
   async open(): Promise<Geometry> {
-    if (this.geometry) return this.geometry;
+    return this.withLock(() => this.openUnlocked());
+  }
+
+  private async claim(): Promise<void> {
     if (!this.device.opened) await this.device.open();
     if (this.device.configuration === null) {
       await this.device.selectConfiguration(1);
     }
+    // Claiming an already-claimed interface resolves; it is not an error.
     await this.device.claimInterface(0);
+  }
 
-    const info = await this.command(CMD_INFO, 512);
-    const geometry = parseDeviceInfo(info);
+  /**
+   * Empty the bulk pipe and re-claim.
+   *
+   * WHY THIS EXISTS — the failure it fixes looks exactly like a broken
+   * scanner. What is queued on `0x82` is *device* state, not page state, and
+   * nothing about a reload, a closed tab, a switch from localhost to the
+   * deployed origin, or a crashed capture tells the FS81 to drop it. A frame
+   * is 153,600 bytes; interrupt one and its tail sits in the endpoint waiting.
+   * The next `open()` sends `E0` and reads 512 bytes of *that* — so bytes 4..7,
+   * where the geometry lives, are four greyscale pixels, and the kiosk reports
+   * something like "implausible geometry 14149x22119" (`37 45 56 67` — a
+   * brightness ramp) on hardware that is plugged in and perfectly healthy.
+   *
+   * A port reset is the only thing that discards it. Best effort: if the
+   * platform refuses, `readInfo()` still resynchronises by discarding packets.
+   */
+  private async resetPipe(): Promise<void> {
+    try {
+      await this.device.reset();
+    } catch {
+      // Some platforms refuse reset on a claimed interface, and some refuse it
+      // outright. Not fatal — the packet hunt below is the fallback.
+    }
+    try {
+      await this.claim();
+    } catch {
+      // Likewise: reset may or may not have dropped the claim.
+    }
+  }
+
+  /**
+   * Ask for device info until an answer arrives that is actually device info.
+   *
+   * Every round re-sends `E0` before reading, so each read has a reply on the
+   * way and the loop can never block on an empty pipe — it discards exactly one
+   * stale packet per round and terminates at the first real info packet.
+   */
+  private async readInfo(): Promise<Geometry> {
+    let firstReply: Uint8Array | null = null;
+    for (let round = 1; round <= MAX_RESYNC_PACKETS; round++) {
+      const reply = await this.command(CMD_INFO, 512);
+      firstReply ??= reply;
+      if (!looksLikeInfoPacket(reply)) continue;
+
+      // Each round asked for one reply and consumed one packet, so the backlog
+      // never shrank: `round - 1` duplicate info replies are queued behind this
+      // one. They are certainly there, so draining them cannot block — and
+      // leaving them would put the handshake reads a packet off, which is the
+      // same desync one layer down.
+      for (let i = 0; i < round - 1; i++) await this.read(512);
+      return parseDeviceInfo(reply);
+    }
+    // Report what the *first* reply claimed: it is the one an operator would
+    // otherwise see, and the byte values say whether this is pixels or a
+    // genuinely wrong device.
+    parseDeviceInfo(firstReply ?? new Uint8Array(0));
+    throw new Error('FS81 never returned a usable info packet');
+  }
+
+  private async openUnlocked(): Promise<Geometry> {
+    if (this.geometry) return this.geometry;
+    await this.claim();
+    await this.resetPipe();
+
+    let geometry: Geometry;
+    try {
+      geometry = await this.readInfo();
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `${detail}. Unplug the scanner, plug it back in, then tap Connect again.`,
+      );
+    }
+
     // Both replies are required — the device will not return frames without
     // them — but their contents have never been decoded.
     await this.command(CMD_HANDSHAKE_A, 512);
@@ -260,14 +377,26 @@ export class Fs81Device {
 
   /** One frame, in WIRE order (not yet flipped). */
   async readFrame(): Promise<Uint8Array> {
-    const geo = this.geometry ?? (await this.open());
-    await this.setLamp(LAMP_ON);
-    // The vendor issues FE for the first frame after open and 6E thereafter.
-    const cmd = this.framesRead === 0 ? CMD_FRAME_FIRST : CMD_FRAME;
-    await this.write([cmd]);
-    const pixels = await this.read(geo.width * geo.height);
-    this.framesRead++;
-    return pixels;
+    return this.withLock(() => this.readFrameUnlocked());
+  }
+
+  private async readFrameUnlocked(): Promise<Uint8Array> {
+    const geo = this.geometry ?? (await this.openUnlocked());
+    try {
+      await this.setLamp(LAMP_ON);
+      // The vendor issues FE for the first frame after open and 6E thereafter.
+      const cmd = this.framesRead === 0 ? CMD_FRAME_FIRST : CMD_FRAME;
+      await this.write([cmd]);
+      const pixels = await this.read(geo.width * geo.height);
+      this.framesRead++;
+      return pixels;
+    } catch (e) {
+      // A frame that failed part-way leaves the rest of itself queued. Forget
+      // the geometry so the next open() runs the full resync instead of
+      // reading those pixels as an info packet.
+      this.geometry = null;
+      throw e;
+    }
   }
 
   /**
@@ -275,8 +404,12 @@ export class Fs81Device {
    * shape of decision semp-scan makes, so both kiosks accept the same presses.
    */
   async captureFinger(opts: CaptureOptions = {}): Promise<CaptureResult> {
+    return this.withLock(() => this.captureFingerUnlocked(opts));
+  }
+
+  private async captureFingerUnlocked(opts: CaptureOptions): Promise<CaptureResult> {
     const { timeoutMs = 25_000, waitClear = false, dose = 4, signal } = opts;
-    const geo = await this.open();
+    const geo = await this.openUnlocked();
     const deadline = Date.now() + timeoutMs;
 
     let cleared = !waitClear;
@@ -284,8 +417,11 @@ export class Fs81Device {
 
     try {
       while (Date.now() < deadline) {
+        // Abort is checked BETWEEN frames and never inside read(): abandoning a
+        // half-read frame leaves its tail queued, which is the desync this
+        // class exists to avoid. One frame is ~100ms, so this is responsive.
         if (signal?.aborted) throw new Error('capture aborted');
-        const wire = await this.readFrame();
+        const wire = await this.readFrameUnlocked();
         const variance = meanBlockVariance(wire, geo.width, geo.height);
 
         if (!cleared) {
@@ -318,9 +454,19 @@ export class Fs81Device {
     }
   }
 
+  /**
+   * Leave the device the way we would like to find it: lamp off, nothing
+   * queued. Call it on unmount and on pagehide — a tab that simply disappears
+   * mid-frame is what strands the pixels the next open() has to resync past.
+   */
   async close(): Promise<void> {
+    return this.withLock(() => this.closeUnlocked());
+  }
+
+  private async closeUnlocked(): Promise<void> {
     try {
       await this.setLamp(LAMP_OFF);
+      await this.device.reset();
       await this.device.releaseInterface(0);
     } catch {
       // Closing a device that already went away is not an error worth raising.
