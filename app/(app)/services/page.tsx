@@ -42,6 +42,13 @@ export default function ServicesPage() {
   const session = active.data?.ok ? active.data.session : null
   const stats = useLiveStats(session?.occurrence.$id ?? null)
 
+  // A refusal is not an absence. resolveActiveSession() throws when more than
+  // one occurrence is open, which arrives here as a rejected query — and
+  // falling through to "No session is open" would hide the one message that
+  // says how to fix it, on the very page that exists to fix it.
+  const refusal =
+    active.error?.message ?? (active.data && !active.data.ok ? active.data.error : null)
+
   const rows = meetings.data?.ok ? meetings.data.meetings.filter((m) => !m.archived) : []
   const services = rows.filter((m) => m.kind === 'service')
   const others = rows.filter((m) => m.kind === 'meeting')
@@ -135,6 +142,10 @@ export default function ServicesPage() {
             </div>
           )}
         </Card>
+      ) : refusal ? (
+        <Banner tone="error" className="mb-8">
+          <span className="font-semibold">Cannot read the open session.</span> {refusal}
+        </Banner>
       ) : (
         <Banner tone="info" className="mb-8">
           No session is open. Activate one below to start taking attendance.
