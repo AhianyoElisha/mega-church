@@ -4,8 +4,13 @@
 // queryKey: ['members'] })` clears every member query at once.
 
 export const queryKeys = {
-  members: (filters: { search?: string; status?: string } = {}) =>
-    ['members', filters.search ?? '', filters.status ?? ''] as const,
+  members: (filters: { search?: string; status?: string; constituency?: string } = {}) =>
+    [
+      'members',
+      filters.search ?? '',
+      filters.status ?? '',
+      filters.constituency ?? '',
+    ] as const,
   member: (id: string) => ['members', 'one', id] as const,
   memberStats: ['members', 'stats'] as const,
 
@@ -28,6 +33,20 @@ export const queryKeys = {
   biometricsMember: (memberId: string) => ['biometrics', 'member', memberId] as const,
   bridgeHealth: ['biometrics', 'bridge-health'] as const,
   matcherHealth: ['biometrics', 'matcher-health'] as const,
+
+  // Constituencies and bacentas share the `groups` prefix so one
+  // `invalidateQueries({ queryKey: ['groups'] })` after any group write
+  // refreshes the lists, the counts and the dropdowns together — a member
+  // reassigned on one screen changes a count on three others.
+  constituencies: ['groups', 'constituencies'] as const,
+  constituency: (id: string) => ['groups', 'constituencies', 'one', id] as const,
+  bacentas: ['groups', 'bacentas'] as const,
+  bacenta: (id: string) => ['groups', 'bacentas', 'one', id] as const,
+  myGroups: ['groups', 'mine'] as const,
+  leaders: ['groups', 'leaders'] as const,
+
+  birthdays: ['birthdays'] as const,
+  pushStatus: ['push', 'status'] as const,
 
   dashboard: ['dashboard'] as const,
 } as const

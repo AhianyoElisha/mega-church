@@ -26,6 +26,15 @@ export type Member = {
   whatsapp_number: string | null
   /** Descriptive only. NEVER gates attendance (PRD §2.1). */
   home_service: ServiceSlot
+  /**
+   * Where this member LIVES — exactly one, so it is a field rather than a join
+   * (PRD §1.7). Null for anyone registered before the constituencies existed;
+   * the bulk assigner on `/constituencies/[id]` is how that backlog clears.
+   *
+   * Like `home_service`, this NEVER gates attendance. A member is marked
+   * present by who they are, not by where they live.
+   */
+  constituency_id: string | null
   status: MemberStatus
   created_by: string | null
   $createdAt: string
@@ -64,6 +73,14 @@ export type MemberInput = {
   call_number: string
   whatsapp_number?: string | null
   home_service?: ServiceSlot
+  constituency_id?: string | null
+  /**
+   * The bacentas this member serves in. Many-to-many, so it is NOT a column on
+   * the member — the route writes it to `bacenta_members` after the member row
+   * itself is saved. Sending `[]` clears every bacenta; omitting the key
+   * entirely leaves them untouched, which is what a partial edit needs.
+   */
+  bacenta_ids?: string[]
   status?: MemberStatus
 }
 
@@ -77,13 +94,19 @@ export type MemberEnrolment = {
   complete: boolean
 }
 
-export type MemberWithEnrolment = Member & { enrolment: MemberEnrolment }
+export type MemberWithEnrolment = Member & {
+  enrolment: MemberEnrolment
+  /** Bacenta `$id`s, joined in-memory from `bacenta_members` by the route. */
+  bacenta_ids: string[]
+}
 
 export type ListMembersResponse =
   | { ok: true; members: MemberWithEnrolment[]; total: number }
   | { ok: false; error: string }
 
-export type MemberResponse = { ok: true; member: Member } | { ok: false; error: string }
+export type MemberResponse =
+  | { ok: true; member: Member; bacenta_ids?: string[] }
+  | { ok: false; error: string }
 
 export type MemberStatsResponse = {
   ok: true

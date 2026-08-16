@@ -14,6 +14,7 @@ import MemberPhotoUpload from '@/components/member-photo-upload'
 import FingerEnrolment from '@/components/finger-enrolment'
 import { useDeleteMember, useMember, useUpdateMember } from '@/lib/queries/members'
 import { useMemberHistory } from '@/lib/queries/attendance'
+import { useBacentas, useConstituencies } from '@/lib/queries/groups'
 import { birthdayLabel, fullName, initials } from '@/lib/members/types'
 
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -25,6 +26,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const { user } = useAuth()
 
   const { data, isLoading } = useMember(id)
+  const constituencies = useConstituencies()
+  const bacentaQuery = useBacentas()
   const history = useMemberHistory(id)
   const update = useUpdateMember()
   const remove = useDeleteMember()
@@ -56,6 +59,18 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   const member = data.member
   const name = fullName(member)
+  const bacentaIds = data.bacenta_ids ?? []
+
+  // Resolved from the group lists rather than stored on the member: a renamed
+  // constituency has to read correctly here without a migration.
+  const constituencyName =
+    constituencies.data?.ok
+      ? (constituencies.data.constituencies.find((c) => c.$id === member.constituency_id)?.name ??
+        null)
+      : null
+  const memberBacentas = bacentaQuery.data?.ok
+    ? bacentaQuery.data.bacentas.filter((b) => bacentaIds.includes(b.$id))
+    : []
 
   const handleSave = async (values: MemberFormValues) => {
     setError(null)
@@ -142,6 +157,26 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <DescriptionDetails>
                 {member.home_service === 'first' ? 'First Service (Psalms Chapel)' : 'Second Service'}
               </DescriptionDetails>
+
+              <DescriptionTerm>Constituency</DescriptionTerm>
+              <DescriptionDetails>
+                {constituencyName ?? <span className="text-neutral-400">Not recorded</span>}
+              </DescriptionDetails>
+
+              <DescriptionTerm>Bacentas</DescriptionTerm>
+              <DescriptionDetails>
+                {memberBacentas.length === 0 ? (
+                  <span className="text-neutral-400">None</span>
+                ) : (
+                  <span className="flex flex-wrap gap-1.5">
+                    {memberBacentas.map((b) => (
+                      <Badge key={b.$id} color="yellow">
+                        {b.category_name ? `${b.category_name} · ${b.name}` : b.name}
+                      </Badge>
+                    ))}
+                  </span>
+                )}
+              </DescriptionDetails>
             </DescriptionList>
             <p className="mt-4 text-xs text-neutral-400 dark:text-neutral-500">
               The usual service is a note, not a rule — {member.first_name} can be marked present
@@ -158,6 +193,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               </h2>
               <MemberForm
                 initial={member}
+                initialBacentaIds={bacentaIds}
                 submitLabel="Save changes"
                 submitting={update.isPending}
                 error={error}

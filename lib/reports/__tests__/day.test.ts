@@ -15,6 +15,7 @@ function member(id: string, last: string): Member {
     call_number: `+23324000000${id}`,
     whatsapp_number: null,
     home_service: 'second',
+    constituency_id: null,
     status: 'active',
     created_by: null,
     $createdAt: '2026-01-01T00:00:00.000Z',

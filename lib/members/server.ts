@@ -128,6 +128,23 @@ export function validateMemberInput(
     out.home_service = 'second'
   }
 
+  // Where the member lives. Optional even on create: the four constituencies
+  // were introduced after the congregation was already registered, and
+  // refusing a registration for want of one would block the front desk. That
+  // the id NAMES a real constituency is checked in the route, which has a
+  // database handle; this only checks the shape.
+  if (body.constituency_id !== undefined) {
+    if (body.constituency_id === null || body.constituency_id === '') {
+      out.constituency_id = null
+    } else if (typeof body.constituency_id !== 'string' || body.constituency_id.length > 64) {
+      return { ok: false, error: 'That constituency is not valid.' }
+    } else {
+      out.constituency_id = body.constituency_id
+    }
+  } else if (need) {
+    out.constituency_id = null
+  }
+
   if (body.status !== undefined) {
     if (body.status !== 'active' && body.status !== 'inactive') {
       return { ok: false, error: 'status must be "active" or "inactive".' }
@@ -138,6 +155,22 @@ export function validateMemberInput(
   }
 
   return { ok: true, value: out }
+}
+
+/**
+ * Pull `bacenta_ids` out of a request body.
+ *
+ * Kept apart from `validateMemberInput` because it is NOT a member column —
+ * bacenta membership is many-to-many and lands in `bacenta_members` after the
+ * member row is written. Returning `undefined` for an absent key is
+ * load-bearing: a PATCH that never mentions bacentas must leave them alone,
+ * while an explicit `[]` clears them.
+ */
+export function readBacentaIds(body: unknown): string[] | undefined {
+  const raw = (body as { bacenta_ids?: unknown } | null)?.bacenta_ids
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw)) return []
+  return [...new Set(raw.filter((v): v is string => typeof v === 'string' && v.length > 0))]
 }
 
 /** Recompute the denormalised search field whenever a name part changes. */
@@ -171,6 +204,7 @@ export async function createMember(
     birth_day: fields.birth_day ?? null,
     address: fields.address ?? null,
     whatsapp_number: fields.whatsapp_number ?? null,
+    constituency_id: fields.constituency_id ?? null,
     created_by: createdBy,
   })
   return memberDocToMember(doc as Models.Document & Record<string, unknown>)
@@ -196,11 +230,18 @@ export async function updateMember(
 
 export async function listMembers(
   databases: Databases,
-  filters: { search?: string; status?: string } = {},
+  filters: { search?: string; status?: string; constituencyId?: string } = {},
 ): Promise<Member[]> {
   const base: string[] = []
   if (filters.status === 'active' || filters.status === 'inactive') {
     base.push(Query.equal('status', filters.status))
+  }
+  // Pushed to the server rather than filtered in memory: a constituency head's
+  // whole view is this one query, and shipping the entire registry to filter
+  // four hundred people out of it is the difference between a page that opens
+  // and one that times out.
+  if (filters.constituencyId) {
+    base.push(Query.equal('constituency_id', filters.constituencyId))
   }
   if (filters.search && filters.search.trim().length >= 2) {
     base.push(Query.search('full_name', filters.search.trim()))
@@ -232,7 +273,7 @@ export async function listMembers(
 export async function deleteMemberCascade(
   databases: Databases,
   id: string,
-): Promise<{ templates: number; roster: number; records: number }> {
+): Promise<{ templates: number; roster: number; records: number; bacentas: number }> {
   const dbAny = databases as unknown as {
     deleteDocuments?: (db: string, coll: string, queries?: string[]) => Promise<unknown>
   }
@@ -262,11 +303,16 @@ export async function deleteMemberCascade(
 
   const templates = await purge(COLLECTIONS.biometric_templates, 'member_id')
   const roster = await purge(COLLECTIONS.meeting_members, 'member_id')
+  // Bacenta membership is a join collection and Appwrite has no cascade, so a
+  // skipped purge here leaves the choir's roster counting a person who no
+  // longer exists. The constituency needs no equivalent — it is a field ON the
+  // member document, and goes when the document does.
+  const bacentas = await purge(COLLECTIONS.bacenta_members, 'member_id')
   // Attendance history is deleted last and deliberately: it is the only one of
   // the three whose loss changes a past count, so if an earlier step fails the
   // history is still intact.
   const records = await purge(COLLECTIONS.attendance_records, 'member_id')
 
   await databases.deleteDocument(DATABASE_ID, COLLECTIONS.members, id)
-  return { templates, roster, records }
+  return { templates, roster, records, bacentas }
 }

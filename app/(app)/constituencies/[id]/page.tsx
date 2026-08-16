@@ -1,0 +1,167 @@
+'use client'
+
+import { use, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { Button } from '@/shared/Button'
+import { Badge } from '@/shared/Badge'
+import { Banner, Card, LoadingRow, PageHeader, PageWrap, StatCard, TabBar } from '@/components/ui'
+import GroupMemberAssigner from '@/components/group-member-assigner'
+import GroupRosterTable from '@/components/group-roster-table'
+import { useDialog } from '@/components/dialog'
+import { useAuth } from '@/components/auth'
+import {
+  useAssignConstituency,
+  useConstituency,
+  useDeleteConstituency,
+} from '@/lib/queries/groups'
+
+// Next 16: page params are a promise.
+export default function ConstituencyPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
+  const router = useRouter()
+  const { user } = useAuth()
+  const { confirm } = useDialog()
+
+  const { data, isLoading, error } = useConstituency(id)
+  const assign = useAssignConstituency()
+  const remove = useDeleteConstituency()
+  const [tab, setTab] = useState<'members' | 'assign'>('members')
+
+  const isAdmin = user?.label === 'admin'
+
+  if (isLoading) {
+    return (
+      <PageWrap>
+        <Card padded={false}>
+          <LoadingRow />
+        </Card>
+      </PageWrap>
+    )
+  }
+
+  // A 403 lands here for a head who followed a link to a group they do not
+  // head. The message from the server already says so; showing it verbatim
+  // beats a generic "something went wrong".
+  if (error || !data?.ok) {
+    return (
+      <PageWrap>
+        <Banner tone="error">
+          {error instanceof Error ? error.message : (data as { error?: string })?.error ?? 'Could not load that constituency.'}
+        </Banner>
+        <div className="mt-6">
+          <Button plain href={isAdmin ? '/constituencies' : '/my-groups'}>
+            Back
+          </Button>
+        </div>
+      </PageWrap>
+    )
+  }
+
+  const group = data.group
+  const members = data.members
+  const active = members.filter((m) => m.status === 'active').length
+  const memberIds = members.map((m) => m.$id)
+
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: `Delete ${group.name}?`,
+      message: (
+        <>
+          The {members.length} member{members.length === 1 ? '' : 's'} in it will NOT be
+          deleted — they simply stop having a constituency, and can be assigned to another one.
+          Attendance history is untouched.
+        </>
+      ),
+      confirmText: 'Delete constituency',
+      tone: 'danger',
+    })
+    if (!ok) return
+    await remove.mutateAsync({ id })
+    router.push('/constituencies')
+  }
+
+  return (
+    <PageWrap>
+      <PageHeader
+        title={group.name}
+        subtitle={group.description ?? 'A constituency — where these members live.'}
+        actions={
+          isAdmin && (
+            <>
+              <Button plain href="/constituencies">
+                All constituencies
+              </Button>
+              <Button plain onClick={handleDelete} disabled={remove.isPending}>
+                Delete
+              </Button>
+            </>
+          )
+        }
+      />
+
+      <div className="mb-8 grid gap-4 sm:grid-cols-3">
+        <StatCard label="Members" value={members.length} />
+        <StatCard label="Active" value={active} />
+        <StatCard
+          label="Head"
+          value={
+            group.head_name ?? <span className="text-base text-neutral-400">Not appointed</span>
+          }
+        />
+      </div>
+
+      {isAdmin && (
+        <TabBar
+          className="mb-6"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { value: 'members', label: `Members (${members.length})` },
+            { value: 'assign', label: 'Assign members' },
+          ]}
+        />
+      )}
+
+      {tab === 'members' || !isAdmin ? (
+        <Card padded={false}>
+          <GroupRosterTable members={members} linkToMembers={isAdmin} />
+        </Card>
+      ) : (
+        <Card>
+          <h2 className="mb-1 text-base font-semibold text-neutral-950 dark:text-white">
+            Add members to {group.name}
+          </h2>
+          <p className="mb-5 text-sm text-neutral-500 dark:text-neutral-400">
+            Tick everyone who lives here and add them in one go. Filter by{' '}
+            <strong>No constituency yet</strong> to work through the members registered before
+            constituencies existed.
+          </p>
+          <GroupMemberAssigner
+            kind="constituency"
+            groupName={group.name}
+            currentMemberIds={memberIds}
+            busy={assign.isPending}
+            onAssign={async (ids) => {
+              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'add' })
+              if (!res.ok) throw new Error(res.error)
+            }}
+            onRemove={async (ids) => {
+              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'remove' })
+              if (!res.ok) throw new Error(res.error)
+            }}
+          />
+        </Card>
+      )}
+
+      {!isAdmin && (
+        <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
+          You are signed in as a head, so this view is read-only.{' '}
+          <Link href="/my-groups" className="underline">
+            Your other groups
+          </Link>
+        </p>
+      )}
+    </PageWrap>
+  )
+}

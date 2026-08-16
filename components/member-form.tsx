@@ -3,12 +3,15 @@
 // Registration / edit form. Every field in PRD §1.1, built from PickLT's
 // fieldset primitives so it matches the rest of the product exactly.
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/shared/Button'
+import { Checkbox } from '@/shared/Checkbox'
 import { Description, ErrorMessage, Field, FieldGroup, Fieldset, Label, Legend } from '@/shared/fieldset'
 import Input from '@/shared/Input'
 import Select from '@/shared/Select'
 import Textarea from '@/shared/Textarea'
+import { useBacentas, useConstituencies } from '@/lib/queries/groups'
+import { buildBacentaTree } from '@/lib/groups/tree'
 import type { Member, MemberInput } from '@/lib/members/types'
 
 const MONTHS = [
@@ -23,6 +26,7 @@ export type MemberFormValues = MemberInput
 
 export default function MemberForm({
   initial,
+  initialBacentaIds,
   submitLabel,
   submitting,
   error,
@@ -30,6 +34,8 @@ export default function MemberForm({
   onCancel,
 }: {
   initial?: Member
+  /** Which bacentas this member already serves in, when editing. */
+  initialBacentaIds?: string[]
   submitLabel: string
   submitting?: boolean
   error?: string | null
@@ -46,7 +52,34 @@ export default function MemberForm({
   const [whatsapp, setWhatsapp] = useState(initial?.whatsapp_number ?? '')
   const [homeService, setHomeService] = useState(initial?.home_service ?? 'second')
   const [status, setStatus] = useState(initial?.status ?? 'active')
+  const [constituency, setConstituency] = useState(initial?.constituency_id ?? '')
+  const [bacentas, setBacentas] = useState<Set<string>>(new Set(initialBacentaIds ?? []))
   const [localError, setLocalError] = useState<string | null>(null)
+
+  const constituencyQuery = useConstituencies()
+  const bacentaQuery = useBacentas()
+
+  const constituencies = constituencyQuery.data?.ok
+    ? constituencyQuery.data.constituencies
+    : []
+
+  // The same tree the bacentas page renders, so the choices here are grouped
+  // exactly as an admin arranged them: choirs under Choir, Technical Team on
+  // its own. Orphans are included rather than hidden — a bacenta with real
+  // members in it must remain pickable even if its category was deleted.
+  const bacentaTree = useMemo(() => {
+    if (!bacentaQuery.data?.ok) return null
+    return buildBacentaTree(bacentaQuery.data.categories, bacentaQuery.data.bacentas)
+  }, [bacentaQuery.data])
+
+  const toggleBacenta = (id: string) => {
+    setBacentas((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const maxDay = month ? DAYS_IN_MONTH[Number(month) - 1] : 31
 
@@ -78,6 +111,12 @@ export default function MemberForm({
       call_number: call.trim(),
       whatsapp_number: whatsapp.trim() || null,
       home_service: homeService,
+      // '' is the "—" option, which means "not recorded", not a group id.
+      constituency_id: constituency || null,
+      // Always sent, including as `[]`. The route treats an absent key as
+      // "leave bacentas alone" and an empty array as "clear them" — and this
+      // form always knows the complete answer for this person, so it says so.
+      bacenta_ids: [...bacentas],
       status,
     })
   }
@@ -211,6 +250,108 @@ export default function MemberForm({
           </div>
         </FieldGroup>
 
+        <FieldGroup>
+          <Legend>Constituency</Legend>
+          <Field>
+            <Label>Where they live</Label>
+            <Select
+              value={constituency}
+              onChange={(e) => setConstituency(e.target.value)}
+              disabled={constituencyQuery.isLoading}
+            >
+              <option value="">— not recorded —</option>
+              {constituencies.map((c) => (
+                <option key={c.$id} value={c.$id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+            <Description>
+              A member belongs to exactly one constituency. It can be left blank now and filled
+              in later from the constituency page, which assigns many members at once.
+            </Description>
+          </Field>
+          {constituencies.length === 0 && !constituencyQuery.isLoading && (
+            <p className="text-sm text-neutral-500 dark:text-neutral-400">
+              No constituencies have been created yet.
+            </p>
+          )}
+        </FieldGroup>
+
+        <FieldGroup>
+          <Legend>Bacentas</Legend>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
+            The work groups this member serves in. Tick as many as apply — someone can sing in
+            two choirs and run the sound desk at the same time.
+          </p>
+
+          {bacentaQuery.isLoading ? (
+            <p className="text-sm text-neutral-400">Loading bacentas…</p>
+          ) : !bacentaTree ||
+            (bacentaTree.categories.length === 0 &&
+              bacentaTree.standalone.length === 0 &&
+              bacentaTree.orphans.length === 0) ? (
+            <p className="text-sm text-neutral-500 dark:text-neutral-400">
+              No bacentas have been created yet.
+            </p>
+          ) : (
+            <div className="max-h-72 space-y-4 overflow-y-auto rounded-xl bg-neutral-50 p-4 ring-1 ring-neutral-900/5 dark:bg-neutral-900/40 dark:ring-white/10">
+              {bacentaTree.categories
+                // An empty category is worth keeping on the bacentas page (it
+                // is about to be filled) but not here, where it would be a
+                // heading with nothing to tick under it.
+                .filter((group) => group.bacentas.length > 0)
+                .map((group) => (
+                  <div key={group.category.$id}>
+                    <p className="mb-1.5 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                      {group.category.name}
+                    </p>
+                    <div className="grid gap-1.5 sm:grid-cols-2">
+                      {group.bacentas.map((b) => (
+                        <BacentaTick
+                          key={b.$id}
+                          id={b.$id}
+                          name={b.name}
+                          checked={bacentas.has(b.$id)}
+                          onToggle={toggleBacenta}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+              {bacentaTree.standalone.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                    Other
+                  </p>
+                  <div className="grid gap-1.5 sm:grid-cols-2">
+                    {bacentaTree.standalone.map((b) => (
+                      <BacentaTick
+                        key={b.$id}
+                        id={b.$id}
+                        name={b.name}
+                        checked={bacentas.has(b.$id)}
+                        onToggle={toggleBacenta}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {bacentaTree.orphans.map((b) => (
+                <BacentaTick
+                  key={b.$id}
+                  id={b.$id}
+                  name={`${b.name} (category missing)`}
+                  checked={bacentas.has(b.$id)}
+                  onToggle={toggleBacenta}
+                />
+              ))}
+            </div>
+          )}
+        </FieldGroup>
+
         {shown && (
           <div className="mt-6">
             <ErrorMessage>{shown}</ErrorMessage>
@@ -229,5 +370,24 @@ export default function MemberForm({
         </div>
       </Fieldset>
     </form>
+  )
+}
+
+function BacentaTick({
+  id,
+  name,
+  checked,
+  onToggle,
+}: {
+  id: string
+  name: string
+  checked: boolean
+  onToggle: (id: string) => void
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-white dark:hover:bg-neutral-800">
+      <Checkbox checked={checked} onChange={() => onToggle(id)} color="amber" />
+      <span className="truncate text-sm text-neutral-800 dark:text-neutral-200">{name}</span>
+    </label>
   )
 }

@@ -358,6 +358,12 @@ async function setupMembers() {
   await ensureEnumAttribute(COLLECTIONS.members, 'home_service', ['first', 'second'], true)
   await ensureEnumAttribute(COLLECTIONS.members, 'status', ['active', 'inactive'], true)
   await ensureStringAttribute(COLLECTIONS.members, 'created_by', 128, false)
+  // Where the member LIVES. Optional at the schema level because the four
+  // constituencies did not exist when the congregation was first registered,
+  // and a required attribute would have made every existing row unwritable.
+  // The registration form asks for it; the bulk assigner is how the backlog
+  // gets cleared. PRD §1.7.
+  await ensureStringAttribute(COLLECTIONS.members, 'constituency_id', 64, false)
 
   await waitForAttributes(COLLECTIONS.members)
   await ensureIndex(COLLECTIONS.members, 'by_status', 'key', ['status'])
@@ -367,6 +373,138 @@ async function setupMembers() {
   await ensureIndex(COLLECTIONS.members, 'by_call_number', 'key', ['call_number'])
   // Birthday lists for a given month.
   await ensureIndex(COLLECTIONS.members, 'by_birthday', 'key', ['birth_month', 'birth_day'])
+  // "Everyone in Ahodwo" — the constituency head's entire view.
+  await ensureIndex(COLLECTIONS.members, 'by_constituency', 'key', ['constituency_id'])
+}
+
+async function setupConstituencies() {
+  console.log('\nconstituencies')
+  await ensureCollection(COLLECTIONS.constituencies, 'Constituencies')
+  await ensureStringAttribute(COLLECTIONS.constituencies, 'name', 96, true)
+  await ensureStringAttribute(COLLECTIONS.constituencies, 'description', 512, false)
+  // The Appwrite user $id of the head. Null until someone is appointed — a
+  // constituency with no head is a normal, temporary state, not an error.
+  await ensureStringAttribute(COLLECTIONS.constituencies, 'head_user_id', 64, false)
+  // Denormalised so the list can name the head without an account lookup per
+  // row. Refreshed whenever the head is reassigned.
+  await ensureStringAttribute(COLLECTIONS.constituencies, 'head_name', 128, false)
+  await ensureIntegerAttribute(COLLECTIONS.constituencies, 'sort_order', true)
+  await ensureStringAttribute(COLLECTIONS.constituencies, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.constituencies)
+  // Two constituencies with the same name are indistinguishable in every
+  // dropdown in the app, so the database refuses rather than the form.
+  await ensureIndex(COLLECTIONS.constituencies, 'name_unique', 'unique', ['name'])
+  await ensureIndex(COLLECTIONS.constituencies, 'by_head', 'key', ['head_user_id'])
+  await ensureIndex(COLLECTIONS.constituencies, 'by_sort', 'key', ['sort_order'])
+}
+
+async function setupBacentaCategories() {
+  console.log('\nbacenta_categories')
+  await ensureCollection(COLLECTIONS.bacenta_categories, 'Bacenta Categories')
+  await ensureStringAttribute(COLLECTIONS.bacenta_categories, 'name', 96, true)
+  await ensureStringAttribute(COLLECTIONS.bacenta_categories, 'description', 512, false)
+  await ensureIntegerAttribute(COLLECTIONS.bacenta_categories, 'sort_order', true)
+  await ensureStringAttribute(COLLECTIONS.bacenta_categories, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.bacenta_categories)
+  await ensureIndex(COLLECTIONS.bacenta_categories, 'name_unique', 'unique', ['name'])
+  await ensureIndex(COLLECTIONS.bacenta_categories, 'by_sort', 'key', ['sort_order'])
+}
+
+async function setupBacentas() {
+  console.log('\nbacentas')
+  await ensureCollection(COLLECTIONS.bacentas, 'Bacentas')
+  await ensureStringAttribute(COLLECTIONS.bacentas, 'name', 96, true)
+  // NULL is meaningful: it is the standalone bacenta ("Technical Team"), the
+  // one that has members directly under it rather than sibling groups. Do not
+  // add an `is_standalone` boolean beside this — two fields encoding one fact
+  // is two fields that can disagree.
+  await ensureStringAttribute(COLLECTIONS.bacentas, 'category_id', 64, false)
+  await ensureStringAttribute(COLLECTIONS.bacentas, 'description', 512, false)
+  await ensureStringAttribute(COLLECTIONS.bacentas, 'head_user_id', 64, false)
+  await ensureStringAttribute(COLLECTIONS.bacentas, 'head_name', 128, false)
+  await ensureIntegerAttribute(COLLECTIONS.bacentas, 'sort_order', true)
+  await ensureStringAttribute(COLLECTIONS.bacentas, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.bacentas)
+  // NOT unique: "Youth" under Choir and "Youth" under Ushers are two different
+  // groups and both are legitimate. Uniqueness is enforced per category in
+  // `lib/groups/server.ts`, where the category is known.
+  await ensureIndex(COLLECTIONS.bacentas, 'by_category', 'key', ['category_id'])
+  await ensureIndex(COLLECTIONS.bacentas, 'by_head', 'key', ['head_user_id'])
+  await ensureIndex(COLLECTIONS.bacentas, 'by_name', 'key', ['name'])
+  await ensureIndex(COLLECTIONS.bacentas, 'by_sort', 'key', ['sort_order'])
+}
+
+async function setupBacentaMembers() {
+  console.log('\nbacenta_members')
+  await ensureCollection(COLLECTIONS.bacenta_members, 'Bacenta Members')
+  await ensureStringAttribute(COLLECTIONS.bacenta_members, 'bacenta_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.bacenta_members, 'member_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.bacenta_members, 'added_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.bacenta_members)
+  await ensureIndex(COLLECTIONS.bacenta_members, 'by_bacenta', 'key', ['bacenta_id'])
+  // The hot query for the member detail page and the registration form:
+  // "which bacentas is this person in?"
+  await ensureIndex(COLLECTIONS.bacenta_members, 'by_member', 'key', ['member_id'])
+  // One row per pair. The assigner writes a diff, but two admins ticking the
+  // same person at the same moment is what this index is actually for.
+  await ensureIndex(COLLECTIONS.bacenta_members, 'pair_unique', 'unique', [
+    'bacenta_id',
+    'member_id',
+  ])
+}
+
+async function setupPushSubscriptions() {
+  console.log('\npush_subscriptions')
+  await ensureCollection(COLLECTIONS.push_subscriptions, 'Push Subscriptions')
+  await ensureStringAttribute(COLLECTIONS.push_subscriptions, 'user_id', 64, true)
+  // The role at subscribe time, so a birthday run can target the celebrations
+  // team without re-reading every account from the Users API.
+  await ensureStringAttribute(COLLECTIONS.push_subscriptions, 'user_label', 32, true)
+  // Push endpoints are URLs and routinely run past 300 characters.
+  await ensureStringAttribute(COLLECTIONS.push_subscriptions, 'endpoint', 1024, true)
+  // MariaDB cannot index 1024 utf8mb4 characters (the 3072-byte key limit),
+  // so uniqueness rides on the SHA-256 of the endpoint instead. Same identity,
+  // 64 characters. Without this, one phone re-subscribing after a browser
+  // update accumulates a duplicate row and gets every notification twice.
+  await ensureStringAttribute(COLLECTIONS.push_subscriptions, 'endpoint_hash', 64, true)
+  await ensureStringAttribute(COLLECTIONS.push_subscriptions, 'p256dh', 256, true)
+  await ensureStringAttribute(COLLECTIONS.push_subscriptions, 'auth_key', 128, true)
+  await ensureStringAttribute(COLLECTIONS.push_subscriptions, 'device_label', 128, false)
+  await ensureStringAttribute(COLLECTIONS.push_subscriptions, 'last_success_at', 32, false)
+
+  await waitForAttributes(COLLECTIONS.push_subscriptions)
+  await ensureIndex(COLLECTIONS.push_subscriptions, 'by_user', 'key', ['user_id'])
+  await ensureIndex(COLLECTIONS.push_subscriptions, 'by_label', 'key', ['user_label'])
+  await ensureIndex(COLLECTIONS.push_subscriptions, 'endpoint_unique', 'unique', [
+    'endpoint_hash',
+  ])
+}
+
+async function setupNotificationRuns() {
+  console.log('\nnotification_runs')
+  await ensureCollection(COLLECTIONS.notification_runs, 'Notification Runs')
+  /** YYYY-MM-DD in Accra — the day the notification was SENT, not the birthday. */
+  await ensureStringAttribute(COLLECTIONS.notification_runs, 'run_date', 10, true)
+  await ensureStringAttribute(COLLECTIONS.notification_runs, 'kind', 32, true)
+  await ensureIntegerAttribute(COLLECTIONS.notification_runs, 'celebrant_count', true)
+  await ensureIntegerAttribute(COLLECTIONS.notification_runs, 'sent', true)
+  await ensureIntegerAttribute(COLLECTIONS.notification_runs, 'failed', true)
+  await ensureStringAttribute(COLLECTIONS.notification_runs, 'ran_at', 32, true)
+  await ensureStringAttribute(COLLECTIONS.notification_runs, 'triggered_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.notification_runs)
+  // The whole point of this collection. A cron that fires twice — a retry, an
+  // overlapping schedule, someone pressing the manual button after the
+  // scheduler already ran — must not notify the team twice. The route checks
+  // first for a friendly answer; THIS is what makes it true.
+  await ensureIndex(COLLECTIONS.notification_runs, 'day_kind_unique', 'unique', [
+    'run_date',
+    'kind',
+  ])
 }
 
 async function setupBiometricTemplates() {
@@ -537,6 +675,13 @@ async function main() {
   await setupMeetingMembers()
   await setupOccurrences()
   await setupAttendanceRecords()
+  // Categories before bacentas: a bacenta's category_id points at one.
+  await setupConstituencies()
+  await setupBacentaCategories()
+  await setupBacentas()
+  await setupBacentaMembers()
+  await setupPushSubscriptions()
+  await setupNotificationRuns()
   await setupBuckets()
 
   console.log('\n─── summary ───')
