@@ -5,6 +5,7 @@
 
 import clsx from 'clsx'
 import type { ReactNode } from 'react'
+import { Button } from '@/shared/Button'
 import { Heading, Subheading } from '@/shared/Heading'
 
 export function PageWrap({ children, className }: { children: ReactNode; className?: string }) {
@@ -158,6 +159,54 @@ export function Banner({
         >
           ×
         </button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A row of tabs built out of PickLT's Button, so the selected tab is a filled
+ * primary button and the rest are plain.
+ *
+ * A component rather than the same conditional spread in four pages: `Button`
+ * types `plain` as literal `true`, so `plain={!selected}` does not compile and
+ * the workaround is easy to get subtly different each time it is written out.
+ */
+export function TabBar<T extends string>({
+  tabs,
+  value,
+  onChange,
+  className,
+}: {
+  tabs: { value: T; label: string }[]
+  value: T
+  onChange: (value: T) => void
+  className?: string
+}) {
+  return (
+    <div className={clsx('flex flex-wrap gap-2', className)} role="tablist">
+      {tabs.map((tab) =>
+        tab.value === value ? (
+          <Button
+            key={tab.value}
+            color="primary"
+            role="tab"
+            aria-selected
+            onClick={() => onChange(tab.value)}
+          >
+            {tab.label}
+          </Button>
+        ) : (
+          <Button
+            key={tab.value}
+            plain
+            role="tab"
+            aria-selected={false}
+            onClick={() => onChange(tab.value)}
+          >
+            {tab.label}
+          </Button>
+        ),
       )}
     </div>
   )

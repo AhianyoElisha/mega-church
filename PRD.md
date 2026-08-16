@@ -28,10 +28,15 @@ attendance — see §2.1.
 | `call_number` | string(32) | **yes** | the number you ring |
 | `whatsapp_number` | string(32) | no | often identical to `call_number`, but stored independently because some members keep them separate |
 | `home_service` | enum | yes | `first` \| `second` — informational only, **never** an attendance gate |
+| `constituency_id` | string(64) | no | where they LIVE — exactly one (§1.7). Informational only; **never** an attendance gate |
 | `status` | enum | yes | `active` \| `inactive` |
 | `created_by` | string(128) | no | admin email |
 
 `full_name` is derived, never stored: `first_name [other_names] last_name`.
+
+Bacenta membership is deliberately **not** a field here. A member serves in
+zero or many, so it lives in the join collection `bacenta_members` (§1.9). The
+asymmetry with `constituency_id` is the whole design — see §1.7.
 
 ### 1.2 Biometric templates
 
@@ -115,6 +120,98 @@ Uniqueness is enforced in application code: one record per
 (`occurrence_id`, `member_id`). A second scan returns `already_marked` and
 writes nothing.
 
+### 1.7 Constituencies
+
+Where a member **lives**. The church has four today and will add more.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string(96) | yes | unique, case- and whitespace-insensitively |
+| `description` | string(512) | no | |
+| `head_user_id` | string(64) | no | Appwrite user `$id` of the head. Null until appointed |
+| `head_name` | string(128) | no | denormalised for display, rewritten with `head_user_id` |
+| `sort_order` | integer | yes | |
+
+**A member belongs to exactly one**, so the link is a field on the member
+(`members.constituency_id`) and not a join collection. A join here would permit
+a member to have two homes, which is not a state the church has.
+
+Assigning a member to a constituency therefore **moves** them out of whichever
+one they were in. The bulk assigner says so before it sends.
+
+### 1.8 Bacentas and bacenta categories
+
+The work group a member **serves** in. Two shapes, both first-class:
+
+- **categorised** — `bacenta_categories` holds a family such as *Choir*, and
+  the individual bacentas *Biazo*, *Living Waters* and *Fresh Oil* sit under
+  it. Nobody is a member of a category; they are a member of one of the
+  bacentas inside it.
+- **standalone** — *Technical Team* has no family and takes members directly.
+
+`bacentas.category_id === null` **is** the standalone case. There is
+deliberately no `is_standalone` boolean beside it, because two fields encoding
+one fact are two fields that can disagree.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string(96) | yes | unique **within its category**, not globally |
+| `category_id` | string(64) | no | null ⇒ standalone |
+| `description` | string(512) | no | |
+| `head_user_id` | string(64) | no | as §1.7 |
+| `head_name` | string(128) | no | |
+| `sort_order` | integer | yes | |
+
+Name uniqueness is per category on purpose: "Youth" under Choir and "Youth"
+under Ushers are two real, different groups, and a global unique index would
+refuse the second.
+
+Deleting a category that still holds bacentas is **refused**. Orphaning them
+would leave real groups full of real people rendering as "category missing",
+and only an admin knows where those bacentas should go instead.
+
+### 1.9 Bacenta members
+
+The many-to-many join. One row per (`bacenta_id`, `member_id`), unique.
+
+A member may sing in two choirs and run the sound desk at the same time. Every
+write is expressed as a **diff** (`add` / `remove` / `set`), never as
+delete-all-then-insert — a rewrite loses `added_by` and the joined-on
+timestamps for people who never moved, and a rewrite that fails halfway leaves
+the group empty, which is the one state that makes a head's screen look like
+their bacenta was disbanded.
+
+### 1.10 Push subscriptions
+
+One row per **device** that opted into notifications — not per account. The
+same person must enable it on their phone and again on the office desktop,
+because each browser holds its own subscription.
+
+| Field | Type | Notes |
+|---|---|---|
+| `user_id` | string(64) | taken from the session, never from the request body |
+| `user_label` | string(32) | the role at subscribe time, so a run can target a team without re-reading every account |
+| `endpoint` | string(1024) | the push service URL |
+| `endpoint_hash` | string(64) | SHA-256 of `endpoint`, **unique** |
+| `p256dh` / `auth_key` | string | the encryption keys |
+| `device_label` | string(128) | "iPhone", "Windows PC" |
+
+`endpoint_hash` exists because MariaDB cannot index 1024 utf8mb4 characters
+(the 3072-byte key limit). Without it, one phone re-subscribing after a browser
+update accumulates a second row and its owner is notified twice.
+
+A 404 or 410 from the push service means the subscription is permanently gone.
+Those rows are **deleted**, not retried.
+
+### 1.11 Notification runs
+
+One row per (`run_date`, `kind`) of scheduled notification, **unique**.
+
+The run is *claimed* by inserting this row **before** anything is sent. That
+insert — not the check in front of it — is what stops a retried or overlapping
+cron from notifying the team twice. `run_date` is YYYY-MM-DD in Accra and is
+the day the notification was SENT, not the birthday.
+
 ---
 
 ## 2. Rules
@@ -166,8 +263,38 @@ two stages (§3.3).
 
 ### 2.5 Server-side everything
 
-Role checks, roster authorisation, single-active-session, and duplicate
-suppression all re-run on the server. The UI hiding a control is not security.
+Role checks, roster authorisation, single-active-session, group scoping, and
+duplicate suppression all re-run on the server. The UI hiding a control is not
+security.
+
+### 2.6 Groups never gate attendance
+
+A constituency and a bacenta are both **descriptive**, exactly like
+`home_service`. A member with no constituency and no bacenta is marked present
+by a scanner like anybody else. Only `restricted` meetings gate, and only via
+`meeting_members` (§2.3).
+
+This matters because the two systems look similar and are not: a bacenta is
+*who somebody is*, a meeting roster is *who may be counted at this event*.
+
+### 2.7 The church hears about a birthday the DAY BEFORE
+
+`BIRTHDAY_LEAD_DAYS = 1` in `lib/appwrite/config.ts`.
+
+The flyer and the shoutout have to be made before the day, so showing a
+birthday on the morning of it is showing it too late. The dashboard card, the
+birthdays page and the push notification all read the same constant and the
+same `celebrantsForNotification`, so they can never disagree about who is
+celebrating.
+
+It is an **exact-day** filter, not a window. A window would re-announce the
+same person every morning until their birthday arrived, and a team that gets
+the same alert four times stops reading them.
+
+Two calendar cases are load-bearing and unit-tested: the December→January wrap
+(on 31 December, a 1 January birthday is *tomorrow*), and 29 February — a real
+birthday, observed on 28 February in a common year so the team is never told to
+prepare for a day that will not arrive.
 
 ---
 
@@ -255,9 +382,34 @@ Appwrite User Labels, exactly one per user.
 
 | Label | Can |
 |---|---|
-| `admin` | everything: members, meetings, rosters, activate/end, reports |
+| `admin` | everything: members, meetings, rosters, groups, activate/end, reports |
 | `usher` | live monitor, manual check-in, read-only member lookup |
 | `kiosk` | `/kiosk` only — POST scans, read the active occurrence |
+| `leader` | a constituency head, a bacenta head, or **both**. Read-only, and only the groups that name them as head |
+| `celebrations` | the birthday team: the celebrant list and push notifications, nothing else |
+
+### 5.1 Why `leader` is one label and not two
+
+The same person frequently heads a constituency *and* a bacenta. Two labels
+would mean two logins to see the two halves of their own work, which is exactly
+what the church asked to avoid.
+
+So the label grants nothing by itself. A leader's **scope** is resolved
+per-request from which groups name them as head
+(`lib/groups/server.ts::leaderScope`), and `/my-groups` offers a switch between
+the two kinds when they head both. A `leader` account nobody has appointed sees
+empty lists — a normal state on the day someone is given the job, not an error,
+and never a 403 that would read as a broken login.
+
+### 5.2 What a head can and cannot do
+
+**Read-only.** Their members' details, birthdays, and how often each has
+attended. They cannot register members, edit them, create groups, or move
+anyone between groups.
+
+Enforcement is server-side and absolute: `canReadGroup` is consulted on every
+group read, and the group id is never taken from anything the client sent when
+listing. A head putting somebody else's bacenta id in a URL gets a 403.
 
 ---
 
@@ -271,3 +423,13 @@ Appwrite User Labels, exactly one per user.
 6. **Kiosk** — capture loop, offline queue, manual fallback, result panels.
 7. **Live monitor** — Appwrite Realtime over `attendance_records`.
 8. **Reports** — per-occurrence and per-member history, Excel export.
+9. **Constituencies** — CRUD, head appointment, and a bulk assigner that files
+   many already-registered members in one action.
+10. **Bacentas** — categories and standalone groups, many-to-many membership,
+    the same bulk assigner.
+11. **Head accounts** — one `leader` label, per-request scoping, `/my-groups`
+    with a constituency/bacenta switch for someone who heads both.
+12. **Birthdays** — the day-before list, the celebrations account, and a
+    manual "send now".
+13. **PWA + push** — installable app, service worker, per-device
+    subscriptions, and an idempotent daily run a scheduler calls.

@@ -61,7 +61,48 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **Read `node_modules/next/dist/docs/` before writing Next.js code.**
 - **`sessions` is never a collection name.** Appwrite reserves "session" for
   auth. The collections are `meetings`, `meeting_occurrences`,
-  `meeting_members`, `attendance_records`.
+  `meeting_members`, `attendance_records`, `constituencies`,
+  `bacenta_categories`, `bacentas`, `bacenta_members`, `push_subscriptions`,
+  `notification_runs`.
+- **Constituency is a FIELD; bacenta is a JOIN.** A member lives in exactly one
+  constituency (`members.constituency_id`) and serves in zero or many bacentas
+  (`bacenta_members`). The asymmetry is the design, not an inconsistency to
+  tidy up: a join for constituency would permit two homes, and a field for
+  bacenta would silently drop the second choir. PRD §1.7–1.9.
+- **`bacentas.category_id === null` IS the standalone bacenta** ("Technical
+  Team"). Never add an `is_standalone` boolean beside it — two fields encoding
+  one fact are two fields that can disagree.
+- **Bacenta names are unique per CATEGORY, not globally.** "Youth" under Choir
+  and "Youth" under Ushers are two real groups. Enforced in
+  `lib/groups/server.ts::bacentaNameTaken`, deliberately not by an index.
+- **Group membership writes are DIFFS** (`add` / `remove` / `set`), never
+  delete-all-then-insert — same reason as the meeting roster. `add` is what the
+  bulk assigner sends; a `set` from a filtered view would remove everyone who
+  happened to be off screen.
+- **A PATCH that omits `bacenta_ids` must leave them alone.** `undefined` means
+  "don't touch", `[]` means "clear". Collapsing the two removes somebody from
+  their choir every time an admin corrects a phone number.
+- **`leader` is ONE label covering both kinds of head.** The same person often
+  heads a constituency and a bacenta, and two labels would mean two logins.
+  The label grants nothing; scope comes from `leaderScope()` per request, and
+  every group read goes through `canReadGroup()`. A head is read-only.
+- **A leader with no groups is not an error.** Empty lists, with an
+  explanation. A 403 there reads as a broken login.
+- **Birthdays are shown the DAY BEFORE** — `BIRTHDAY_LEAD_DAYS`. The dashboard,
+  the birthdays page and the push notification all read that constant and
+  `celebrantsForNotification()`, so they cannot name different people. It is an
+  exact-day filter, never a window. PRD §2.7.
+- **`/api/notifications/*` is exempt from the proxy's session gate** because a
+  cron has no cookie jar. It is not unauthenticated — the route requires a
+  constant-time-compared bearer token or an admin session. Gating it in
+  `proxy.ts` makes the scheduler 401 before the route ever sees its token.
+- **The daily run is claimed by an INSERT, not a check.** The unique index on
+  `notification_runs(run_date, kind)` is what stops a retried cron notifying the
+  team twice; the check in front of it is only for a friendly message.
+- **`/sw.js` and `/manifest.webmanifest` must stay out of the proxy matcher.**
+  Browsers fetch both out of band without credentials; gating either turns a
+  200 into a redirect to `/login` and push silently stops working — on iOS
+  entirely, since Safari only delivers push to an installed PWA.
 - **One active occurrence, globally.** Enforced in
   `lib/attendance/server.ts::activateOccurrence`. A second activation while one
   is open is a 409, not a UI-hidden button.
@@ -101,10 +142,13 @@ large type; body text is black. Never yellow text on white below 18pt.
   never reach a client bundle — no `NEXT_PUBLIC_` prefix on it, ever.
 - **Centralise config in `lib/appwrite/config.ts`** — collection ids, bucket
   ids, database id as named exports. No magic strings.
-- **RBAC via Appwrite User Labels** (`admin`, `usher`, `kiosk`), exactly one
-  per user. Server-side enforcement is mandatory.
+- **RBAC via Appwrite User Labels** (`admin`, `usher`, `kiosk`, `leader`,
+  `celebrations`), exactly one per user. Server-side enforcement is mandatory.
 - **Cascades are manual.** Deleting a member means deleting their
-  `biometric_templates`, `meeting_members` and `attendance_records` first.
+  `biometric_templates`, `meeting_members`, `bacenta_members` and
+  `attendance_records` first. Deleting a constituency means clearing
+  `constituency_id` off its members BEFORE the row goes, or they are left
+  pointing at a home that no longer exists.
 - **Idempotent setup:** `scripts/setup-appwrite.ts` is the single source of
   truth for schema and must be safe to re-run. New attributes go there, not
   into the console by hand. `npm run verify:appwrite` reads the live project
@@ -136,9 +180,16 @@ NEXT_PUBLIC_CHURCH_BRIDGE_URL    # optional, default http://127.0.0.1:7788
 CHURCH_BIOMETRIC_MATCHER_URL     # optional — set on a PC kiosk running the bridge
 CHURCH_BIOMETRIC_THRESHOLD       # optional, default 33
 CHURCH_WASM_MATCHER              # optional, "0" disables the in-process matcher
+
+NEXT_PUBLIC_VAPID_PUBLIC_KEY     # optional — without it, push is off and says so
+VAPID_PRIVATE_KEY                # server only, never NEXT_PUBLIC_
+VAPID_SUBJECT                    # optional, mailto: the push service can contact
+NOTIFICATIONS_CRON_SECRET        # optional — without it only an admin can run it
 ```
 
-The app must boot cleanly when the five required ones are present.
+The app must boot cleanly when the five required ones are present. The push
+vars are genuinely optional: with them absent the birthdays page reports
+"notifications are not set up" rather than offering a button that fails.
 
 ## Planning
 

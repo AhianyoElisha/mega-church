@@ -75,7 +75,13 @@ export async function getAuthUser(): Promise<RawAuthUser | null> {
   }
 }
 
-const RECOGNISED_LABELS: readonly UserLabel[] = ['admin', 'usher', 'kiosk']
+const RECOGNISED_LABELS: readonly UserLabel[] = [
+  'admin',
+  'usher',
+  'kiosk',
+  'leader',
+  'celebrations',
+]
 
 export function toAuthUser(raw: RawAuthUser): AuthUser | null {
   const label = RECOGNISED_LABELS.find((l) => raw.labels.includes(l))

@@ -34,6 +34,31 @@ const nextConfig: NextConfig = {
     '/api/attendance/manual': ['./public/nbis/**'],
     '/api/biometrics/matcher-health': ['./public/nbis/**'],
   },
+
+  async headers() {
+    return [
+      {
+        /**
+         * The service worker must never be cached.
+         *
+         * A worker is replaced only when the browser refetches its script and
+         * finds it byte-different. Serve it with ordinary static caching and a
+         * fix to the push handler stays unreachable on the team's phones for
+         * as long as that cache lives — with no error, and no way for them to
+         * force it short of clearing site data.
+         */
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          // The worker loads nothing external, so say so — a compromised
+          // dependency cannot pull a script into the one context that survives
+          // the page being closed.
+          { key: 'Content-Security-Policy', value: "default-src 'self'; script-src 'self'" },
+        ],
+      },
+    ]
+  },
 }
 
 export default nextConfig

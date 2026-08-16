@@ -17,6 +17,7 @@ import { COLLECTIONS, DATABASE_ID, SERVICE_IDS } from '../lib/appwrite/config'
 import { listMeetings } from '../lib/meetings/server'
 import { resolveActiveSession } from '../lib/attendance/server'
 import { loadAllCandidateTemplates } from '../lib/biometrics/server'
+import { listBacentas, listCategories, listConstituencies } from '../lib/groups/server'
 
 let failures = 0
 const ok = (m: string) => console.log(`  ✓ ${m}`)
@@ -78,6 +79,20 @@ async function main() {
   for (const [coll, name] of [
     [COLLECTIONS.attendance_records, 'occurrence_member_unique'],
     [COLLECTIONS.meeting_members, 'pair_unique'],
+    // One row per (bacenta, member) — two admins ticking the same person at
+    // the same moment must not double-count a bacenta's roster.
+    [COLLECTIONS.bacenta_members, 'pair_unique'],
+    // Two groups with the same name are indistinguishable in every dropdown
+    // in the app, which makes both of them unusable.
+    [COLLECTIONS.constituencies, 'name_unique'],
+    [COLLECTIONS.bacenta_categories, 'name_unique'],
+    // One device, one row. A phone that re-subscribes after a browser update
+    // must not end up being notified twice.
+    [COLLECTIONS.push_subscriptions, 'endpoint_unique'],
+    // THE guarantee that a retried or overlapping cron cannot notify the
+    // birthday team twice in a day. The check in the route is only the fast
+    // path; this is what makes it true.
+    [COLLECTIONS.notification_runs, 'day_kind_unique'],
   ] as const) {
     const c = await databases.getCollection(DATABASE_ID, coll)
     const idx = c.indexes.find((i: { key: string }) => i.key === name)
@@ -96,6 +111,51 @@ async function main() {
     } catch {
       bad(`${id} unreachable`)
     }
+  }
+
+  // --- groups ---------------------------------------------------------------
+  // The one thing about this schema that a passing "collection exists" check
+  // would not catch: a bacenta pointing at a category that no longer exists.
+  // `buildBacentaTree` surfaces those rather than dropping them, but a project
+  // in that state has real groups showing a warning banner, and the fix is a
+  // human decision about where they belong.
+  console.log('\ngroups')
+  const [categories, bacentas, constituencies] = await Promise.all([
+    listCategories(databases),
+    listBacentas(databases),
+    listConstituencies(databases),
+  ])
+  ok(`${constituencies.length} constituency/ies, ${categories.length} category/ies, ${bacentas.length} bacenta(s)`)
+
+  const categoryIds = new Set(categories.map((c) => c.$id))
+  const orphans = bacentas.filter((b) => b.category_id && !categoryIds.has(b.category_id))
+  if (orphans.length > 0) {
+    bad(
+      `${orphans.length} bacenta(s) point at a missing category: ` +
+        orphans.map((b) => b.name).join(', '),
+    )
+  } else {
+    ok('every bacenta is standalone or in a category that exists')
+  }
+
+  const standalone = bacentas.filter((b) => b.category_id === null)
+  ok(`${standalone.length} standalone bacenta(s), ${bacentas.length - standalone.length} in categories`)
+
+  // --- notifications --------------------------------------------------------
+  console.log('\nnotifications')
+  if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    ok('VAPID keys present — push can be sent')
+  } else {
+    // Not a failure. The app runs fine without push; the birthdays page says
+    // so, and nobody gets a button that does nothing.
+    console.log('  · VAPID keys not set — push notifications are off (see .env.local.example)')
+  }
+  if (!process.env.NOTIFICATIONS_CRON_SECRET) {
+    console.log(
+      '  · NOTIFICATIONS_CRON_SECRET not set — only a signed-in admin can trigger a run',
+    )
+  } else {
+    ok('cron secret present — a scheduler can trigger the daily run')
   }
 
   // --- the biometric gallery ----------------------------------------------

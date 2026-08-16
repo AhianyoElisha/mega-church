@@ -10,13 +10,33 @@ import { Account, Client } from 'node-appwrite'
 import type { UserLabel } from '@/lib/auth/types'
 import { getCachedUserLabels } from '@/lib/auth/session-cache'
 
-const PUBLIC_PATHS = ['/login', '/api/auth']
-const RECOGNISED_LABELS: readonly UserLabel[] = ['admin', 'usher', 'kiosk']
+/**
+ * Paths that skip the session gate.
+ *
+ * `/api/notifications` is here because a SCHEDULER calls it, and a cron job has
+ * no cookie jar. It is not unauthenticated: the route itself requires either a
+ * constant-time-compared `Authorization: Bearer <NOTIFICATIONS_CRON_SECRET>` or
+ * a signed-in admin, and refuses everything else. Gating it here instead meant
+ * the proxy answered 401 before the route ever saw the token — which is
+ * exactly how it behaved until the groups smoke test caught it.
+ */
+const PUBLIC_PATHS = ['/login', '/api/auth', '/api/notifications']
+const RECOGNISED_LABELS: readonly UserLabel[] = [
+  'admin',
+  'usher',
+  'kiosk',
+  'leader',
+  'celebrations',
+]
 
 const LABEL_HOMES: Record<UserLabel, string> = {
   admin: '/',
   usher: '/monitor',
   kiosk: '/kiosk',
+  // A head lands on their own groups. Which groups those are is resolved from
+  // the database per request — the route is the same for every leader.
+  leader: '/my-groups',
+  celebrations: '/birthdays',
 }
 
 /** Paths each non-admin label is allowed to reach. Admin reaches everything. */
@@ -29,6 +49,20 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
   // machine, signed in as that account. Locking them out of the page that
   // explains the fault helps nobody.
   kiosk: ['/kiosk', '/setup'],
+  // A constituency or bacenta head. The two group prefixes are here because a
+  // head opens the SAME detail page an admin does — one page, not a parallel
+  // read-only copy that drifts.
+  //
+  // This list is only where they may NAVIGATE. What they may SEE is decided
+  // per request by `lib/groups/server.ts::canReadGroup`, because a path prefix
+  // cannot express "only the bacentas this person heads". The list pages at
+  // `/constituencies` and `/bacentas` are admin data; their APIs refuse a
+  // leader with a 403, and the pages themselves bounce one to /my-groups
+  // rather than rendering an error.
+  leader: ['/my-groups', '/constituencies', '/bacentas'],
+  // The birthday team. Deliberately narrow: they prepare flyers and shoutouts,
+  // so they need the celebrant list and nothing else in the registry.
+  celebrations: ['/birthdays'],
 }
 
 function isPublic(pathname: string) {
@@ -116,8 +150,19 @@ export const config = {
    *                 unauthenticated, so a gated logo is broken exactly where
    *                 it is most visible. Same for the favicon and the iOS
    *                 home-screen icon, which browsers fetch out-of-band.
+   *
+   *   sw.js         the service worker. Fetched by the browser itself, not by
+   *                 page code, and WITHOUT credentials — so a gated
+   *                 registration gets a 307 to /login, the browser refuses to
+   *                 register a worker whose script is an HTML page, and push
+   *                 notifications simply never arrive. Nothing errors.
+   *   manifest      likewise fetched out of band. A manifest that 401s makes
+   *                 the app uninstallable, and on iOS an uninstallable app is
+   *                 one that can never receive a push at all.
+   *   icon-*        referenced BY the manifest. A manifest whose icons cannot
+   *                 be fetched is an invalid manifest, with the same result.
    */
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|logo.png|logo@2x.png|assets|fonts|nbis).*)',
+    '/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|icon-192.png|icon-512.png|icon-maskable-512.png|logo.png|logo@2x.png|manifest.webmanifest|sw.js|assets|fonts|nbis).*)',
   ],
 }

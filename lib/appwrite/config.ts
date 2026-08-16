@@ -34,6 +34,36 @@ export const COLLECTIONS = {
   meeting_occurrences: 'meeting_occurrences',
   /** One row per member marked present at one occurrence. PRD §1.6. */
   attendance_records: 'attendance_records',
+  /**
+   * Where a member LIVES. Four today. A member belongs to exactly one, so the
+   * link is a field on the member (`constituency_id`), not a join collection —
+   * a join here would permit two homes. PRD §1.7.
+   */
+  constituencies: 'constituencies',
+  /**
+   * A FAMILY of bacentas: "Choir" holding Biazo, Living Waters, Fresh Oil.
+   * Optional — plenty of bacentas have no family. PRD §1.8.
+   */
+  bacenta_categories: 'bacenta_categories',
+  /**
+   * The work group a member SERVES in. `category_id === null` is the
+   * standalone case ("Technical Team") — there is deliberately no separate
+   * boolean, because a flag and a foreign key can disagree. PRD §1.8.
+   */
+  bacentas: 'bacentas',
+  /**
+   * Member ↔ bacenta, many-to-many: one member may sing in two choirs and run
+   * the sound desk. One row per (bacenta, member). PRD §1.9.
+   */
+  bacenta_members: 'bacenta_members',
+  /** One row per DEVICE that opted into notifications. PRD §1.10. */
+  push_subscriptions: 'push_subscriptions',
+  /**
+   * One row per (date, kind) of scheduled notification actually sent. Its
+   * unique index — not the check-then-write in front of it — is what stops a
+   * retried cron from notifying the team twice. PRD §1.11.
+   */
+  notification_runs: 'notification_runs',
 } as const
 
 export const BUCKETS = {
@@ -52,6 +82,17 @@ export const USER_LABELS = {
   admin: 'admin',
   usher: 'usher',
   kiosk: 'kiosk',
+  /**
+   * A constituency head, a bacenta head, or — commonly — both. ONE label, not
+   * two: the same person often heads a constituency and a bacenta, and asking
+   * them to keep two logins to see the two halves of their own work is the
+   * thing this design exists to avoid. What they can see comes from which
+   * groups name them as head (`lib/groups/server.ts::leaderScope`), never from
+   * the label. PRD §2.7.
+   */
+  leader: 'leader',
+  /** The team that prepares birthday flyers and shoutouts. PRD §2.8. */
+  celebrations: 'celebrations',
 } as const
 
 export type CollectionId = (typeof COLLECTIONS)[keyof typeof COLLECTIONS]
@@ -115,3 +156,17 @@ export const TEMPLATES_PER_MEMBER = FINGER_LABELS.length * VARIATIONS_PER_FINGER
 
 /** The church runs on Accra time; all date arithmetic uses this zone. */
 export const CHURCH_TIMEZONE = 'Africa/Accra'
+
+/**
+ * How many days AHEAD of the celebration the church is told about a birthday.
+ *
+ * 1 — the day before. The flyer and the shoutout have to be made before the
+ * day, so telling the team on the morning of is telling them too late. This is
+ * a single constant on purpose: the dashboard card, the birthdays page and the
+ * push notification all read it, and they must never disagree about which day
+ * they are talking about.
+ */
+export const BIRTHDAY_LEAD_DAYS = 1
+
+/** How far ahead the birthdays page lists, past the lead day. */
+export const BIRTHDAY_HORIZON_DAYS = 30

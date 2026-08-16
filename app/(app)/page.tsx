@@ -123,12 +123,19 @@ export default function DashboardPage() {
         </Card>
 
         <Card>
-          <h2 className="mb-4 text-base font-semibold text-neutral-950 dark:text-white">
-            Birthdays today
-          </h2>
+          <div className="mb-4 flex items-baseline justify-between gap-3">
+            <h2 className="text-base font-semibold text-neutral-950 dark:text-white">
+              {/* Tomorrow, not today. The flyer has to be made before the day —
+                  see BIRTHDAY_LEAD_DAYS. */}
+              Birthdays tomorrow
+            </h2>
+            <Link href="/birthdays" className="text-sm text-primary-600 hover:underline">
+              All birthdays
+            </Link>
+          </div>
           {(d?.birthdays.length ?? 0) === 0 ? (
             <p className="text-sm text-neutral-500 dark:text-neutral-400">
-              Nobody has a birthday today.
+              Nobody is celebrating tomorrow.
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
@@ -154,6 +161,11 @@ export default function DashboardPage() {
                 )
               })}
             </ul>
+          )}
+          {d?.birthdays_for && (
+            <p className="mt-4 text-xs text-neutral-400 dark:text-neutral-500">
+              For {d.birthdays_for}. The birthday team is notified automatically each morning.
+            </p>
           )}
         </Card>
       </div>
