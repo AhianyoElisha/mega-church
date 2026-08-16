@@ -10,10 +10,13 @@ import type {
   MemberStatsResponse,
 } from '@/lib/members/types'
 
-export function useMembers(filters: { search?: string; status?: string } = {}) {
+export function useMembers(
+  filters: { search?: string; status?: string; constituency?: string } = {},
+) {
   const params = new URLSearchParams()
   if (filters.search) params.set('search', filters.search)
   if (filters.status) params.set('status', filters.status)
+  if (filters.constituency) params.set('constituency', filters.constituency)
   const qs = params.toString()
   return useQuery<ListMembersResponse>({
     queryKey: queryKeys.members(filters),

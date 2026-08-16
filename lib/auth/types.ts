@@ -1,4 +1,13 @@
-export type UserLabel = 'admin' | 'usher' | 'kiosk'
+/**
+ * Exactly one per account (CLAUDE.md).
+ *
+ * `leader` covers BOTH a constituency head and a bacenta head, on purpose. The
+ * same person frequently does both jobs, and two labels would mean two logins
+ * to see the two halves of their own work. What a leader can actually see is
+ * resolved per-request from which groups name them as head — see
+ * `lib/groups/server.ts::leaderScope`.
+ */
+export type UserLabel = 'admin' | 'usher' | 'kiosk' | 'leader' | 'celebrations'
 
 export type AuthUser = {
   id: string

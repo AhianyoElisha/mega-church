@@ -75,6 +75,10 @@ export function memberDocToMember(d: MemberDoc): Member {
     call_number: String(d.call_number ?? ''),
     whatsapp_number: (d.whatsapp_number as string | null) ?? null,
     home_service: (d.home_service as Member['home_service']) ?? 'second',
+    // `|| null`, not `?? null`: an unset optional string comes back from
+    // Appwrite as `''`, and `''` would compare unequal to every real
+    // constituency id while still being truthy in a `if (m.constituency_id)`.
+    constituency_id: (d.constituency_id as string | null) || null,
     status: (d.status as Member['status']) ?? 'active',
     created_by: (d.created_by as string | null) ?? null,
     $createdAt: d.$createdAt,

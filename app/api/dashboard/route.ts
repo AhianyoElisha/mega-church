@@ -7,6 +7,8 @@ import { enrolmentByMember } from '@/lib/biometrics/server'
 import { listMeetings } from '@/lib/meetings/server'
 import { occurrenceDocToOccurrence, resolveActiveSession } from '@/lib/attendance/server'
 import { todayInAccra } from '@/lib/attendance/occurrenceResolver'
+import { addDaysISO, celebrantsForNotification } from '@/lib/birthdays/upcoming'
+import { BIRTHDAY_LEAD_DAYS } from '@/lib/appwrite/config'
 import type { ActiveSession } from '@/lib/meetings/types'
 
 export type DashboardResponse = {
@@ -25,8 +27,20 @@ export type DashboardResponse = {
     occurrence_date: string
     present_count: number
   }[]
-  /** Members whose birthday falls today, in Accra. A small kindness. */
+  /**
+   * Members celebrating TOMORROW, in Accra — not today.
+   *
+   * The card used to show today's birthdays, which is too late to be useful:
+   * the flyer and the shoutout have to be made before the day. Moving it a day
+   * earlier is the whole point of `BIRTHDAY_LEAD_DAYS`, and this list is
+   * computed by the same `celebrantsForNotification` the push notification
+   * uses, so the dashboard and the phones can never name different people.
+   */
   birthdays: { $id: string; full_name: string; photo_file_id: string | null }[]
+  /** YYYY-MM-DD the `birthdays` list is FOR, so the card can label itself. */
+  birthdays_for: string
+  /** How many days ahead that is. 1 = tomorrow. */
+  birthday_lead_days: number
 }
 
 export async function GET() {
@@ -66,9 +80,12 @@ export async function GET() {
   }
 
   const today = todayInAccra()
-  const [, monthStr, dayStr] = today.split('-')
-  const month = Number(monthStr)
-  const day = Number(dayStr)
+  // Note what is NOT here any more: a hand-rolled `month === birth_month &&
+  // day === birth_day` comparison against today. That version could not
+  // express "tomorrow" without also getting the December wrap and 29 February
+  // right, so the arithmetic moved into `lib/birthdays/upcoming.ts` where it is
+  // unit-tested against both.
+  const celebrants = celebrantsForNotification(members, today)
 
   return NextResponse.json<DashboardResponse>(
     {
@@ -90,13 +107,15 @@ export async function GET() {
           occurrence_date: o.occurrence_date,
           present_count: o.present_count,
         })),
-      birthdays: members
-        .filter((m) => m.status === 'active' && m.birth_month === month && m.birth_day === day)
-        .map((m) => ({
-          $id: m.$id,
-          full_name: [m.first_name, m.other_names, m.last_name].filter(Boolean).join(' '),
-          photo_file_id: m.photo_file_id,
-        })),
+      birthdays: celebrants.map((c) => ({
+        $id: c.$id,
+        full_name: c.full_name,
+        photo_file_id: c.photo_file_id,
+      })),
+      // Computed from today rather than read off the first celebrant, so the
+      // card can still say WHICH day it means when nobody is celebrating.
+      birthdays_for: addDaysISO(today, BIRTHDAY_LEAD_DAYS),
+      birthday_lead_days: BIRTHDAY_LEAD_DAYS,
     },
     { headers: { 'Cache-Control': 'private, no-store' } },
   )

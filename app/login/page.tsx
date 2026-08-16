@@ -14,10 +14,15 @@ import Logo from '@/shared/Logo'
 import { useAuth } from '@/components/auth'
 import type { UserLabel } from '@/lib/auth/types'
 
+// Must agree with LABEL_HOMES in `proxy.ts`. Disagreeing sends a role to a page
+// the proxy immediately redirects away from, which reads as a login that
+// "flickers" and lands somewhere unexpected.
 const HOME_FOR: Record<UserLabel, string> = {
   admin: '/',
   usher: '/monitor',
   kiosk: '/kiosk',
+  leader: '/my-groups',
+  celebrations: '/birthdays',
 }
 
 function LoginContent() {

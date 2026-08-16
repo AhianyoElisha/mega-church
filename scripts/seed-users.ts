@@ -1,5 +1,5 @@
 /**
- * Create the three starter accounts, one per role.
+ * Create the starter accounts, one per role.
  *
  *   npm run seed:users
  *
@@ -11,6 +11,17 @@
  *   SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD
  *   SEED_USHER_EMAIL / SEED_USHER_PASSWORD
  *   SEED_KIOSK_EMAIL / SEED_KIOSK_PASSWORD
+ *   SEED_LEADER_EMAIL / SEED_LEADER_PASSWORD
+ *   SEED_CELEBRATIONS_EMAIL / SEED_CELEBRATIONS_PASSWORD
+ *
+ * A role whose env vars are absent is skipped, so this stays safe to re-run on
+ * a project that only wants some of them.
+ *
+ * The `leader` seed is a TEMPLATE, not the whole story: the church will have
+ * one leader account per head. Create the rest in the Appwrite console with
+ * the same `leader` label, then appoint each one from the constituency or
+ * bacenta page — what a leader can see comes from being named as head, never
+ * from the label.
  */
 import { config as loadEnv } from 'dotenv'
 loadEnv({ path: '.env.local' })
@@ -49,6 +60,18 @@ const SEEDS: Seed[] = [
     password: process.env.SEED_KIOSK_PASSWORD,
     name: 'Entrance Kiosk',
     station: 'Main entrance',
+  },
+  {
+    label: USER_LABELS.leader,
+    email: process.env.SEED_LEADER_EMAIL,
+    password: process.env.SEED_LEADER_PASSWORD,
+    name: 'Group Head',
+  },
+  {
+    label: USER_LABELS.celebrations,
+    email: process.env.SEED_CELEBRATIONS_EMAIL,
+    password: process.env.SEED_CELEBRATIONS_PASSWORD,
+    name: 'Birthday Team',
   },
 ]
 

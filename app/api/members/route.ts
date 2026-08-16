@@ -1,7 +1,18 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
-import { createMember, listMembers, validateMemberInput } from '@/lib/members/server'
+import {
+  createMember,
+  listMembers,
+  readBacentaIds,
+  validateMemberInput,
+} from '@/lib/members/server'
 import { emptyEnrolment, enrolmentByMember } from '@/lib/biometrics/server'
+import {
+  bacentaMembershipIndex,
+  constituencyExists,
+  setMemberBacentas,
+  unknownBacentaIds,
+} from '@/lib/groups/server'
 import type {
   ListMembersResponse,
   MemberEnrolment,
@@ -18,11 +29,16 @@ export async function GET(request: NextRequest) {
   const { databases } = createAdminClient()
   const search = request.nextUrl.searchParams.get('search') ?? undefined
   const status = request.nextUrl.searchParams.get('status') ?? undefined
+  const constituencyId = request.nextUrl.searchParams.get('constituency') ?? undefined
 
-  // Appwrite has no joins; fetch both sides in parallel and merge in memory.
-  const [members, enrolment] = await Promise.all([
-    listMembers(databases, { search, status }),
+  // Appwrite has no joins; fetch every side in parallel and merge in memory.
+  // The bacenta index is ONE pass over the join collection rather than a query
+  // per member — a registry of three thousand people would otherwise be three
+  // thousand round trips to fill in a column.
+  const [members, enrolment, bacentaIndex] = await Promise.all([
+    listMembers(databases, { search, status, constituencyId }),
     enrolmentByMember(databases),
+    bacentaMembershipIndex(databases),
   ])
 
   const rows = members.map((m) => {
@@ -33,7 +49,7 @@ export async function GET(request: NextRequest) {
       fingers_done: Object.keys(e.by_finger),
       complete: e.complete,
     }
-    return { ...m, enrolment: summary }
+    return { ...m, enrolment: summary, bacenta_ids: bacentaIndex.byMember.get(m.$id) ?? [] }
   })
 
   return NextResponse.json<ListMembersResponse>(
@@ -65,6 +81,40 @@ export async function POST(request: NextRequest) {
   }
 
   const { databases } = createAdminClient()
+
+  // The shape check passed; now check the ids name real groups. A member filed
+  // into a constituency that does not exist is invisible on every constituency
+  // page while still looking assigned on their own.
+  const constituencyId = validated.value.constituency_id
+  if (typeof constituencyId === 'string' && !(await constituencyExists(databases, constituencyId))) {
+    return NextResponse.json<MemberResponse>(
+      { ok: false, error: 'That constituency no longer exists. Reload and pick another.' },
+      { status: 400 },
+    )
+  }
+
+  const bacentaIds = readBacentaIds(body) ?? []
+  const unknown = await unknownBacentaIds(databases, bacentaIds)
+  if (unknown.length > 0) {
+    return NextResponse.json<MemberResponse>(
+      { ok: false, error: 'One of those bacentas no longer exists. Reload and try again.' },
+      { status: 400 },
+    )
+  }
+
   const member = await createMember(databases, validated.value, auth.user.email)
-  return NextResponse.json<MemberResponse>({ ok: true, member }, { status: 201 })
+
+  // Bacentas are many-to-many, so they land in the join collection AFTER the
+  // member row exists to point at. Ordered this way on purpose: a failure here
+  // leaves a registered member with no bacentas, which an admin can fix from
+  // the member page. The reverse order would leave join rows pointing at a
+  // member id that was never created.
+  if (bacentaIds.length > 0) {
+    await setMemberBacentas(databases, member.$id, bacentaIds, auth.user.email)
+  }
+
+  return NextResponse.json<MemberResponse>(
+    { ok: true, member, bacenta_ids: bacentaIds },
+    { status: 201 },
+  )
 }

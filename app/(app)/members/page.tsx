@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, EmptyState, LoadingRow, PageHeader, PageWrap } from '@/components/ui'
 import { useAuth } from '@/components/auth'
 import { useMembers } from '@/lib/queries/members'
+import { useConstituencies } from '@/lib/queries/groups'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { birthdayLabel, fullName, initials } from '@/lib/members/types'
 import { TEMPLATES_PER_MEMBER } from '@/lib/appwrite/config'
@@ -21,12 +22,20 @@ export default function MembersPage() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [enrolment, setEnrolment] = useState('')
+  const [constituency, setConstituency] = useState('')
+
+  const constituencies = useConstituencies()
 
   // The API's fulltext search needs two characters; below that, send nothing
   // and let the client filter the full list rather than firing a useless query.
+  //
+  // Constituency goes to the SERVER (it is an indexed field) while the
+  // "unassigned" case is filtered here — Appwrite cannot express "is null" as
+  // a query, so asking for it server-side would return everybody.
   const { data, isLoading } = useMembers({
     search: search.trim().length >= 2 ? search.trim() : undefined,
     status: status || undefined,
+    constituency: constituency && constituency !== '__none__' ? constituency : undefined,
   })
 
   const rows = useMemo(() => {
@@ -37,8 +46,10 @@ export default function MembersPage() {
     }
     if (enrolment === 'complete') list = list.filter((m) => m.enrolment.complete)
     if (enrolment === 'incomplete') list = list.filter((m) => !m.enrolment.complete)
+    // The one filter the server cannot do — see the note on `useMembers`.
+    if (constituency === '__none__') list = list.filter((m) => !m.constituency_id)
     return list
-  }, [data, search, enrolment])
+  }, [data, search, enrolment, constituency])
 
   const isAdmin = user?.label === 'admin'
 
@@ -57,7 +68,7 @@ export default function MembersPage() {
       />
 
       <Card className="mb-6" padded={false}>
-        <div className="grid gap-3 p-4 sm:grid-cols-3">
+        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Input
             placeholder="Search by name…"
             value={search}
@@ -72,6 +83,15 @@ export default function MembersPage() {
             <option value="">Any enrolment</option>
             <option value="complete">Fully enrolled</option>
             <option value="incomplete">Needs enrolment</option>
+          </Select>
+          <Select value={constituency} onChange={(e) => setConstituency(e.target.value)}>
+            <option value="">Any constituency</option>
+            <option value="__none__">No constituency yet</option>
+            {(constituencies.data?.ok ? constituencies.data.constituencies : []).map((c) => (
+              <option key={c.$id} value={c.$id}>
+                {c.name}
+              </option>
+            ))}
           </Select>
         </div>
       </Card>

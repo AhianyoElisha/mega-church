@@ -51,6 +51,94 @@ member, so somebody who is not on the list is recognised by name and told why
 they were refused. "Fingerprint not recognised" there would be both wrong and
 the least useful thing the screen can say.
 
+## Constituencies and bacentas
+
+Two ways of grouping members, and they are shaped differently on purpose.
+
+**A constituency is where a member lives.** Exactly one each, so it is a field
+on the member. Assigning somebody to a constituency therefore *moves* them out
+of the one they were in — the bulk assigner warns before it does.
+
+**A bacenta is the work group a member serves in.** Zero or many each, so it is
+a join collection. A chorister can sing in two choirs and run the sound desk at
+the same time; adding them to one bacenta takes nothing away from another.
+
+Bacentas come in two shapes and both are first-class:
+
+- a **category** such as *Choir* holding *Biazo*, *Living Waters* and
+  *Fresh Oil* — nobody is a member of "Choir", they are a member of one of the
+  choirs;
+- a **standalone** group such as *Technical Team*, which takes members
+  directly. Create one by leaving the category blank. There is no third
+  setting to get wrong: having no category **is** being standalone.
+
+Both kinds of group have a bulk assigner — tick many already-registered members
+and file them in one action, with a *No constituency yet* filter for working
+through the backlog of people registered before any of this existed.
+
+## Group heads
+
+A head signs in and sees **only** their own group's members, read-only: details,
+birthdays, and how often each has attended.
+
+Heads use the single `leader` label, never two. The same person frequently
+heads a constituency *and* a bacenta, and the label grants nothing by itself —
+what they can see is resolved per request from which groups name them as head.
+Someone who heads both gets one login and a switch between the two views on
+`/my-groups`.
+
+To appoint one: create an account with the `leader` label in the Appwrite
+console, then pick them from the **Head** dropdown on the constituency or
+bacenta. That dropdown only offers `leader` accounts, and the server refuses
+any other — a head who can sign in but is then bounced straight out is worse
+than no head at all.
+
+## Birthdays and notifications
+
+The church is told about a birthday **the day before**, not on the day: the
+flyer and the shoutout have to be made in advance. The dashboard card, the
+`/birthdays` page and the push notification all read one constant
+(`BIRTHDAY_LEAD_DAYS`) and one function, so they can never name different
+people.
+
+The `celebrations` account is for the team that makes the flyers. It reaches
+`/birthdays` and nothing else.
+
+### Turning push on
+
+1. Generate a key pair once per deployment:
+
+   ```bash
+   npx web-push generate-vapid-keys
+   ```
+
+   Put them in `.env.local` as `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and
+   `VAPID_PRIVATE_KEY`. Rotating them forces every subscribed device to opt in
+   again, so keep the pair.
+
+2. Each team member opens `/birthdays` on their own phone and presses
+   **Turn on**. Push is per-device: the same person must do it again on the
+   office desktop.
+
+   **On iPhone and iPad the app must first be added to the Home Screen** and
+   opened from there. Safari does not deliver push to an ordinary tab. The page
+   says so before anyone tries.
+
+3. Wire a scheduler to call the run once each morning, Accra time:
+
+   ```bash
+   curl -X POST https://your-host/api/notifications/birthday-run \
+        -H "Authorization: Bearer $NOTIFICATIONS_CRON_SECRET"
+   ```
+
+   An Appwrite Function on a cron trigger, cron-job.org, or a Windows scheduled
+   task all work. **Calling it more than once a day is harmless** — the run is
+   claimed by a unique row per (date, kind), so a retry returns `already_sent`
+   and nobody is notified twice.
+
+Until a scheduler is wired, an admin can press **Send notification now** on
+`/birthdays`. That path is the same run and is equally idempotent.
+
 ## Fingerprint hardware
 
 A Futronic FS81, driven one of two ways:
@@ -107,5 +195,9 @@ beyond Node builtins.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run bridge` | run the fingerprint bridge locally |
 | `npm run setup:appwrite` | create/update the schema (idempotent) |
-| `npm run seed:users` | create the three role accounts |
+| `npm run verify:appwrite` | read the live project back and check what breaks quietly |
+| `npm run seed:users` | create the role accounts (blank env pairs are skipped) |
+| `npm run e2e` | full smoke — **opens a real session; never during a service** |
+| `npm run e2e:groups` | groups / birthdays / push smoke — safe any time |
+| `npm run build:brand` | regenerate every logo and PWA icon size |
 | `npm run build:kiosk-pack` | build and publish the kiosk installer |

@@ -14,3 +14,8 @@ bridge.log
 # Build output of scripts/build-kiosk-pack.ts — regenerate, never commit.
 .kiosk-pack/
 church-kiosk-pack-*.zip
+
+# Screenshots dropped in the project root while debugging a scanner fault.
+# Root level only: the real artwork lives in brand/, public/ and app/, and the
+# PWA icons under public/ are committed on purpose.
+/*.png
