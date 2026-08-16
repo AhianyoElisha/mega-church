@@ -72,17 +72,37 @@ export default function FingerEnrolment({
   useEffect(() => {
     if (!usbSupported || bridgeUp) return
     let cancelled = false
-    Fs81Device.getAlreadyPermitted()
-      .then((d) => {
-        if (!cancelled && d) setUsbDevice(d)
-      })
-      .catch(() => {
+    ;(async () => {
+      try {
+        const d = await Fs81Device.getAlreadyPermitted()
+        if (!d) return
+        // Opening also resynchronises the bulk pipe; do it before the first
+        // press rather than during it.
+        await d.open()
+        if (!cancelled) setUsbDevice(d)
+      } catch {
         // No permission yet — the Connect button is the way in.
-      })
+      }
+    })()
     return () => {
       cancelled = true
     }
   }, [usbSupported, bridgeUp])
+
+  // Hand the scanner back when this form goes away. A page left open mid-frame
+  // strands the rest of that frame on the device, and the next open() — here or
+  // at the kiosk — reads those pixels where the geometry should be.
+  useEffect(() => {
+    if (!usbDevice) return
+    const release = () => {
+      usbDevice.close().catch(() => {})
+    }
+    window.addEventListener('pagehide', release)
+    return () => {
+      window.removeEventListener('pagehide', release)
+      release()
+    }
+  }, [usbDevice])
 
   const connectUsb = useCallback(async () => {
     setUsbBusy(true)
