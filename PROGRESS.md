@@ -132,8 +132,9 @@ category.
 ### Verified
 
 - `npx tsc --noEmit` — clean.
-- `npx vitest run` — **133 passed**, 4 skipped (was 79). The 54 new tests are
-  the bacenta tree and the birthday calendar arithmetic, both pure.
+- `npx vitest run` — **140 passed**, 4 skipped (was 79). 54 of those are Plan
+  2's own: the bacenta tree and the birthday calendar arithmetic, both pure.
+  The remaining rise came with the day-attendance exports and the FS81 fixes.
 - `npm run build` — 47 routes, including `/manifest.webmanifest`.
 - `npm run e2e:groups` — **46 checks, all passing** against the live project.
   Safe to run during a service: it never opens an attendance session, and it
