@@ -278,19 +278,41 @@ export default function KioskPage() {
   const usbSupported = isWebUsbSupported()
 
   // WebUSB permission is per-origin and persists, so a tablet grants once and
-  // reconnects silently forever after.
+  // reconnects silently forever after. Open here rather than lazily on the
+  // first press: opening resynchronises the bulk pipe, and a failure belongs on
+  // the connect screen where an usher can act on it, not mid-queue.
   useEffect(() => {
     if (!usbSupported || bridgeUp) return
     let cancelled = false
-    Fs81Device.getAlreadyPermitted()
-      .then((d) => {
-        if (!cancelled && d) setUsbDevice(d)
-      })
-      .catch(() => {})
+    ;(async () => {
+      try {
+        const d = await Fs81Device.getAlreadyPermitted()
+        if (!d) return
+        await d.open()
+        if (!cancelled) setUsbDevice(d)
+      } catch (e) {
+        if (!cancelled) setUsbError(e instanceof Error ? e.message : String(e))
+      }
+    })()
     return () => {
       cancelled = true
     }
   }, [usbSupported, bridgeUp])
+
+  // A tab that vanishes mid-frame strands the rest of that frame on the
+  // scanner's IN endpoint, and the next page load reads those pixels where the
+  // geometry should be. Hand the device back on the way out.
+  useEffect(() => {
+    if (!usbDevice) return
+    const release = () => {
+      usbDevice.close().catch(() => {})
+    }
+    window.addEventListener('pagehide', release)
+    return () => {
+      window.removeEventListener('pagehide', release)
+      release()
+    }
+  }, [usbDevice])
 
   const connectUsb = useCallback(async () => {
     setUsbError(null)
@@ -326,6 +348,10 @@ export default function KioskPage() {
   useEffect(() => {
     if (!scanReady || !sessionId || phase.kind !== 'idle') return
     let cancelled = false
+    // Without this the torn-down loop keeps driving the scanner for up to
+    // SCAN_TIMEOUT_S while the next one arms — two command sequences on one
+    // bulk pipe, which desyncs it until the device is replugged.
+    const abort = new AbortController()
 
     ;(async () => {
       while (!cancelled) {
@@ -335,6 +361,7 @@ export default function KioskPage() {
             const frame = await usbDevice.captureFinger({
               timeoutMs: SCAN_TIMEOUT_S * 1000,
               waitClear: true,
+              signal: abort.signal,
             })
             if (cancelled) break
             const { template } = await extractTemplate(frame.pixels, frame.width, frame.height)
@@ -370,6 +397,7 @@ export default function KioskPage() {
 
     return () => {
       cancelled = true
+      abort.abort()
     }
   }, [scanReady, captureSource, usbDevice, sessionId, phase.kind, submitScan])
 

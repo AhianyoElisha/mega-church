@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FINGER_OFF_THRESHOLD,
   FINGER_ON_THRESHOLD,
   FS81_PRODUCT_ID,
   FS81_VENDOR_ID,
+  Fs81Device,
   flipRows,
+  looksLikeInfoPacket,
   meanBlockVariance,
   parseDeviceInfo,
   pickBestFrame,
@@ -33,6 +35,22 @@ describe('parseDeviceInfo', () => {
   it('rejects implausible geometry rather than allocating from garbage', () => {
     expect(() => parseDeviceInfo(infoPacket(0, 0))).toThrow(/implausible/i);
     expect(() => parseDeviceInfo(infoPacket(9999, 480))).toThrow(/implausible/i);
+  });
+
+  it('reports the offending bytes, because they say WHICH fault this is', () => {
+    // 14149x22119 as seen at a live kiosk: bytes 37 45 56 67, i.e. greyscale
+    // 55/69/86/103 — the tail of a queued frame, not a broken scanner.
+    const tail = new Uint8Array(512).map((_, i) => 0x30 + i);
+    expect(() => parseDeviceInfo(tail)).toThrow(/34 35 36 37/);
+  });
+});
+
+describe('looksLikeInfoPacket', () => {
+  it('accepts a real info packet and rejects a frame tail', () => {
+    expect(looksLikeInfoPacket(infoPacket(320, 480))).toBe(true);
+    // A brightness ramp — what a stranded frame looks like at bytes 4..7.
+    expect(looksLikeInfoPacket(new Uint8Array(512).map((_, i) => 0x30 + i))).toBe(false);
+    expect(looksLikeInfoPacket(new Uint8Array(4))).toBe(false);
   });
 });
 
@@ -118,6 +136,106 @@ describe('pickBestFrame', () => {
 
   it('returns null when nothing was captured', () => {
     expect(pickBestFrame([])).toBeNull();
+  });
+});
+
+/**
+ * A stand-in for the FS81 that models the one thing that matters here: the IN
+ * endpoint is a QUEUE, and it can already hold somebody else's payload.
+ */
+function fakeDevice(stalePackets: Uint8Array[] = []) {
+  const queued = [...stalePackets];
+  const writes: number[][] = [];
+  let resets = 0;
+  const dev = {
+    vendorId: FS81_VENDOR_ID,
+    productId: FS81_PRODUCT_ID,
+    opened: false,
+    configuration: null as unknown,
+    open: async () => void (dev.opened = true),
+    close: async () => void (dev.opened = false),
+    selectConfiguration: async () => void (dev.configuration = {}),
+    claimInterface: async () => {},
+    releaseInterface: async () => {},
+    reset: async () => {
+      resets++;
+      queued.length = 0; // a port reset is what empties the pipe
+    },
+    transferOut: async (_ep: number, data: Uint8Array) => {
+      writes.push([...data]);
+      if (data[0] === 0xe0) queued.push(infoPacket(320, 480));
+      else if (data[0] === 0x6c || data[0] === 0x50) queued.push(new Uint8Array(512));
+      return { status: 'ok' };
+    },
+    transferIn: async (_ep: number, length: number) => {
+      const next = queued.shift();
+      if (!next) throw new Error('test hang: read with nothing queued');
+      return { status: 'ok', data: new DataView(next.slice(0, length).buffer) };
+    },
+  };
+  return { dev, writes, queued, resets: () => resets };
+}
+
+/** 512 bytes of the greyscale ramp a stranded frame leaves behind. */
+const frameTail = () => new Uint8Array(512).map((_, i) => 0x30 + i);
+
+async function connect(dev: unknown) {
+  vi.stubGlobal('navigator', { usb: { getDevices: async () => [dev] } });
+  const d = await Fs81Device.getAlreadyPermitted();
+  if (!d) throw new Error('fake device not offered');
+  return d;
+}
+
+describe('Fs81Device.open — pipe resynchronisation', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('resets the pipe so a stranded frame is not read as the info packet', async () => {
+    // The reported bug: a previous page died mid-frame, leaving pixels queued.
+    const { dev, resets } = fakeDevice([frameTail(), frameTail(), frameTail()]);
+    const device = await connect(dev);
+    await expect(device.open()).resolves.toEqual({ width: 320, height: 480 });
+    expect(resets()).toBeGreaterThan(0);
+  });
+
+  it('still resynchronises when the platform refuses to reset', async () => {
+    const { dev, queued } = fakeDevice([frameTail(), frameTail()]);
+    dev.reset = async () => {
+      throw new Error('reset not supported');
+    };
+    const device = await connect(dev);
+    // Falls back to discarding packets until a real info reply turns up.
+    await expect(device.open()).resolves.toEqual({ width: 320, height: 480 });
+    // And leaves NOTHING behind: a resync that ends one packet off has only
+    // moved the fault into the next read. The two handshake replies are
+    // consumed by open() itself, so the pipe must be empty here.
+    expect(queued).toHaveLength(0);
+  });
+
+  it('tells the operator to replug when nothing usable ever arrives', async () => {
+    const { dev } = fakeDevice();
+    dev.reset = async () => {
+      throw new Error('reset not supported');
+    };
+    dev.transferOut = async () => {
+      // A device that only ever answers with pixels.
+      return { status: 'ok' };
+    };
+    dev.transferIn = async () => ({
+      status: 'ok',
+      data: new DataView(frameTail().buffer),
+    });
+    const device = await connect(dev);
+    await expect(device.open()).rejects.toThrow(/unplug the scanner/i);
+  });
+
+  it('serialises captures so two loops cannot interleave on one pipe', async () => {
+    // Overlapping command sequences are what desync the pipe in the first
+    // place; the second caller must wait, not interleave.
+    const { dev, writes } = fakeDevice();
+    const device = await connect(dev);
+    await Promise.all([device.open(), device.open()]);
+    // One handshake, not two halves of two.
+    expect(writes.filter((w) => w[0] === 0xe0)).toHaveLength(1);
   });
 });
 
