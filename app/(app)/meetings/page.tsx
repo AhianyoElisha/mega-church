@@ -5,6 +5,7 @@ import { Button } from '@/shared/Button'
 import { Badge } from '@/shared/Badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/table'
 import { Card, EmptyState, LoadingRow, PageHeader, PageWrap } from '@/components/ui'
+import OpenSessionBar from '@/components/open-session-bar'
 import { useMeetings } from '@/lib/queries/meetings'
 import { useActiveSession } from '@/lib/queries/occurrences'
 
@@ -28,6 +29,11 @@ export default function MeetingsPage() {
           </Button>
         }
       />
+
+      {/* Above the list, and above the empty state in particular: a running
+          SERVICE never appears in the table below, so without this the page
+          reads "No meetings yet" while a session is live. */}
+      <OpenSessionBar className="mb-6" />
 
       {isLoading ? (
         <Card padded={false}>
