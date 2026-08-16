@@ -42,10 +42,38 @@ const MAX_DIM = 2048;
 
 /**
  * How many packets `open()` will discard while hunting for the real `E0`
- * reply. A whole 320x480 frame is 300 packets of 512, so anything short of
- * that could still be a frame tail left queued by a previous page.
+ * reply. A whole 320x480 frame is exactly 300 packets of 512 — measured on
+ * real hardware, a resync after a page died mid-frame discarded 299 and found
+ * the info packet in the 300th. The margin is for a larger sensor.
  */
-const MAX_RESYNC_PACKETS = 320;
+const MAX_RESYNC_PACKETS = 400;
+
+/**
+ * Ceiling on a single bulk transfer. Without one, a pipe that never answers
+ * hangs the connect button forever with no explanation; with one the operator
+ * is told to replug. Generous: a whole 153,600-byte frame arrives in well
+ * under a second.
+ */
+const TRANSFER_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`FS81 ${what} timed out after ${ms}ms`)),
+      ms,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
 
 export type Geometry = { width: number; height: number };
 
@@ -271,15 +299,18 @@ export class Fs81Device {
    * something like "implausible geometry 14149x22119" (`37 45 56 67` — a
    * brightness ramp) on hardware that is plugged in and perfectly healthy.
    *
-   * A port reset is the only thing that discards it. Best effort: if the
-   * platform refuses, `readInfo()` still resynchronises by discarding packets.
+   * A port reset would discard it in one step, and on platforms that support
+   * one this is the cheap path. DO NOT RELY ON IT: measured on Windows 11 with
+   * the scanner freshly replugged and nothing else holding the device,
+   * `USBDevice.reset()` rejects with "Unable to reset the device." The drain in
+   * `readInfo()` is the mechanism that actually works; this is an optimisation.
    */
   private async resetPipe(): Promise<void> {
     try {
       await this.device.reset();
     } catch {
-      // Some platforms refuse reset on a claimed interface, and some refuse it
-      // outright. Not fatal — the packet hunt below is the fallback.
+      // Refused outright on Windows, and refused on some platforms while the
+      // interface is claimed. Not fatal — readInfo() drains instead.
     }
     try {
       await this.claim();
@@ -289,26 +320,34 @@ export class Fs81Device {
   }
 
   /**
-   * Ask for device info until an answer arrives that is actually device info.
+   * Ask for device info, draining any backlog until the answer is actually
+   * device info.
    *
-   * Every round re-sends `E0` before reading, so each read has a reply on the
-   * way and the loop can never block on an empty pipe — it discards exactly one
-   * stale packet per round and terminates at the first real info packet.
+   * THE WRITE IS DELIBERATELY NOT AWAITED. With a backlog queued, `transferOut`
+   * of a single byte sometimes lands immediately and sometimes does not settle
+   * at all until the backlog has been read — both were measured on the same
+   * hardware. Awaiting it therefore risks deadlocking in exactly the case this
+   * function exists to repair, while firing it and reading works under either
+   * behaviour: the write lands on its own and its reply arrives behind the
+   * stale packets.
+   *
+   * That ordering is also what bounds the loop: exactly one reply is in flight,
+   * so the drain terminates at it rather than reading an empty pipe forever.
    */
   private async readInfo(): Promise<Geometry> {
-    let firstReply: Uint8Array | null = null;
-    for (let round = 1; round <= MAX_RESYNC_PACKETS; round++) {
-      const reply = await this.command(CMD_INFO, 512);
-      firstReply ??= reply;
-      if (!looksLikeInfoPacket(reply)) continue;
+    const queuedWrite = this.device
+      .transferOut(FS81_EP_OUT, new Uint8Array([CMD_INFO]))
+      .catch(() => {
+        // Surfaced by the handshake commands that follow; never an unhandled
+        // rejection. No timeout here — being slow to land IS the wedged case.
+      });
+    void queuedWrite;
 
-      // Each round asked for one reply and consumed one packet, so the backlog
-      // never shrank: `round - 1` duplicate info replies are queued behind this
-      // one. They are certainly there, so draining them cannot block — and
-      // leaving them would put the handshake reads a packet off, which is the
-      // same desync one layer down.
-      for (let i = 0; i < round - 1; i++) await this.read(512);
-      return parseDeviceInfo(reply);
+    let firstReply: Uint8Array | null = null;
+    for (let i = 0; i < MAX_RESYNC_PACKETS; i++) {
+      const reply = await this.read(512);
+      firstReply ??= reply;
+      if (looksLikeInfoPacket(reply)) return parseDeviceInfo(reply);
     }
     // Report what the *first* reply claimed: it is the one an operator would
     // otherwise see, and the byte values say whether this is pixels or a
@@ -343,7 +382,11 @@ export class Fs81Device {
   }
 
   private async write(bytes: number[]): Promise<void> {
-    const res = await this.device.transferOut(FS81_EP_OUT, new Uint8Array(bytes));
+    const res = await withTimeout(
+      this.device.transferOut(FS81_EP_OUT, new Uint8Array(bytes)),
+      TRANSFER_TIMEOUT_MS,
+      `write 0x${bytes[0].toString(16)}`,
+    );
     if (res.status !== 'ok') throw new Error(`FS81 write failed: ${res.status}`);
   }
 
@@ -352,7 +395,11 @@ export class Fs81Device {
     const out = new Uint8Array(length);
     let got = 0;
     while (got < length) {
-      const res = await this.device.transferIn(FS81_EP_IN, length - got);
+      const res = await withTimeout(
+        this.device.transferIn(FS81_EP_IN, length - got),
+        TRANSFER_TIMEOUT_MS,
+        'read',
+      );
       if (res.status !== 'ok') throw new Error(`FS81 read failed: ${res.status}`);
       if (!res.data || res.data.byteLength === 0) {
         throw new Error('FS81 returned an empty packet');
