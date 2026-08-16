@@ -79,10 +79,17 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **The FS81's IN endpoint outlives the page.** A frame is 300 packets; a
   reload mid-capture leaves the tail queued, and the next `E0` read returns
   pixels where the geometry should be ("implausible geometry NxN" on a working
-  scanner). `open()` resets the pipe before the handshake and every public
-  method on `Fs81Device` is serialised behind one lock — two command sequences
-  on one bulk pipe desync it until the device is replugged. Aborts are checked
-  BETWEEN frames only; abandoning a half-read frame causes the very fault.
+  scanner). `open()` repairs it by DRAINING — send `E0`, discard packets until
+  one parses as geometry. **`USBDevice.reset()` is not the fix:** it rejects
+  with "Unable to reset the device" on Windows. It is attempted anyway, but
+  never relied on.
+- **Never `await` the `E0` write in the resync.** With a backlog queued the
+  device may not accept a command until the backlog is read, so awaiting the
+  write deadlocks in exactly the case being repaired. Fire it, then read.
+- **Every public method on `Fs81Device` is serialised behind one lock.** Two
+  command sequences on one bulk pipe desync it until the device is replugged.
+  Aborts are checked BETWEEN frames only; abandoning a half-read frame causes
+  the very fault.
 - **Bulk writes use `databases.createDocuments()`** (Appwrite bulk API). A loop
   of individual `createDocument` calls for a multi-doc write is a bug — the
   meeting roster save is up to a few thousand rows.

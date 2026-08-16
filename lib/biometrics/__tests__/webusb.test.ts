@@ -140,13 +140,29 @@ describe('pickBestFrame', () => {
 });
 
 /**
- * A stand-in for the FS81 that models the one thing that matters here: the IN
- * endpoint is a QUEUE, and it can already hold somebody else's payload.
+ * A stand-in for the FS81, modelling the two behaviours measured on real
+ * hardware (Windows 11, Chrome, scanner freshly replugged):
+ *
+ *  1. The IN endpoint is a QUEUE that survives the page, so it can already
+ *     hold the tail of somebody else's frame.
+ *  2. While that backlog is queued a command MAY not be accepted: transferOut
+ *     of a single byte was seen both landing at once and not settling until
+ *     the backlog had been read. This models the worst of the two, because
+ *     code that awaits a write before reading deadlocks under it — the bug
+ *     this fake exists to catch. `reset` rejects by default for the same
+ *     reason: that is what Windows does, so the drain has to carry the fix.
  */
-function fakeDevice(stalePackets: Uint8Array[] = []) {
+function fakeDevice(stalePackets: Uint8Array[] = [], { canReset = false } = {}) {
   const queued = [...stalePackets];
   const writes: number[][] = [];
   let resets = 0;
+  const stalled: Array<() => void> = [];
+
+  const replyTo = (cmd: number) => {
+    if (cmd === 0xe0) queued.push(infoPacket(320, 480));
+    else if (cmd === 0x6c || cmd === 0x50) queued.push(new Uint8Array(512));
+  };
+
   const dev = {
     vendorId: FS81_VENDOR_ID,
     productId: FS81_PRODUCT_ID,
@@ -158,18 +174,29 @@ function fakeDevice(stalePackets: Uint8Array[] = []) {
     claimInterface: async () => {},
     releaseInterface: async () => {},
     reset: async () => {
+      // Windows rejects this outright; the drain is what has to carry the fix.
+      if (!canReset) throw new Error('Unable to reset the device.');
       resets++;
-      queued.length = 0; // a port reset is what empties the pipe
+      queued.length = 0;
     },
-    transferOut: async (_ep: number, data: Uint8Array) => {
+    transferOut: (_ep: number, data: Uint8Array) => {
       writes.push([...data]);
-      if (data[0] === 0xe0) queued.push(infoPacket(320, 480));
-      else if (data[0] === 0x6c || data[0] === 0x50) queued.push(new Uint8Array(512));
-      return { status: 'ok' };
+      if (queued.length === 0) {
+        replyTo(data[0]);
+        return Promise.resolve({ status: 'ok', bytesWritten: data.length });
+      }
+      // Wedged: this promise settles only once the backlog has drained.
+      return new Promise((resolve) => {
+        stalled.push(() => {
+          replyTo(data[0]);
+          resolve({ status: 'ok', bytesWritten: data.length });
+        });
+      });
     },
     transferIn: async (_ep: number, length: number) => {
       const next = queued.shift();
       if (!next) throw new Error('test hang: read with nothing queued');
+      if (queued.length === 0) while (stalled.length) stalled.shift()!();
       return { status: 'ok', data: new DataView(next.slice(0, length).buffer) };
     },
   };
@@ -189,37 +216,39 @@ async function connect(dev: unknown) {
 describe('Fs81Device.open — pipe resynchronisation', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('resets the pipe so a stranded frame is not read as the info packet', async () => {
-    // The reported bug: a previous page died mid-frame, leaving pixels queued.
-    const { dev, resets } = fakeDevice([frameTail(), frameTail(), frameTail()]);
+  it('drains a stranded frame instead of reading it as the info packet', async () => {
+    // The reported bug, on the platform it was reported from: a previous page
+    // died mid-frame, and reset() is unavailable. 300 packets is a whole frame.
+    const stale = Array.from({ length: 300 }, frameTail);
+    const { dev, queued } = fakeDevice(stale);
     const device = await connect(dev);
     await expect(device.open()).resolves.toEqual({ width: 320, height: 480 });
-    expect(resets()).toBeGreaterThan(0);
+    // Nothing left behind: a resync that ends one packet off has only moved
+    // the fault into the handshake reads.
+    expect(queued).toHaveLength(0);
   });
 
-  it('still resynchronises when the platform refuses to reset', async () => {
-    const { dev, queued } = fakeDevice([frameTail(), frameTail()]);
-    dev.reset = async () => {
-      throw new Error('reset not supported');
-    };
+  it('does not deadlock awaiting a write the wedged device will not accept', async () => {
+    // The regression this file exists for. Measured on hardware: with a
+    // backlog queued, transferOut never settles. An implementation that awaits
+    // the E0 write before reading hangs here rather than failing, so this test
+    // times out instead of asserting — that IS the assertion.
+    const { dev } = fakeDevice(Array.from({ length: 300 }, frameTail));
     const device = await connect(dev);
-    // Falls back to discarding packets until a real info reply turns up.
     await expect(device.open()).resolves.toEqual({ width: 320, height: 480 });
-    // And leaves NOTHING behind: a resync that ends one packet off has only
-    // moved the fault into the next read. The two handshake replies are
-    // consumed by open() itself, so the pipe must be empty here.
-    expect(queued).toHaveLength(0);
+  }, 5000);
+
+  it('uses a port reset when the platform actually supports one', async () => {
+    const { dev, resets } = fakeDevice([frameTail(), frameTail()], { canReset: true });
+    const device = await connect(dev);
+    await expect(device.open()).resolves.toEqual({ width: 320, height: 480 });
+    expect(resets()).toBe(1);
   });
 
   it('tells the operator to replug when nothing usable ever arrives', async () => {
     const { dev } = fakeDevice();
-    dev.reset = async () => {
-      throw new Error('reset not supported');
-    };
-    dev.transferOut = async () => {
-      // A device that only ever answers with pixels.
-      return { status: 'ok' };
-    };
+    // A device that only ever answers with pixels, however often it is asked.
+    dev.transferOut = () => Promise.resolve({ status: 'ok', bytesWritten: 1 });
     dev.transferIn = async () => ({
       status: 'ok',
       data: new DataView(frameTail().buffer),
