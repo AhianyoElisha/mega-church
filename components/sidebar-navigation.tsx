@@ -11,7 +11,7 @@ import { WrenchScrewdriverIcon } from '@heroicons/react/24/outline'
 import SwitchDarkMode from '@/shared/SwitchDarkMode'
 import Aside, { useAside } from './aside'
 import { useAuth } from './auth'
-import { navForRole } from './navigation'
+import { groupedNavForRole, isActiveHref, type NavItem } from './navigation'
 import { useDialog } from './dialog'
 
 export default function AsideSidebarNavigation() {
@@ -19,7 +19,12 @@ export default function AsideSidebarNavigation() {
   const { close } = useAside()
   const { user, logout } = useAuth()
   const dialog = useDialog()
-  const items = navForRole(user?.label)
+  // The same grouping the header collapses into menus — but a drawer scrolls,
+  // so here the groups are only HEADINGS and every destination stays one tap
+  // away. The header groups to save horizontal room; there is no such shortage
+  // vertically, and a phone is the worst place to hide a link behind a
+  // disclosure.
+  const entries = groupedNavForRole(user?.label)
 
   const handleSignOut = async () => {
     const ok = await dialog.confirm({
@@ -39,17 +44,16 @@ export default function AsideSidebarNavigation() {
       <div className="flex h-full flex-col">
         <div className="hidden-scrollbar flex-1 overflow-x-hidden overflow-y-auto py-6">
           <nav className="flex flex-col gap-1">
-            {items.map((item) => {
-              const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href)
-              return (
+            {entries.map((entry) => {
+              const drawerLink = (item: NavItem) => (
                 <Link
                   key={item.href}
                   href={item.href}
                   onClick={close}
-                  aria-current={active ? 'page' : undefined}
+                  aria-current={isActiveHref(pathname, item.href) ? 'page' : undefined}
                   className={clsx(
                     'flex items-center gap-3 rounded-xl px-4 py-3 text-base font-medium transition',
-                    active
+                    isActiveHref(pathname, item.href)
                       ? 'bg-primary-500 text-neutral-950'
                       : 'text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700',
                   )}
@@ -57,6 +61,17 @@ export default function AsideSidebarNavigation() {
                   <item.icon className="size-5 shrink-0" />
                   {item.name}
                 </Link>
+              )
+
+              if (entry.kind === 'link') return drawerLink(entry.item)
+
+              return (
+                <div key={entry.id} className="mt-3 flex flex-col gap-1 first:mt-0">
+                  <p className="px-4 text-xs font-semibold tracking-wide text-neutral-400 uppercase dark:text-neutral-500">
+                    {entry.name}
+                  </p>
+                  {entry.items.map(drawerLink)}
+                </div>
               )
             })}
 
