@@ -63,7 +63,7 @@ large type; body text is black. Never yellow text on white below 18pt.
   auth. The collections are `meetings`, `meeting_occurrences`,
   `meeting_members`, `attendance_records`, `constituencies`,
   `bacenta_categories`, `bacentas`, `bacenta_members`, `push_subscriptions`,
-  `notification_runs`.
+  `notification_runs`, `sms_templates`, `sms_messages`.
 - **Constituency is a FIELD; bacenta is a JOIN.** A member lives in exactly one
   constituency (`members.constituency_id`) and serves in zero or many bacentas
   (`bacenta_members`). The asymmetry is the design, not an inconsistency to
@@ -92,6 +92,46 @@ large type; body text is black. Never yellow text on white below 18pt.
   the birthdays page and the push notification all read that constant and
   `celebrantsForNotification()`, so they cannot name different people. It is an
   exact-day filter, never a window. PRD §2.7.
+- **There are TWO birthday jobs and they run on DIFFERENT days.**
+  `birthday-run` pushes to the celebrations TEAM the day *before*
+  (`BIRTHDAY_LEAD_DAYS`), because they have a flyer to make. `birthday-sms`
+  texts the CELEBRANT *on* the day, because a birthday message that arrives a
+  day early is wrong. Both call `celebrantsForNotification(members, today,
+  leadDays)` with lead 1 and 0, so the 29 February observance and the
+  December→January wrap cannot drift apart between them. Neither substitutes
+  for the other; point the scheduler at both.
+- **An SMS is CLAIMED by an INSERT, not by a check** — same rule as
+  `notification_runs`. The unique index on `sms_messages.dedupe_key` is what
+  stops a retried cron texting a member twice on their birthday. Automatic
+  sends key on `birthday:<member_id>:<run_date>`; manual sends key on
+  `manual:<random>:<member_id>` and therefore never collide, because thanking
+  somebody for tithe twice in one day is legitimate. The key is `required` and
+  never nullable: MariaDB permits many NULLs in a unique index, so a null key
+  would guard nothing.
+- **mNotify wants `233…`, our storage holds `+233…`.** `normalisePhone()` is
+  right for storage; `toProviderNumber()` strips the `+` on the wire. mNotify's
+  own validator accepts 9–12 characters and a correct Ghanaian number with a
+  `+` is 13 — it is not an error, the number is just silently rejected inside a
+  batch that otherwise succeeded.
+- **A blank `MNOTIFY_SENDER_ID` is "not configured", never a default.** An
+  unapproved sender ID is *accepted* by mNotify and then never delivered.
+  Filling in a plausible default would turn a loud misconfiguration into
+  messages that report success and never arrive.
+- **An unknown `{{placeholder}}` REFUSES the send and names the token.**
+  Substituting an empty string mails "Happy birthday !" to the congregation, at
+  cost, with no recall. The placeholder set is closed (`PLACEHOLDERS` in
+  `lib/sms/render.ts`) so a template cannot reference an arbitrary member field.
+- **Exactly one default template per category**, enforced on write. Two
+  defaults is a coin toss over which message the congregation receives, decided
+  by whichever row Appwrite returns first.
+- **A `leader` may hit `/api/reports/export`, scoped.** A download is a read, so
+  this does not break the read-only rule (PRD §5.2). What makes it safe:
+  `canReadGroup()` runs before any row loads, and a head who OMITS
+  `constituency_id` is refused rather than defaulted to the whole church.
+- **Sheet names are capped at 31 characters by the xlsx format.** Two long
+  constituency names truncate to the same string and ExcelJS *throws* on the
+  duplicate — so the workbook a church with long group names asks for is
+  exactly the one that fails. `safeSheetName()` de-duplicates; use it.
 - **`/api/notifications/*` is exempt from the proxy's session gate** because a
   cron has no cookie jar. It is not unauthenticated — the route requires a
   constant-time-compared bearer token or an admin session. Gating it in
@@ -185,11 +225,16 @@ NEXT_PUBLIC_VAPID_PUBLIC_KEY     # optional — without it, push is off and says
 VAPID_PRIVATE_KEY                # server only, never NEXT_PUBLIC_
 VAPID_SUBJECT                    # optional, mailto: the push service can contact
 NOTIFICATIONS_CRON_SECRET        # optional — without it only an admin can run it
+
+MNOTIFY_API_KEY                  # server only, never NEXT_PUBLIC_
+MNOTIFY_SENDER_ID                # must be APPROVED by mNotify; blank ⇒ SMS is off
+SMS_STUB                         # optional, "1" swaps in a stub that sends nothing
 ```
 
 The app must boot cleanly when the five required ones are present. The push
-vars are genuinely optional: with them absent the birthdays page reports
-"notifications are not set up" rather than offering a button that fails.
+and SMS vars are genuinely optional: with them absent the birthdays page
+reports "notifications are not set up" and `/sms` reports "SMS is not set up",
+rather than offering buttons that fail.
 
 ## Planning
 

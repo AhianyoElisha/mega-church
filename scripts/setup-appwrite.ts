@@ -25,6 +25,7 @@ import {
   DATABASE_ID,
   FINGER_LABELS,
   SERVICE_DEFINITIONS,
+  SMS_CATEGORIES,
 } from '../lib/appwrite/config'
 
 const { databases, storage } = createAdminClient()
@@ -364,6 +365,11 @@ async function setupMembers() {
   // The registration form asks for it; the bulk assigner is how the backlog
   // gets cleared. PRD §1.7.
   await ensureStringAttribute(COLLECTIONS.members, 'constituency_id', 64, false)
+  // Which birthday message THIS member gets. Null is the ordinary case and
+  // means "use the birthday default" — not "send nothing". Optional because
+  // the overwhelming majority of members never need a different wording, and
+  // a required attribute would force a choice at every registration. PRD §1.12.
+  await ensureStringAttribute(COLLECTIONS.members, 'sms_template_id', 64, false)
 
   await waitForAttributes(COLLECTIONS.members)
   await ensureIndex(COLLECTIONS.members, 'by_status', 'key', ['status'])
@@ -642,6 +648,87 @@ async function setupAttendanceRecords() {
   ])
 }
 
+async function setupSmsTemplates() {
+  console.log('\nsms_templates')
+  await ensureCollection(COLLECTIONS.sms_templates, 'SMS Templates')
+  await ensureStringAttribute(COLLECTIONS.sms_templates, 'name', 96, true)
+  await ensureEnumAttribute(
+    COLLECTIONS.sms_templates,
+    'category',
+    [...SMS_CATEGORIES],
+    true,
+  )
+  // 1024 rather than 160: a template is written in placeholders, and
+  // `{{first_name}}` is 15 characters that render down to about 5. Refusing a
+  // long TEMPLATE because a short MESSAGE is cheaper would be measuring the
+  // wrong string. The editor shows the rendered part count instead.
+  await ensureStringAttribute(COLLECTIONS.sms_templates, 'body', 1024, true)
+  // Required and undefaulted, like every other boolean here: `false` arriving
+  // by default is how a category quietly ends up with no default at all.
+  await ensureBooleanAttribute(COLLECTIONS.sms_templates, 'is_default', true)
+  await ensureIntegerAttribute(COLLECTIONS.sms_templates, 'sort_order', true)
+  await ensureStringAttribute(COLLECTIONS.sms_templates, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.sms_templates)
+  await ensureIndex(COLLECTIONS.sms_templates, 'by_category', 'key', ['category'])
+  // Finding "the birthday default" is the hottest read in the whole feature —
+  // the automatic run does it once per celebrant.
+  await ensureIndex(COLLECTIONS.sms_templates, 'by_category_default', 'key', [
+    'category',
+    'is_default',
+  ])
+  // Deliberately NOT a unique index on (category, name). Uniqueness here is
+  // case- and whitespace-insensitive — "Warm birthday" and "warm  birthday"
+  // are the same template to a human — and an index compares bytes. The check
+  // lives in `lib/sms/server.ts::templateNameTaken`, same reasoning as
+  // `bacentaNameTaken` (CLAUDE.md).
+}
+
+async function setupSmsMessages() {
+  console.log('\nsms_messages')
+  await ensureCollection(COLLECTIONS.sms_messages, 'SMS Messages')
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'member_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'phone', 32, true)
+  // What was ACTUALLY sent, already rendered. Storing the template id alone
+  // would mean an edited template silently rewrites history, and the one
+  // question this log exists to answer is "what did we say to them?".
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'body', 1024, true)
+  await ensureEnumAttribute(COLLECTIONS.sms_messages, 'category', [...SMS_CATEGORIES], true)
+  // Nullable: a template may be deleted long after a message was sent, and
+  // that must not take the record of the send with it.
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'template_id', 64, false)
+  await ensureEnumAttribute(COLLECTIONS.sms_messages, 'status', ['sent', 'failed'], true)
+  // mNotify's own words, kept verbatim. A paraphrase is the thing that makes a
+  // support conversation with the provider impossible.
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'provider_message', 512, false)
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'sent_at', 32, true)
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'run_date', 10, true)
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'sent_by', 128, false)
+  await ensureStringAttribute(COLLECTIONS.sms_messages, 'dedupe_key', 128, true)
+
+  await waitForAttributes(COLLECTIONS.sms_messages)
+  await ensureIndex(COLLECTIONS.sms_messages, 'by_member', 'key', ['member_id'])
+  await ensureIndex(COLLECTIONS.sms_messages, 'by_run_date', 'key', ['run_date'])
+  await ensureIndex(COLLECTIONS.sms_messages, 'by_category', 'key', ['category'])
+  /**
+   * The whole reason this collection is not just an audit trail.
+   *
+   * A birthday send inserts `birthday:<member_id>:<run_date>`, so a scheduler
+   * that fires twice — a retry, an overlapping cron, an admin pressing "send
+   * now" after it already ran — collides here and writes nothing. The member
+   * is texted once on their birthday, and the guarantee is the INDEX, not the
+   * check in front of it (CLAUDE.md).
+   *
+   * A manual send inserts `manual:<random>`, unique by construction, because
+   * thanking the same member for tithe twice in one day is legitimate and a
+   * guard that refuses it would be a bug wearing a safeguard's clothes.
+   *
+   * `required: true` and never nullable: MariaDB permits many NULLs in a
+   * unique index, so a null key would guard precisely nothing.
+   */
+  await ensureIndex(COLLECTIONS.sms_messages, 'dedupe_unique', 'unique', ['dedupe_key'])
+}
+
 async function setupBuckets() {
   console.log('\nbuckets')
   await ensureBucket(BUCKETS.member_photos, 'Member Photos')
@@ -682,6 +769,8 @@ async function main() {
   await setupBacentaMembers()
   await setupPushSubscriptions()
   await setupNotificationRuns()
+  await setupSmsTemplates()
+  await setupSmsMessages()
   await setupBuckets()
 
   console.log('\n─── summary ───')

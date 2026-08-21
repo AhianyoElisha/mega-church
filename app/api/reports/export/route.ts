@@ -13,10 +13,15 @@ import { fullName } from '@/lib/members/types'
 import {
   buildDayReport,
   isDayScope,
+  rowsForConstituency,
   rowsForScope,
+  safeSheetName,
+  NO_CONSTITUENCY,
   type DayReport,
+  type DayRow,
   type DayScope,
 } from '@/lib/reports/day'
+import { canReadGroup } from '@/lib/groups/server'
 
 /**
  * Attendance as .xlsx, streamed straight out of the handler — no temp files.
@@ -85,14 +90,27 @@ const SHEET_NAME: Record<Exclude<DayScope, 'all'>, string> = {
   absent: 'Absent',
 }
 
-/** One tab. `all` is not a tab — it is the three of these in one workbook. */
+/**
+ * One tab. `all` is not a tab — it is the three of these in one workbook.
+ *
+ * `group` narrows the sheet to one constituency. It is passed rather than
+ * filtered by the caller so that "absent, in Ahodwo" is defined once, in
+ * `rowsForConstituency`, and the head's sheet cannot disagree with the
+ * admin's headcount for the same Sunday.
+ */
 function buildDaySheet(
   wb: ExcelJS.Workbook,
   report: DayReport,
   scope: Exclude<DayScope, 'all'>,
+  group: { id: string; name: string } | null,
+  used: Set<string>,
 ) {
-  const rows = rowsForScope(report, scope)
-  const ws = wb.addWorksheet(SHEET_NAME[scope])
+  const rows: DayRow[] = group
+    ? rowsForConstituency(report, group.id, scope)
+    : rowsForScope(report, scope)
+  const ws = wb.addWorksheet(
+    safeSheetName(group ? `${SHEET_NAME[scope]} — ${group.name}` : SHEET_NAME[scope], used),
+  )
 
   // The "nobody opened a service" case. Without saying so, a day with no
   // service looks exactly like a day the whole congregation missed, and the
@@ -107,8 +125,8 @@ function buildDaySheet(
     titleBlock(
       ws,
       'D',
-      `${SCOPE_TITLE.absent} — ${report.date}`,
-      `${rows.length} of ${report.totals.active} active members were at neither service` + caveat,
+      `${SCOPE_TITLE.absent} — ${report.date}${group ? ` — ${group.name}` : ''}`,
+      `${rows.length}${group ? '' : ` of ${report.totals.active} active members`} were at neither service` + caveat,
     )
     header(ws, ['Name', 'Call number', 'WhatsApp', 'Usual service'])
     ws.columns = [{ width: 30 }, { width: 18 }, { width: 18 }, { width: 18 }]
@@ -128,8 +146,8 @@ function buildDaySheet(
   titleBlock(
     ws,
     'E',
-    `${SCOPE_TITLE[scope]} — ${report.date}`,
-    `${rows.length} present of ${report.totals.active} active members` + caveat,
+    `${SCOPE_TITLE[scope]} — ${report.date}${group ? ` — ${group.name}` : ''}`,
+    `${rows.length} present${group ? '' : ` of ${report.totals.active} active members`}` + caveat,
   )
   header(ws, ['Name', 'Call number', 'WhatsApp', 'Marked at', 'Also at other service'])
   ws.columns = [{ width: 30 }, { width: 18 }, { width: 18 }, { width: 12 }, { width: 20 }]
@@ -146,14 +164,57 @@ function buildDaySheet(
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await requireRole('admin')
+  /**
+   * A `leader` reaches this route, and it is the only admin report they do.
+   *
+   * That is not a hole in the read-only rule (PRD §5.2) — a download IS a
+   * read, and a head being able to pull their own constituency's attendance is
+   * the entire point of the feature. What keeps it safe is below: the group id
+   * is checked against `canReadGroup` before a single row is loaded, and a
+   * head who omits the parameter is refused rather than defaulted to
+   * everybody.
+   */
+  const auth = await requireRole(['admin', 'leader'])
   if ('error' in auth) return auth.error
+  const isAdmin = auth.user.label === 'admin'
 
   const params = request.nextUrl.searchParams
   const date = params.get('date')?.trim()
   const occurrenceId = params.get('occurrence_id')?.trim()
+  const constituencyId = params.get('constituency_id')?.trim() || null
+  const byConstituency = params.get('by') === 'constituency'
 
   const { databases } = createAdminClient()
+
+  // Everything a leader may do requires naming ONE constituency they head.
+  // The two refusals below are separate on purpose: "you did not say which"
+  // and "not that one" are different mistakes with different fixes, and
+  // collapsing them into a single 403 makes the first look like the second.
+  if (!isAdmin) {
+    if (occurrenceId || byConstituency || !constituencyId) {
+      return Response.json(
+        {
+          ok: false,
+          error:
+            'A group head can download their own constituency only. ' +
+            'Add constituency_id to the request.',
+        },
+        { status: 403 },
+      )
+    }
+    const allowed = await canReadGroup(
+      databases,
+      { id: auth.user.id, label: auth.user.label },
+      'constituency',
+      constituencyId,
+    )
+    if (!allowed) {
+      return Response.json(
+        { ok: false, error: 'You do not head that constituency.' },
+        { status: 403 },
+      )
+    }
+  }
 
   // --- day mode -------------------------------------------------------------
   if (date) {
@@ -170,25 +231,55 @@ export async function GET(request: NextRequest) {
 
     const report = await buildDayReport(databases, date)
 
+    // A named constituency has to exist, or a typo in the URL silently
+    // produces an empty workbook that reads as "nobody came".
+    let group: { id: string; name: string } | null = null
+    if (constituencyId) {
+      group = report.constituencies.find((c) => c.id === constituencyId) ?? null
+      if (!group) {
+        return Response.json(
+          { ok: false, error: 'No such constituency.' },
+          { status: 404 },
+        )
+      }
+    }
+
     const wb = new ExcelJS.Workbook()
     wb.creator = 'The Mega Church Attendance'
     wb.created = new Date()
+    // Excel caps sheet names at 31 characters, so two long constituency names
+    // can truncate to the same string. `used` is what stops ExcelJS throwing
+    // on the collision.
+    const used = new Set<string>()
 
-    if (scopeRaw === 'all') {
-      // One workbook, three tabs, in the order a Sunday happens. A member at
-      // BOTH services appears on the first two tabs — the same as downloading
-      // them separately, so the tabs cannot disagree with the single-scope
-      // sheets.
-      buildDaySheet(wb, report, 'first')
-      buildDaySheet(wb, report, 'second')
-      buildDaySheet(wb, report, 'absent')
+    const scopes: Exclude<DayScope, 'all'>[] =
+      scopeRaw === 'all' ? ['first', 'second', 'absent'] : [scopeRaw]
+
+    if (byConstituency) {
+      // One workbook the admin can split up and hand out: every constituency,
+      // every requested scope. Constituency-major so each head's tabs sit
+      // together rather than being interleaved with everyone else's.
+      for (const c of report.constituencies) {
+        for (const scope of scopes) buildDaySheet(wb, report, scope, c, used)
+      }
     } else {
-      buildDaySheet(wb, report, scopeRaw)
+      // One workbook, tabs in the order a Sunday happens. A member at BOTH
+      // services appears on the first two tabs — the same as downloading them
+      // separately, so the tabs cannot disagree with the single-scope sheets.
+      for (const scope of scopes) buildDaySheet(wb, report, scope, group, used)
     }
 
     const buffer = await wb.xlsx.writeBuffer()
+    const slug = (v: string) => v.replace(/[^a-z0-9]+/gi, '-').toLowerCase().replace(/^-|-$/g, '')
+    const suffix = byConstituency
+      ? '-by-constituency'
+      : group
+        ? `-${slug(group.name)}`
+        : ''
     const filename =
-      scopeRaw === 'all' ? `attendance-${date}.xlsx` : `attendance-${scopeRaw}-${date}.xlsx`
+      scopeRaw === 'all'
+        ? `attendance-${date}${suffix}.xlsx`
+        : `attendance-${scopeRaw}-${date}${suffix}.xlsx`
     return new Response(buffer as ArrayBuffer, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

@@ -1,6 +1,6 @@
-import { timingSafeEqual } from 'node:crypto'
 import { NextResponse, type NextRequest } from 'next/server'
-import { createAdminClient, requireRole } from '@/lib/appwrite/server'
+import { createAdminClient } from '@/lib/appwrite/server'
+import { authoriseCronRun, cronRefusal } from '@/lib/notifications/cron'
 import { listMembers } from '@/lib/members/server'
 import { todayInAccra } from '@/lib/attendance/occurrenceResolver'
 import { birthdayNotificationText, celebrantsForNotification } from '@/lib/birthdays/upcoming'
@@ -44,8 +44,8 @@ const NOTIFY_LABELS = [USER_LABELS.celebrations, USER_LABELS.admin]
  * from a machine in UTC must agree with the dashboard about which day it is.
  */
 export async function POST(request: NextRequest) {
-  const authorised = await authoriseRun(request)
-  if (!authorised.ok) return authorised.response
+  const authorised = await authoriseCronRun(request)
+  if (!authorised.ok) return cronRefusal<BirthdayRunResponse>(authorised)
 
   const { databases } = createAdminClient()
   const runDate = todayInAccra()
@@ -142,43 +142,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     )
   }
-}
-
-type Authorised =
-  | { ok: true; who: string }
-  | { ok: false; response: NextResponse }
-
-async function authoriseRun(request: NextRequest): Promise<Authorised> {
-  const header = request.headers.get('authorization') ?? ''
-  const secret = process.env.NOTIFICATIONS_CRON_SECRET
-
-  if (header.startsWith('Bearer ') && secret) {
-    const offered = header.slice('Bearer '.length)
-    // Constant-time, so a caller cannot narrow the secret down a byte at a
-    // time by measuring how long the rejection takes.
-    if (safeEqual(offered, secret)) return { ok: true, who: 'scheduler' }
-    return {
-      ok: false,
-      response: NextResponse.json<BirthdayRunResponse>(
-        { ok: false, error: 'Invalid scheduler token.' },
-        { status: 401 },
-      ),
-    }
-  }
-
-  const auth = await requireRole('admin')
-  if ('error' in auth) return { ok: false, response: auth.error }
-  return { ok: true, who: auth.user.email }
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const bufA = Buffer.from(a)
-  const bufB = Buffer.from(b)
-  // `timingSafeEqual` THROWS on a length mismatch rather than returning false,
-  // so the length has to be checked first. That early return does leak the
-  // secret's length, which is an acceptable trade against a randomly generated
-  // token: knowing it is 44 characters long does not help anyone guess it,
-  // whereas a byte-at-a-time timing oracle on the CONTENT would.
-  if (bufA.length !== bufB.length) return false
-  return timingSafeEqual(bufA, bufB)
 }

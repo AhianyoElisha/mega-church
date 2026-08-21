@@ -188,3 +188,17 @@ export type LeaderAccount = {
 export type ListLeadersResponse =
   | { ok: true; leaders: LeaderAccount[] }
   | { ok: false; error: string }
+
+export type CreateLeaderResponse =
+  | {
+      ok: true
+      leader: LeaderAccount
+      /**
+       * Shown ONCE and never stored. This app has no forgot-password flow, so
+       * an admin who dismisses the dialog without copying it has to create a
+       * new password in the Appwrite console rather than recover this one —
+       * which is why the dialog says so before it will close.
+       */
+      password: string
+    }
+  | { ok: false; error: string }

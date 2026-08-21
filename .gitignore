@@ -19,3 +19,8 @@ church-kiosk-pack-*.zip
 # Root level only: the real artwork lives in brand/, public/ and app/, and the
 # PWA icons under public/ are committed on purpose.
 /*.png
+
+# Provider credentials dropped into the project root as a file. The key belongs
+# in .env.local (MNOTIFY_API_KEY); the drop file is convenience, never history.
+mnotify_api_key*.txt
+*api_key*.txt

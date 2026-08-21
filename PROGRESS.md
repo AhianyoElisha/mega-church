@@ -18,6 +18,9 @@ for the phase breakdowns.
 | J | Head accounts (`leader`) | ✅ done — Plan 2, scoping proven server-side |
 | K | Birthday lead-time + `celebrations` role | ✅ done — Plan 2 |
 | L | PWA + Web Push | ✅ done — Plan 2. **Needs a scheduler wired; see below** |
+| M | Head accounts created in-app | ✅ done — Plan 3 |
+| N | Per-constituency attendance exports | ✅ done — Plan 3 |
+| O | Bulk SMS (mNotify) | ✅ done — Plan 3, verified against a real handset |
 
 ## Verified
 
@@ -186,12 +189,11 @@ test asserts on the error *message* so it can tell the two layers apart.
 
 Needs people, hardware or a decision — not more code:
 
-1. **Wire the scheduler.** `POST /api/notifications/birthday-run` with
-   `Authorization: Bearer $NOTIFICATIONS_CRON_SECRET` needs to be called once
-   each morning (Accra time). An Appwrite Function on a cron trigger,
-   cron-job.org, or a Windows scheduled task with `curl` all work. Until this
-   is done the alert only goes out when an admin presses **Send notification
-   now**. Calling it more than once a day is harmless.
+1. ~~**Wire the scheduler.**~~ ✅ Done in Plan 3 — declared as a Vercel Cron Job
+   in `vercel.json`, alongside the new birthday-SMS run. See "The two daily
+   jobs" in `README.md`. **`CRON_SECRET` must be set in the Vercel project's
+   environment variables**, because that is the exact variable Vercel reads to
+   build the `Authorization: Bearer` header it sends.
 2. **Push on real phones.** The VAPID keys are generated and the server serves
    them, but no device has subscribed yet. On iPhone the app must be added to
    the Home Screen first — Safari does not deliver push to an ordinary tab, and
@@ -208,3 +210,114 @@ Needs people, hardware or a decision — not more code:
 6. **Threshold calibration.** 33 is evidence-backed on a small corpus
    (`lib/biometrics/matching.ts`). Widen the corpus before trusting it against
    a large congregation — false-accept probability grows with gallery size.
+
+## Plan 3 — heads, per-constituency exports, SMS
+
+Applied 2026-08-21. See `.agent/plans/3.heads-exports-sms.md`.
+
+### Schema
+
+`npm run setup:appwrite` added 2 collections, 18 attributes and 6 indexes.
+A second run reported `created 0` across the board — idempotency confirmed, not
+assumed. `npm run verify:appwrite` passes, including the new
+`sms_messages.dedupe_unique` check and a "at most one default template per
+category" check.
+
+### What the report got right, and what it got wrong
+
+"There is no implemented way to add a head" was half right, and the half that
+was wrong said where the work went. `resolveHead()`, both POST routes, both
+PATCH routes and `GET /api/leaders` all already existed and worked. What was
+missing:
+
+1. no head control on either **detail** page — only on the create dialogs;
+2. no way to create a `leader` ACCOUNT outside the Appwrite console.
+
+(2) is what made (1) look total: a church that had never opened the console saw
+an empty Head dropdown and reasonably concluded the feature was absent.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **170 passed**, 4 skipped (was 140). 30 new: SMS rendering,
+  part counting, the `+233`→`233` conversion, constituency slicing and
+  worksheet-name de-duplication.
+- `npm run build` — **69 routes** (was 47).
+- **A real SMS reached a real handset.** `POST /api/notifications/birthday-sms`
+  with the cron token: `sent: 1`, mNotify replied *"messages sent
+  successfully"*. A tithe send through `/sms` reached the same handset.
+- **Idempotency proven, not assumed.** Second and third calls of the birthday
+  run returned `sent: 0, skipped: 1`, and the log held exactly ONE row for
+  three calls. The tithe send to the same member on the same day went through,
+  because its key is `manual:<random>` — the guard blocks repeats without
+  blocking legitimate re-sends.
+- **Cascade** — deleting the test member removed its 2 `sms_messages` rows.
+- **Export partition is exact.** For 2026-08-09 the whole-church absent list was
+  113; the per-constituency workbook gave 28 + 1 + 0 + 0 + 84 = **113**. Nobody
+  double-counted, nobody dropped.
+- **Leader export authorisation, all four branches:** own constituency 200 with
+  a real .xlsx; another constituency 403; `constituency_id` **omitted** 403 (not
+  defaulted to the whole church); `by=constituency` 403.
+- **Head accounts end to end** — created through the UI, signed in with the
+  generated password, landed on `/my-groups`, saw one group read-only with the
+  download card and **no** Head card, **no** Assign tab and **no** constituency
+  picker. The admin-only `/api/constituencies` was never even requested.
+- **Refusals** — duplicate leader email 409; unknown `{{placeholder}}` 400
+  naming the token; duplicate template name caught case- and
+  whitespace-insensitively; a tithe template submitted under `category:
+  birthday` refused, which is what stops a tithe send taking the birthday
+  dedupe key and silently suppressing the real birthday message.
+- `leader` gets 403 on every `/api/sms/*` route and on `POST /api/leaders`;
+  anonymous gets 401.
+
+Everything created during verification was deleted afterwards — the test
+member, its messages, and the `alos.head@megachurch.local` account, which was
+also un-appointed from Alos Constituency first. `npm run verify:appwrite`
+confirms the project is back to 116 members.
+
+### Scheduling
+
+Both daily jobs are declared in `vercel.json` as Vercel Cron Jobs, so deploying
+schedules them:
+
+| Job | Schedule (UTC) | Audience |
+|---|---|---|
+| `/api/notifications/birthday-run` | `0 6 * * *` | the celebrations team, by push, the day BEFORE |
+| `/api/notifications/birthday-sms` | `0 8 * * *` | the celebrant, by SMS, ON the day |
+
+**Africa/Accra is UTC+0 all year** — GMT with no daylight saving — so those UTC
+hours are already Accra times. That is geography, not design; a deployment in a
+DST zone would drift an hour twice a year.
+
+**`CRON_SECRET` must be set in the Vercel project's environment variables.**
+Vercel reads that exact name and sends `Authorization: Bearer <CRON_SECRET>` on
+every invocation; without it the header is absent and the routes correctly
+refuse. `NOTIFICATIONS_CRON_SECRET` is also accepted, so an external scheduler
+can carry a different secret. The shared check lives in
+`lib/notifications/cron.ts` — previously duplicated in both routes, which is a
+timing-safe comparison that only gets fixed in one of them.
+
+Vercel's Hobby plan allows exactly two daily cron jobs. Both slots are used.
+
+### Templates
+
+`npm run seed:sms` writes five starting templates — two birthday, two tithe,
+one general. Idempotent: it creates only what is missing by name and **never**
+overwrites a body somebody has edited, so it is safe to re-run after the church
+has rewritten the wording. It also refuses to seed anything that renders to
+more than one SMS part, rather than trusting whoever edits the file to count.
+
+The wording is a starting point, not a house style. The second birthday
+template exists to make the per-member override useful on day one: an elder or
+a recently bereaved member is not addressed the same way as everybody else, and
+having a second wording ready makes that a choice rather than a project.
+
+### Still to do for SMS
+
+1. **Watch the mNotify credit balance.** Nothing in the app warns when it runs
+   low — a send simply starts failing, with mNotify's own words recorded in the
+   log. Worth a standing reminder until somebody builds a balance check.
+2. **Confirm the first live cron firing.** The routes were proven by hand
+   against a real handset, but no *scheduled* invocation has run yet. Check
+   `/sms` → Sent messages the morning after the first deploy; a row stamped
+   `scheduler` is the proof.

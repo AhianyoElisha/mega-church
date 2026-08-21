@@ -7,6 +7,8 @@ import { Button } from '@/shared/Button'
 import { Badge } from '@/shared/Badge'
 import { Banner, Card, LoadingRow, PageHeader, PageWrap, StatCard, TabBar } from '@/components/ui'
 import GroupMemberAssigner from '@/components/group-member-assigner'
+import HeadCard from '@/components/head-card'
+import DayExport from '@/components/day-export'
 import GroupRosterTable from '@/components/group-roster-table'
 import { useDialog } from '@/components/dialog'
 import { useAuth } from '@/components/auth'
@@ -14,6 +16,7 @@ import {
   useAssignConstituency,
   useConstituency,
   useDeleteConstituency,
+  useUpdateConstituency,
 } from '@/lib/queries/groups'
 
 // Next 16: page params are a promise.
@@ -26,6 +29,7 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
   const { data, isLoading, error } = useConstituency(id)
   const assign = useAssignConstituency()
   const remove = useDeleteConstituency()
+  const update = useUpdateConstituency()
   const [tab, setTab] = useState<'members' | 'assign'>('members')
 
   const isAdmin = user?.label === 'admin'
@@ -110,6 +114,26 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
           }
         />
       </div>
+
+      {/* Rendered for a head as well as an admin. A download IS a read, and a
+          head being able to pull their own constituency's first / second /
+          absent lists is the point of the feature — `canReadGroup` on the
+          server is what makes it safe, not the absence of a button. */}
+      <DayExport constituency={{ id: group.$id, name: group.name }} />
+
+      {isAdmin && (
+        <HeadCard
+          kind="constituency"
+          groupName={group.name}
+          headUserId={group.head_user_id}
+          headName={group.head_name}
+          busy={update.isPending}
+          onAppoint={async (headUserId) => {
+            const res = await update.mutateAsync({ id, head_user_id: headUserId })
+            if (!res.ok) throw new Error(res.error)
+          }}
+        />
+      )}
 
       {isAdmin && (
         <TabBar
