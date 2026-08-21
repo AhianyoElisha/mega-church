@@ -24,3 +24,15 @@ church-kiosk-pack-*.zip
 # in .env.local (MNOTIFY_API_KEY); the drop file is convenience, never history.
 mnotify_api_key*.txt
 *api_key*.txt
+
+# Added by `vercel link`. The project link carries the project/org ids only,
+# but it is machine-local and there is no reason for it in history.
+.vercel
+
+# `vercel link` writes a blanket `.env*`, which also swallows the committed
+# .env.local.example — the one file here that documents what the other .env
+# files must contain. It stays tracked either way (ignore rules do not affect
+# tracked files), but a blanket rule means a fresh copy could never be added
+# back, and nobody would see why.
+.env*
+!.env.local.example
