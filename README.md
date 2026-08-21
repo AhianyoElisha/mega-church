@@ -179,6 +179,38 @@ keyed `birthday:<member>:<date>`. A retry, an overlapping schedule, or an admin
 pressing the button after the cron already ran all collide on a unique index and
 send nothing. Calling them by hand to test is harmless.
 
+### Deployment protection, and why it is scoped the way it is
+
+**Vercel Authentication is set to *Only Preview Deployments*.** That is a
+deliberate setting, not a default, and re-tightening it will silently stop the
+birthday jobs.
+
+A cron job invokes the **production deployment URL**
+(`mega-church-<hash>-<team>.vercel.app`), not the friendly alias. With
+protection set to `all_except_custom_domains` that URL answers `302` to
+`vercel.com/sso-api`, so the invocation never reaches the route — and nothing
+in this app would report it, because the request never arrives. The symptom is
+a church that quietly stops sending birthday texts.
+
+Scoping protection to previews leaves that URL reachable and puts the bearer
+check back in charge of it, which is where authorisation for these routes
+belongs anyway. It exposes no new code: the same production build is already
+public at `mega-church.vercel.app`. Preview deployments — the ones carrying
+unreviewed work — stay behind SSO.
+
+A **Protection Bypass for Automation** secret also exists
+(`VERCEL_AUTOMATION_BYPASS_SECRET`, injected by Vercel). It is not needed by the
+crons any more; it is for callers outside Vercel — uptime monitoring, an
+external scheduler, or reaching a protected *preview* by hand — sent as the
+`x-vercel-protection-bypass` header.
+
+To check any of this from a terminal, POST to either host with a deliberately
+wrong token. The reply distinguishes the two failures that matter:
+
+- `302` to `vercel.com/sso-api` — deployment protection is in the way.
+- `403 No scheduler secret is configured` — no `CRON_SECRET` on Vercel.
+- `401 Invalid scheduler token` — protection and config are both fine.
+
 ### Turning push on
 
 1. Generate a key pair once per deployment:

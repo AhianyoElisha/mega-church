@@ -299,6 +299,21 @@ timing-safe comparison that only gets fixed in one of them.
 
 Vercel's Hobby plan allows exactly two daily cron jobs. Both slots are used.
 
+Confirmed registered and enabled on 2026-08-21 via the Vercel API — both
+definitions present, `disabledAt: null`.
+
+**Vercel Authentication is scoped to *Only Preview Deployments*, deliberately.**
+A cron invokes the production DEPLOYMENT url, not the alias, and under the
+previous `all_except_custom_domains` setting that url answered `302` to
+`vercel.com/sso-api` — the invocation would never have reached the route, and
+nothing in the app would have reported it. Re-tightening that setting silently
+stops birthday texts. See "Deployment protection" in `README.md`.
+
+Verified after the change, against the cron's exact target host and with no
+bypass header: no token ⇒ 401, wrong token ⇒ 401 `Invalid scheduler token`,
+real token ⇒ 200. Preview deployments still answer 302 to SSO, so nothing was
+opened that was not already public at `mega-church.vercel.app`.
+
 ### Templates
 
 `npm run seed:sms` writes five starting templates — two birthday, two tithe,
@@ -318,6 +333,10 @@ having a second wording ready makes that a choice rather than a project.
    low — a send simply starts failing, with mNotify's own words recorded in the
    log. Worth a standing reminder until somebody builds a balance check.
 2. **Confirm the first live cron firing.** The routes were proven by hand
-   against a real handset, but no *scheduled* invocation has run yet. Check
-   `/sms` → Sent messages the morning after the first deploy; a row stamped
-   `scheduler` is the proof.
+   against a real handset — including against the exact deployment host a cron
+   targets — but no *scheduled* invocation has run yet. The 2026-08-21 deploy
+   landed at 10:53 UTC, after that day's 06:00 and 08:00 slots.
+
+   The first firing with anybody to reach is **25 August** (team push about the
+   26th) and **26 August** (the SMS itself, to Chris Johnson Baffour). A row
+   stamped `scheduler` in `/sms` → Sent messages is the proof.
