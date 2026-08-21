@@ -20,6 +20,7 @@
     "e2e": "node scripts/e2e-smoke.mjs",
     "e2e:groups": "node scripts/e2e-groups.mjs",
     "seed:users": "tsx scripts/seed-users.ts",
+    "seed:sms": "tsx --conditions=react-server scripts/seed-sms-templates.ts",
     "build:kiosk-pack": "tsx scripts/build-kiosk-pack.ts",
     "build:brand": "tsx scripts/build-brand-assets.ts"
   },

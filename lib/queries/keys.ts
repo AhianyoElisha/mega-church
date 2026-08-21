@@ -46,6 +46,13 @@ export const queryKeys = {
   leaders: ['groups', 'leaders'] as const,
 
   birthdays: ['birthdays'] as const,
+
+  // One `sms` prefix for templates, the log and the config status: creating a
+  // template changes which options the tithe screen offers and which message
+  // the birthday run would send, and sending changes the log — invalidating
+  // each by hand is how one of them ends up stale.
+  smsTemplates: (category?: string) => ['sms', 'templates', category ?? ''] as const,
+  smsLog: (category?: string) => ['sms', 'log', category ?? ''] as const,
   pushStatus: ['push', 'status'] as const,
 
   dashboard: ['dashboard'] as const,

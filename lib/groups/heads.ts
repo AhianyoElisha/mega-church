@@ -4,7 +4,7 @@ import 'server-only'
 // document — they sign in and see their people, so what is stored on the group
 // is a user `$id`.
 
-import { Query, type Users } from 'node-appwrite'
+import { ID, Query, type Users } from 'node-appwrite'
 import { USER_LABELS } from '@/lib/appwrite/config'
 import type { LeaderAccount } from './types'
 
@@ -79,4 +79,97 @@ export async function listLeaderAccounts(
     offset += PAGE
   }
   return found.sort((a, b) => a.name.localeCompare(b.name, 'en'))
+}
+
+// --- creating the account itself --------------------------------------------
+
+/**
+ * A password an admin can read down a phone line without ambiguity.
+ *
+ * No `l`/`1`/`I` or `O`/`0`, because this password IS handed over verbally or
+ * on paper — there is no forgot-password flow in this app — and "was that a
+ * one or an ell" is how a new head ends up locked out of the group they were
+ * just given.
+ */
+function generatePassword(): string {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  const bytes = new Uint32Array(14)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('')
+}
+
+export type CreateLeaderResult =
+  | { ok: true; id: string; name: string; email: string; password: string }
+  | { ok: false; error: string }
+
+/**
+ * Create an account that can be appointed head of a group.
+ *
+ * This exists because the Head dropdown had nothing in it for any church that
+ * had never opened the Appwrite console — which made a feature that was fully
+ * built look entirely absent. Appointing a head and giving that head a login
+ * are one job to the person doing it, so they are one flow here.
+ *
+ * The label is set to EXACTLY `leader` and nothing else. RBAC is one label per
+ * user (CLAUDE.md); an account carrying two would be routed by whichever
+ * `pickLabel` found first in `proxy.ts`, which is not a thing to leave to
+ * ordering.
+ *
+ * The password is returned ONCE and never stored. There is no password reset
+ * in this app, so the dialog that shows it says so before it can be dismissed.
+ */
+export async function createLeaderAccount(
+  users: Users,
+  input: { name: string; email: string; password?: string | null },
+): Promise<CreateLeaderResult> {
+  const name = input.name.trim().replace(/\s+/g, ' ')
+  const email = input.email.trim().toLowerCase()
+
+  if (name.length < 2) return { ok: false, error: 'Give the head a name.' }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return { ok: false, error: `"${input.email}" is not a valid email address.` }
+  }
+  const password = input.password?.trim() || generatePassword()
+  // Appwrite's own minimum. Checked here so the refusal names the rule rather
+  // than surfacing as a provider error an admin has to interpret.
+  if (password.length < 8) {
+    return { ok: false, error: 'A password must be at least 8 characters.' }
+  }
+
+  let account
+  try {
+    account = await users.create(ID.unique(), email, undefined, password, name)
+  } catch (err) {
+    const code = (err as { code?: number }).code
+    if (code === 409) {
+      return {
+        ok: false,
+        error:
+          `An account already exists for ${email}. If that is the person you mean, they are ` +
+          'already in the Head list — pick them there rather than creating a second account.',
+      }
+    }
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not create that account.',
+    }
+  }
+
+  try {
+    await users.updateLabels(account.$id, [USER_LABELS.leader])
+  } catch (err) {
+    // An account with no label is one `proxy.ts` bounces straight to /login,
+    // which reads as a broken password rather than a half-finished setup. It
+    // is also invisible in the Head list, so it would be created again and
+    // again. Remove it and report honestly.
+    await users.delete(account.$id).catch(() => {})
+    return {
+      ok: false,
+      error:
+        'The account was created but could not be marked as a leader, so it was removed. ' +
+        (err instanceof Error ? err.message : 'Try again.'),
+    }
+  }
+
+  return { ok: true, id: account.$id, name, email, password }
 }

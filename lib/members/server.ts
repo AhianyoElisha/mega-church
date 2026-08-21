@@ -145,6 +145,26 @@ export function validateMemberInput(
     out.constituency_id = null
   }
 
+  // The per-member birthday-message override. `null` clears it back to the
+  // category default; omitting the key leaves it alone — the same `undefined`
+  // vs `null` distinction `bacenta_ids` relies on, and for the same reason: a
+  // PATCH correcting a phone number must not silently reset which birthday
+  // message somebody gets.
+  if (body.sms_template_id !== undefined) {
+    if (body.sms_template_id === null || body.sms_template_id === '') {
+      out.sms_template_id = null
+    } else if (
+      typeof body.sms_template_id !== 'string' ||
+      body.sms_template_id.length > 64
+    ) {
+      return { ok: false, error: 'That birthday message is not valid.' }
+    } else {
+      out.sms_template_id = body.sms_template_id
+    }
+  } else if (need) {
+    out.sms_template_id = null
+  }
+
   if (body.status !== undefined) {
     if (body.status !== 'active' && body.status !== 'inactive') {
       return { ok: false, error: 'status must be "active" or "inactive".' }
@@ -205,6 +225,7 @@ export async function createMember(
     address: fields.address ?? null,
     whatsapp_number: fields.whatsapp_number ?? null,
     constituency_id: fields.constituency_id ?? null,
+    sms_template_id: fields.sms_template_id ?? null,
     created_by: createdBy,
   })
   return memberDocToMember(doc as Models.Document & Record<string, unknown>)
@@ -273,7 +294,13 @@ export async function listMembers(
 export async function deleteMemberCascade(
   databases: Databases,
   id: string,
-): Promise<{ templates: number; roster: number; records: number; bacentas: number }> {
+): Promise<{
+  templates: number
+  roster: number
+  records: number
+  bacentas: number
+  messages: number
+}> {
   const dbAny = databases as unknown as {
     deleteDocuments?: (db: string, coll: string, queries?: string[]) => Promise<unknown>
   }
@@ -312,7 +339,11 @@ export async function deleteMemberCascade(
   // the three whose loss changes a past count, so if an earlier step fails the
   // history is still intact.
   const records = await purge(COLLECTIONS.attendance_records, 'member_id')
+  // The SMS log. Left behind, these rows keep a deleted member's phone number
+  // and the text of everything ever sent to them — which is the kind of thing
+  // a church deleting somebody at their own request means to be rid of.
+  const messages = await purge(COLLECTIONS.sms_messages, 'member_id')
 
   await databases.deleteDocument(DATABASE_ID, COLLECTIONS.members, id)
-  return { templates, roster, records, bacentas }
+  return { templates, roster, records, bacentas, messages }
 }

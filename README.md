@@ -93,6 +93,46 @@ bacenta. That dropdown only offers `leader` accounts, and the server refuses
 any other — a head who can sign in but is then bounced straight out is worse
 than no head at all.
 
+## Bulk SMS
+
+The church texts through **mNotify**. Two things go out:
+
+- **Birthday wishes**, automatically, on the morning of the birthday.
+- **Tithe thank-yous**, from `/sms`, by ticking the members who paid.
+
+Both are built from **templates** so the same wording is not retyped a hundred
+times a year and subtly differently each time. Templates live per category
+(birthday / tithe / general) and carry placeholders — `{{first_name}}`,
+`{{full_name}}`, `{{church}}` and a couple more. The editor previews the
+rendered message against a real name and counts the **SMS parts** live, because
+the church is billed per part and a template that drifts past 160 characters
+quietly costs twice what the one before it did.
+
+Not every member is addressed the same way, so a member can be given their own
+birthday message on their profile. Everyone else gets the category default.
+Resolution is: the member's own template → the birthday default → nothing sent,
+reported loudly rather than silently skipped.
+
+An unknown placeholder **refuses the send** and names the offending token. The
+failure being prevented is concrete: `{{name}}` is a plausible guess and not one
+of ours, and substituting a blank mails "Happy birthday !" to the whole
+congregation, at cost, with no way to recall it.
+
+### Setting it up
+
+`MNOTIFY_API_KEY` comes from **Developer** in the mNotify dashboard.
+`MNOTIFY_SENDER_ID` has to be **requested there and approved** — 11 characters
+or fewer. Until both are set every SMS screen says "SMS is not set up" rather
+than offering a button that fails.
+
+A blank sender ID is treated as *not configured* rather than filled in with a
+plausible default, and that is deliberate: mNotify **accepts** a message with an
+unapproved sender ID and then never delivers it. A loud misconfiguration is
+better than messages that report success and never arrive.
+
+Set `SMS_STUB=1` to swap in a stub that records and sends nothing. That is what
+keeps a test run from spending the church's credit.
+
 ## Birthdays and notifications
 
 The church is told about a birthday **the day before**, not on the day: the
@@ -103,6 +143,41 @@ people.
 
 The `celebrations` account is for the team that makes the flyers. It reaches
 `/birthdays` and nothing else.
+
+### The two daily jobs
+
+Birthdays involve **two** scheduled jobs, on **different days**, to different
+people. They are not interchangeable and neither substitutes for the other:
+
+| Job | Who it reaches | When | Why then |
+|---|---|---|---|
+| `/api/notifications/birthday-run` | the celebrations team, by push | 06:00 the day **before** | they have a flyer and a shoutout to prepare, and the morning of is too late |
+| `/api/notifications/birthday-sms` | the celebrant, by SMS | 08:00 **on** the day | a birthday message that arrives a day early is simply wrong, and 06:00 would wake them |
+
+Both are declared in `vercel.json` as Vercel Cron Jobs, so deploying is all it
+takes to schedule them. Two things about that file are load-bearing:
+
+**Vercel cron schedules are UTC, and Ghana is UTC+0 all year.** Africa/Accra is
+GMT with no daylight saving, so the UTC times in `vercel.json` are already Accra
+times and need no offset. This is a happy accident of geography, not a design —
+if this church ever runs in a zone that observes DST, those hours will drift by
+an hour twice a year and the fix is not to edit the cron but to have the route
+check the local hour.
+
+**`CRON_SECRET` must be set in the Vercel project's environment variables.**
+Vercel reads that exact variable and sends `Authorization: Bearer <CRON_SECRET>`
+on every scheduled invocation; without it the header is absent and the route
+correctly refuses. `NOTIFICATIONS_CRON_SECRET` is also accepted, so an external
+scheduler can use a different secret from Vercel's — set either, or both.
+
+Vercel's Hobby plan allows **two** cron jobs, triggered once a day. That is
+exactly what is declared here; a third job needs the Pro plan.
+
+Both routes are safe to call more than once. The team push is claimed by a row
+in `notification_runs`; each birthday SMS is claimed by a row in `sms_messages`
+keyed `birthday:<member>:<date>`. A retry, an overlapping schedule, or an admin
+pressing the button after the cron already ran all collide on a unique index and
+send nothing. Calling them by hand to test is harmless.
 
 ### Turning push on
 

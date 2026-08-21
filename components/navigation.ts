@@ -9,6 +9,7 @@ import {
   MapPinIcon,
   UserGroupIcon,
   CakeIcon,
+  ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline'
 import type { UserLabel } from '@/lib/auth/types'
 
@@ -88,6 +89,16 @@ export const NAVIGATION: NavItem[] = [
     icon: CakeIcon,
     roles: ['admin', 'celebrations'],
     quick: true,
+  },
+  // Under `people` rather than as an eleventh top-level item — which is the
+  // rule this menu structure exists to enforce (see NAV_GROUPS above). Messages
+  // are addressed to the registry, so `people` is where they belong.
+  {
+    name: 'Messages',
+    href: '/sms',
+    icon: ChatBubbleLeftRightIcon,
+    roles: ['admin'],
+    group: 'people',
   },
   {
     name: 'Services',

@@ -20,6 +20,7 @@ import type {
   GroupDetailResponse,
   ListBacentasResponse,
   ListConstituenciesResponse,
+  CreateLeaderResponse,
   ListLeadersResponse,
   MembershipMode,
   MembershipResponse,
@@ -43,10 +44,19 @@ function useGroupMutation<TData, TVars>(fn: (vars: TVars) => Promise<TData>) {
 
 // --- constituencies ---------------------------------------------------------
 
-export function useConstituencies() {
+/**
+ * `enabled: false` matters here, not just as an optimisation.
+ *
+ * `/api/constituencies` is admin data and answers a `leader` with 403 (PRD
+ * §5.2). A head opening their own group page must not fire it at all — the
+ * request would fail, land in the query cache as an error, and give the page a
+ * failed request to explain that has nothing to do with anything they did.
+ */
+export function useConstituencies(options: { enabled?: boolean } = {}) {
   return useQuery<ListConstituenciesResponse>({
     queryKey: queryKeys.constituencies,
     queryFn: () => apiFetch('/api/constituencies'),
+    enabled: options.enabled ?? true,
   })
 }
 
@@ -173,4 +183,22 @@ export function useLeaderAccounts() {
     queryKey: queryKeys.leaders,
     queryFn: () => apiFetch('/api/leaders'),
   })
+}
+
+/**
+ * Create a login for somebody about to be made a head.
+ *
+ * Invalidates the whole `groups` prefix, not just the leader list: the Head
+ * dropdown on every group page reads that list, and the entire reason this
+ * exists is that an admin creating a head expects to appoint them in the very
+ * next click.
+ */
+export function useCreateLeader() {
+  return useGroupMutation<CreateLeaderResponse, { name: string; email: string; password?: string }>(
+    (vars) =>
+      apiFetch('/api/leaders', {
+        method: 'POST',
+        body: JSON.stringify(vars),
+      }),
+  )
 }

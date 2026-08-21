@@ -81,6 +81,10 @@ export function memberDocToMember(d: MemberDoc): Member {
     constituency_id: (d.constituency_id as string | null) || null,
     status: (d.status as Member['status']) ?? 'active',
     created_by: (d.created_by as string | null) ?? null,
+    // `|| null` for the same reason as `constituency_id` above: Appwrite hands
+    // back `''` for an unset optional string, and `''` is truthy enough to
+    // send `resolveBirthdayTemplate` looking up a template that cannot exist.
+    sms_template_id: (d.sms_template_id as string | null) || null,
     $createdAt: d.$createdAt,
     $updatedAt: d.$updatedAt,
   }

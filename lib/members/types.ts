@@ -37,6 +37,15 @@ export type Member = {
   constituency_id: string | null
   status: MemberStatus
   created_by: string | null
+  /**
+   * Which birthday SMS THIS member gets, overriding the category default.
+   *
+   * Null is the ordinary case and means "use the standard birthday message" —
+   * never "send nothing". Not every member is addressed the same way, which is
+   * the whole reason this field exists; most are, which is why it is optional
+   * rather than asked for at every registration. PRD §1.12.
+   */
+  sms_template_id: string | null
   $createdAt: string
   $updatedAt: string
 }
@@ -81,6 +90,9 @@ export type MemberInput = {
    * entirely leaves them untouched, which is what a partial edit needs.
    */
   bacenta_ids?: string[]
+  /** `null` clears the override back to the category default; omitting the key
+   *  leaves it alone, exactly as `bacenta_ids` does. */
+  sms_template_id?: string | null
   status?: MemberStatus
 }
 

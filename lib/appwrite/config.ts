@@ -64,6 +64,22 @@ export const COLLECTIONS = {
    * retried cron from notifying the team twice. PRD §1.11.
    */
   notification_runs: 'notification_runs',
+  /**
+   * Reusable SMS bodies. Not all members are addressed the same way, so the
+   * church keeps several per category and picks one — the alternative is
+   * retyping a birthday message a hundred times a year and getting it subtly
+   * different each time. PRD §1.12.
+   */
+  sms_templates: 'sms_templates',
+  /**
+   * One row per SMS the system actually handed to mNotify, successful or not.
+   *
+   * It is a log, but its `dedupe_key` unique index is also the GUARANTEE that
+   * a retried birthday cron does not text a member twice — the send is claimed
+   * by inserting this row, exactly as `notification_runs` claims a daily run.
+   * PRD §1.13.
+   */
+  sms_messages: 'sms_messages',
 } as const
 
 export const BUCKETS = {
@@ -170,3 +186,37 @@ export const BIRTHDAY_LEAD_DAYS = 1
 
 /** How far ahead the birthdays page lists, past the lead day. */
 export const BIRTHDAY_HORIZON_DAYS = 30
+
+// --- SMS --------------------------------------------------------------------
+
+/**
+ * What an SMS is FOR. The category decides which templates are offered and, for
+ * `birthday`, which one the automatic run reaches for.
+ */
+export const SMS_CATEGORIES = ['birthday', 'tithe', 'general'] as const
+export type SmsCategory = (typeof SMS_CATEGORIES)[number]
+
+export const SMS_CATEGORY_LABEL: Record<SmsCategory, string> = {
+  birthday: 'Birthday',
+  tithe: 'Tithe',
+  general: 'General',
+}
+
+/**
+ * The church's name as it appears inside a message body via `{{church}}`.
+ *
+ * Deliberately NOT the mNotify sender ID: that is capped at 11 characters and
+ * has to be pre-approved by the provider, so it is frequently an abbreviation
+ * nobody would want to read mid-sentence.
+ */
+export const CHURCH_NAME = 'The Mega Church'
+
+/**
+ * One GSM-7 SMS part. Past this the message is split and billed per part, so
+ * the editor shows the count — a template that quietly became three parts is
+ * three times the cost of the one the church thought it approved.
+ */
+export const SMS_PART_LENGTH = 160
+
+/** A concatenated part carries less, because the joining header costs 7 bits. */
+export const SMS_CONCAT_PART_LENGTH = 153

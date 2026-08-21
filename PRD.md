@@ -212,6 +212,71 @@ insert — not the check in front of it — is what stops a retried or overlappi
 cron from notifying the team twice. `run_date` is YYYY-MM-DD in Accra and is
 the day the notification was SENT, not the birthday.
 
+### 1.12 SMS templates
+
+Reusable message bodies, so the same birthday wording is not retyped a hundred
+times a year and subtly differently each time.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string(96) | yes | unique **within its category**, case- and whitespace-insensitively |
+| `category` | enum | yes | `birthday` \| `tithe` \| `general` |
+| `body` | string(1024) | yes | with `{{placeholders}}` |
+| `is_default` | boolean | yes | the one used when nothing more specific is chosen |
+| `sort_order` | integer | yes | |
+| `created_by` | string(128) | no | |
+
+**Exactly one default per category**, enforced when writing: setting a new
+default clears the old one in the same request. Two defaults is not
+untidiness — it is a coin toss over which message the congregation receives,
+resolved by whichever row Appwrite happens to return first.
+
+Placeholders are a **closed set**: `{{first_name}}`, `{{last_name}}`,
+`{{other_names}}`, `{{full_name}}`, `{{church}}`. An unknown one refuses the
+send and names the offending token rather than substituting an empty string —
+the failure being prevented is "Happy birthday !" going to the whole
+congregation, at cost, with no way to recall it.
+
+An open set — "substitute any member field" — was rejected: it would let a
+template text somebody their own phone number, and would start rendering blanks
+the day a field is renamed.
+
+`members.sms_template_id` is the **per-member override**. Null is the ordinary
+case and means "use the category default", never "send nothing". Resolution
+order for a birthday: the member's own template → the birthday default →
+report `no_template` and send nothing, loudly.
+
+### 1.13 SMS messages
+
+One row per message handed to mNotify, successful or not. It is a log, and its
+`dedupe_key` unique index is also the guarantee against double-texting.
+
+| Field | Type | Notes |
+|---|---|---|
+| `member_id`, `phone`, `body` | | `body` is what was ACTUALLY sent, already rendered — an edited template must not rewrite history |
+| `category`, `template_id` | | `template_id` nullable: deleting a template must not delete the record of a send |
+| `status` | enum | `sent` \| `failed` |
+| `provider_message` | string(512) | mNotify's own words, verbatim |
+| `sent_at`, `run_date`, `sent_by` | | `sent_by` is an admin email or `scheduler` |
+| `dedupe_key` | string(128) | **unique**, required |
+
+The send is **claimed by inserting this row before the provider is called** —
+the same principle as `notification_runs` (§1.11). A retried cron collides on
+the index and writes nothing.
+
+- automatic → `birthday:<member_id>:<run_date>`. One birthday text per member
+  per day, however many times the scheduler fires.
+- manual → `manual:<random>:<member_id>`, unique by construction. An admin may
+  legitimately thank the same member for tithe twice in one day, and a guard
+  that refuses that is a bug wearing a safeguard's clothes.
+
+Deliberately **not** nullable-with-a-unique-index: MariaDB permits many NULLs
+in a unique index, so a null key would guard nothing at all.
+
+Idempotency is per MEMBER rather than per run because a run that half-completes
+— mNotify times out at member forty of sixty — must be resumable: the next call
+has to text the remaining twenty and none of the first forty.
+
 ---
 
 ## 2. Rules
@@ -295,6 +360,52 @@ Two calendar cases are load-bearing and unit-tested: the December→January wrap
 (on 31 December, a 1 January birthday is *tomorrow*), and 29 February — a real
 birthday, observed on 28 February in a common year so the team is never told to
 prepare for a day that will not arrive.
+
+### 2.8 The celebrant is texted ON the day; the team is told the day BEFORE
+
+Two jobs, two audiences, two days. This is the detail most likely to be
+"tidied" into one later, so it is written down:
+
+| Job | Audience | Day | Kind |
+|---|---|---|---|
+| `POST /api/notifications/birthday-run` | the celebrations TEAM, by push | the day **before** (`BIRTHDAY_LEAD_DAYS`) | `birthday` |
+| `POST /api/notifications/birthday-sms` | the CELEBRANT, by SMS | **on** the day | `birthday_sms` |
+
+The team is warned early because they have a flyer and a shoutout to prepare
+(§2.7). The celebrant is texted on the day because a birthday message that
+arrives a day early is simply wrong.
+
+Both read the same tested calendar arithmetic —
+`celebrantsForNotification(members, today, leadDays)` with lead 1 and lead 0
+respectively — so the 29 February observance and the December→January wrap
+cannot diverge between them. **Neither substitutes for the other**; a scheduler
+must call both.
+
+### 2.9 Attendance exports split by constituency
+
+The same first / second / absent question, narrowed to one group, so a head can
+work their own call list.
+
+- An **admin** may take the whole church, one constituency, or `by=constituency`
+  — one workbook with a sheet per constituency per scope.
+- A **head** may take their own constituency and nothing else. This is the one
+  admin report a `leader` reaches, and it does not break the read-only rule
+  (§5.2) because a download is a read.
+
+What makes it safe is server-side and absolute: `canReadGroup()` is consulted
+before a single row loads, and a head who **omits** `constituency_id` is
+refused rather than defaulted to everybody. "You did not say which" and "not
+that one" are separate refusals, because they are different mistakes with
+different fixes.
+
+Members with no constituency are a real bucket — **"No constituency"** — not an
+error. They appear in the admin's workbook only, since nobody heads them, and
+they are precisely the people who most need assigning.
+
+`rowsForConstituency()` is the single definition of "absent, in Ahodwo". Two
+call sites filtering independently is how a head's sheet and the admin's
+headcount end up disagreeing about the same Sunday with no way to tell which is
+right.
 
 ---
 
@@ -433,3 +544,8 @@ listing. A head putting somebody else's bacenta id in a URL gets a 403.
     manual "send now".
 13. **PWA + push** — installable app, service worker, per-device
     subscriptions, and an idempotent daily run a scheduler calls.
+14. **Bulk SMS** — mNotify, message templates per category, a per-member
+    birthday override, an automatic birthday run, and a tithe thank-you screen
+    that texts a hand-picked set of members.
+15. **Head accounts, created in-app** — an admin creates the `leader` login and
+    appoints them from the group's own page, in one flow.

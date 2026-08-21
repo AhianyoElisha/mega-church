@@ -25,6 +25,9 @@ const bad = (m: string) => {
   console.log(`  ✗ ${m}`)
   failures++
 }
+/** Reported but NOT a failure. An optional feature that is switched off is a
+ *  state the app explains on screen, not a broken deployment. */
+const warn = (m: string) => console.log(`  ! ${m}`)
 
 async function main() {
   const { databases } = createAdminClient()
@@ -93,12 +96,69 @@ async function main() {
     // birthday team twice in a day. The check in the route is only the fast
     // path; this is what makes it true.
     [COLLECTIONS.notification_runs, 'day_kind_unique'],
+    // THE guarantee that a retried birthday-SMS run cannot text a member twice
+    // on their birthday. Every send is CLAIMED by inserting a row keyed
+    // `birthday:<member>:<date>`; a second attempt collides here and writes
+    // nothing. Without this index the run is not idempotent at all, and the
+    // failure is invisible until somebody's phone buzzes twice.
+    [COLLECTIONS.sms_messages, 'dedupe_unique'],
   ] as const) {
     const c = await databases.getCollection(DATABASE_ID, coll)
     const idx = c.indexes.find((i: { key: string }) => i.key === name)
     if (!idx) bad(`${coll}.${name} missing`)
     else if ((idx as { type: string }).type !== 'unique') bad(`${coll}.${name} is not unique`)
     else ok(`${coll}.${name}`)
+  }
+
+  // --- SMS -----------------------------------------------------------------
+  console.log('\nsms')
+  {
+    const key = process.env.MNOTIFY_API_KEY?.trim()
+    const sender = process.env.MNOTIFY_SENDER_ID?.trim()
+    if (!key || !sender) {
+      // Not a failure. SMS is optional in the same way push is: without it the
+      // screens say so rather than offering a button that silently does
+      // nothing.
+      warn('mNotify not configured — SMS is off and the app says so')
+    } else if (sender.length > 11) {
+      bad(`MNOTIFY_SENDER_ID "${sender}" is ${sender.length} characters; the limit is 11`)
+    } else {
+      ok(`mNotify configured, sender "${sender}"`)
+    }
+
+    // Exactly one default per category. Two defaults is not untidiness — it is
+    // a coin toss over which message the congregation receives, decided by
+    // whichever row Appwrite happens to return first.
+    const templates = await databases.listDocuments(DATABASE_ID, COLLECTIONS.sms_templates, [
+      Query.limit(100),
+    ])
+    const byCategory = new Map<string, number>()
+    for (const t of templates.documents as (typeof templates.documents[number] & {
+      category?: string
+      is_default?: boolean
+    })[]) {
+      if (t.is_default) {
+        byCategory.set(String(t.category), (byCategory.get(String(t.category)) ?? 0) + 1)
+      }
+    }
+    let clash = false
+    for (const [category, count] of byCategory) {
+      if (count > 1) {
+        bad(`${category} has ${count} default templates; exactly one is allowed`)
+        clash = true
+      }
+    }
+    if (!clash) {
+      ok(`${templates.total} template(s), at most one default per category`)
+    }
+
+    // A birthday default is what the automatic run reaches for. Without one it
+    // returns `no_template` every morning — correct, reported, and completely
+    // silent unless somebody goes looking.
+    const birthdayDefault = (templates.documents as { category?: string; is_default?: boolean }[])
+      .some((t) => t.category === 'birthday' && t.is_default)
+    if (birthdayDefault) ok('a standard birthday message is set')
+    else warn('no standard birthday message — the automatic run has nothing to send')
   }
 
   // --- storage -------------------------------------------------------------

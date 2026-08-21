@@ -6,10 +6,16 @@ import Link from 'next/link'
 import { Button } from '@/shared/Button'
 import { Banner, Card, LoadingRow, PageHeader, PageWrap, StatCard, TabBar } from '@/components/ui'
 import GroupMemberAssigner from '@/components/group-member-assigner'
+import HeadCard from '@/components/head-card'
 import GroupRosterTable from '@/components/group-roster-table'
 import { useDialog } from '@/components/dialog'
 import { useAuth } from '@/components/auth'
-import { useAssignBacenta, useBacenta, useDeleteBacenta } from '@/lib/queries/groups'
+import {
+  useAssignBacenta,
+  useBacenta,
+  useDeleteBacenta,
+  useUpdateBacenta,
+} from '@/lib/queries/groups'
 import type { Bacenta } from '@/lib/groups/types'
 
 export default function BacentaPage({ params }: { params: Promise<{ id: string }> }) {
@@ -21,6 +27,7 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
   const { data, isLoading, error } = useBacenta(id)
   const assign = useAssignBacenta()
   const remove = useDeleteBacenta()
+  const update = useUpdateBacenta()
   const [tab, setTab] = useState<'members' | 'assign'>('members')
 
   const isAdmin = user?.label === 'admin'
@@ -104,6 +111,20 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
           }
         />
       </div>
+
+      {isAdmin && (
+        <HeadCard
+          kind="bacenta"
+          groupName={group.name}
+          headUserId={group.head_user_id}
+          headName={group.head_name}
+          busy={update.isPending}
+          onAppoint={async (headUserId) => {
+            const res = await update.mutateAsync({ id, head_user_id: headUserId })
+            if (!res.ok) throw new Error(res.error)
+          }}
+        />
+      )}
 
       {isAdmin && (
         <TabBar
