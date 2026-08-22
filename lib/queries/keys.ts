@@ -53,6 +53,9 @@ export const queryKeys = {
   // each by hand is how one of them ends up stale.
   smsTemplates: (category?: string) => ['sms', 'templates', category ?? ''] as const,
   smsLog: (category?: string) => ['sms', 'log', category ?? ''] as const,
+  // Under the same prefix as the rest, so a send invalidates it: the balance
+  // shown after spending must not be the one read before.
+  smsBalance: ['sms', 'balance'] as const,
   pushStatus: ['push', 'status'] as const,
 
   dashboard: ['dashboard'] as const,

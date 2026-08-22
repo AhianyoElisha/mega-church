@@ -35,6 +35,7 @@ import {
   useCreateTemplate,
   useDeleteTemplate,
   useSendSms,
+  useSmsBalance,
   useSmsLog,
   useSmsTemplates,
   useUpdateTemplate,
@@ -71,6 +72,8 @@ export default function SmsPage() {
         </Banner>
       )}
 
+      {config?.configured && <CreditBalance />}
+
       <TabBar
         className="mb-6"
         value={tab}
@@ -86,6 +89,60 @@ export default function SmsPage() {
       {tab === 'templates' && <TemplatesTab />}
       {tab === 'log' && <LogTab />}
     </PageWrap>
+  )
+}
+
+/**
+ * What is left in the mNotify account.
+ *
+ * Shown at all times rather than only when low, because a number that appears
+ * only in an emergency is a number nobody has learned to read. When it drops
+ * below the threshold it escalates to the same warning Banner the
+ * misconfiguration uses — the church has one visual language for "this will
+ * stop working soon".
+ *
+ * A failed lookup says so plainly and does not hide the Send button: not
+ * knowing the balance is not a reason to stop sending.
+ */
+function CreditBalance() {
+  const { data, isLoading } = useSmsBalance()
+  if (isLoading || !data?.ok) return null
+
+  const { balance, low_at } = data
+  if (balance.kind === 'not_configured') return null
+
+  if (balance.kind === 'unknown') {
+    return (
+      <p className="mb-6 text-sm text-neutral-500 dark:text-neutral-400">
+        Credit balance unavailable — {balance.reason}
+      </p>
+    )
+  }
+
+  const figure = (
+    <>
+      <strong>{balance.credits.toLocaleString()}</strong> credits
+      {balance.bonus ? ` (plus ${balance.bonus.toLocaleString()} bonus)` : ''}
+    </>
+  )
+
+  if (balance.low) {
+    return (
+      <Banner tone="warning" className="mb-6">
+        <p className="font-semibold">The mNotify account is running low.</p>
+        <p className="mt-1">
+          {figure} left, below the {low_at} this app warns at. Top up before the next
+          bulk send — a send that runs out part-way delivers to some members and
+          not others, and there is no way to tell which from here.
+        </p>
+      </Banner>
+    )
+  }
+
+  return (
+    <p className="mb-6 text-sm text-neutral-500 dark:text-neutral-400">
+      mNotify balance: {figure}.
+    </p>
   )
 }
 
@@ -105,6 +162,7 @@ function SendTab({ canSend }: { canSend: boolean }) {
   const templates = useSmsTemplates(category)
   const members = useMembers({ status: 'active' })
   const send = useSendSms()
+  const balance = useSmsBalance()
   const { confirm } = useDialog()
 
   const available = templates.data?.ok ? templates.data.templates : []
@@ -140,6 +198,24 @@ function SendTab({ canSend }: { canSend: boolean }) {
     return { parts, credits: parts * picked.size, preview: rendered.text }
   }, [template, all, picked])
 
+  /**
+   * Whether this specific send would outrun the balance.
+   *
+   * This is the moment the warning is actually worth something: the cost is
+   * known, the balance is known, and nothing has been spent yet. A banner at
+   * the top of the page says the account is low; this says THIS send will not
+   * complete, which is a different and more useful sentence.
+   *
+   * Null whenever either number is unknown — an unavailable balance must not
+   * manufacture a shortfall that stops a send from going out.
+   */
+  const shortfall = useMemo(() => {
+    const b = balance.data?.ok ? balance.data.balance : null
+    if (!b || b.kind !== 'known' || !cost) return null
+    if (cost.credits <= b.credits) return null
+    return { have: b.credits }
+  }, [balance.data, cost])
+
   const submit = async () => {
     if (!template || picked.size === 0) return
     setError(null)
@@ -157,6 +233,16 @@ function SendTab({ canSend }: { canSend: boolean }) {
               <strong>{cost.credits} SMS credits</strong>.
             </>
           )}{' '}
+          {shortfall && (
+            <>
+              <strong>
+                That is more than the {shortfall.have.toLocaleString()} credits left in the
+                mNotify account.
+              </strong>{' '}
+              Some of these members will not receive anything, and the log cannot
+              say in advance which. Top up first.{' '}
+            </>
+          )}
           Messages cannot be recalled once sent.
         </>
       ),
@@ -177,6 +263,9 @@ function SendTab({ canSend }: { canSend: boolean }) {
     if (res.failed) bits.push(`${res.failed} failed`)
     if (res.skipped) bits.push(`${res.skipped} already had one today`)
     if (res.no_phone.length) bits.push(`no usable number for ${res.no_phone.join(', ')}`)
+    // mNotify's own figure, from the send response itself — the most current
+    // reading there is, and it cost nothing to obtain.
+    if (res.credit_left !== null) bits.push(`${res.credit_left.toLocaleString()} credits left`)
     setResult(bits.join(' · '))
     setPicked(new Set())
   }

@@ -7,12 +7,31 @@ import 'server-only'
 // end to end without spending the church's credit or texting a congregation
 // that did not ask to be a test fixture.
 
-import type { SmsConfigStatus, SmsSendOutcome } from './types'
+import type { SmsBalance, SmsConfigStatus, SmsSendOutcome } from './types'
 
 /** `POST …/quick?key=` with a JSON body. Confirmed against mNotify's own
  *  published contract; the response CODES are treated as advisory (see
  *  `describe()`) because the provider has changed them across versions. */
 const QUICK_SMS_URL = 'https://api.mnotify.com/api/sms/quick'
+
+/** `GET …/balance/sms?key=` — the only way to learn the balance WITHOUT
+ *  spending any of it. Every send also reports what is left afterwards, but
+ *  "afterwards" is too late to decide not to send. */
+const BALANCE_URL = 'https://api.mnotify.com/api/balance/sms'
+
+/**
+ * Below this, the screens start saying so.
+ *
+ * Calibrated against what one BULK send costs, not against a day of birthdays.
+ * The congregation is small enough that the automatic birthday run spends a
+ * handful of credits a day, so a threshold tuned to that would trip only after
+ * a tithe send to two hundred people had already failed halfway through — the
+ * exact failure this is meant to pre-empt. A church with a larger roll should
+ * raise it; the number is a starting point that wants the church's own
+ * numbers, in the same spirit as the biometric threshold in
+ * `lib/biometrics/matching.ts`.
+ */
+export const LOW_CREDIT_AT = 50
 
 /** A hung provider must not hold a Route Handler open until the platform kills
  *  it. Long enough for a slow batch, short enough that a Sunday-morning send
@@ -22,6 +41,10 @@ const TIMEOUT_MS = 20_000
 export interface SmsService {
   send(recipients: string[], message: string): Promise<SmsSendOutcome>
   status(): SmsConfigStatus
+  /** Never throws. A balance lookup exists to inform a decision, and one that
+   *  fails must not become an error page in front of a send that would have
+   *  worked. */
+  balance(): Promise<SmsBalance>
 }
 
 // --- configuration ----------------------------------------------------------
@@ -124,6 +147,27 @@ function describe(payload: QuickResponse, fallback: string): string {
   return fallback
 }
 
+type BalanceResponse = {
+  status?: string
+  code?: string | number
+  message?: string
+  /** mNotify has returned this as both a number and a decimal string across
+   *  versions, which is why it is never read directly. */
+  balance?: number | string
+  bonus?: number | string
+}
+
+/** Accepts 12, "12", "12.00" and rejects "", null and "abc" — the last of
+ *  which must NOT become 0, because 0 is a meaningful balance. */
+function toNumber(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  if (typeof v !== 'string') return null
+  const trimmed = v.trim()
+  if (!trimmed) return null
+  const n = Number(trimmed)
+  return Number.isFinite(n) ? n : null
+}
+
 export class MnotifyService implements SmsService {
   constructor(
     private readonly apiKey: string,
@@ -132,6 +176,79 @@ export class MnotifyService implements SmsService {
 
   status(): SmsConfigStatus {
     return smsConfig()
+  }
+
+  /**
+   * Ask mNotify what is left, without spending any of it.
+   *
+   * Everything here is defensive on purpose. The balance is ADVISORY — it
+   * decorates a screen and colours a warning — so every way this can go wrong
+   * resolves to `unknown` carrying the reason, and none of them throws. A
+   * provider outage must not be able to stop the church sending a message that
+   * would have gone out fine.
+   *
+   * The figure is reported, never converted. mNotify denominates an account in
+   * its own units and this code has no reliable way to tell credits from cedis
+   * for a given account, so inventing a currency symbol here would put a
+   * confident wrong label on the one number an admin uses to decide whether to
+   * top up. It is shown as the provider's own figure and named as such.
+   */
+  async balance(): Promise<SmsBalance> {
+    let res: Response
+    try {
+      res = await fetch(`${BALANCE_URL}?key=${encodeURIComponent(this.apiKey)}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        // A balance that is minutes stale is worse than useless for deciding
+        // whether a bulk send will complete.
+        cache: 'no-store',
+      })
+    } catch (err) {
+      const reason =
+        err instanceof Error && err.name === 'TimeoutError'
+          ? `mNotify did not answer within ${TIMEOUT_MS / 1000} seconds.`
+          : err instanceof Error
+            ? err.message
+            : 'The balance request failed.'
+      return { kind: 'unknown', reason }
+    }
+
+    const raw = await res.text()
+    let payload: BalanceResponse = {}
+    try {
+      payload = raw ? (JSON.parse(raw) as BalanceResponse) : {}
+    } catch {
+      return {
+        kind: 'unknown',
+        reason: `mNotify returned a non-JSON balance (HTTP ${res.status}): ${raw.slice(0, 120)}`,
+      }
+    }
+
+    if (!res.ok) {
+      return {
+        kind: 'unknown',
+        reason: describe(payload as QuickResponse, `mNotify returned HTTP ${res.status}.`),
+      }
+    }
+
+    const credits = toNumber(payload.balance)
+    if (credits === null) {
+      // Reached mNotify, got a 200, and still cannot find a number. Saying so
+      // beats reporting zero — which would look exactly like an empty account
+      // and send somebody to top up an account that is already funded.
+      return {
+        kind: 'unknown',
+        reason: `mNotify did not report a balance. It said: ${raw.slice(0, 120)}`,
+      }
+    }
+
+    return {
+      kind: 'known',
+      credits,
+      bonus: toNumber(payload.bonus),
+      low: credits < LOW_CREDIT_AT,
+      checked_at: new Date().toISOString(),
+    }
   }
 
   async send(recipients: string[], message: string): Promise<SmsSendOutcome> {
@@ -230,6 +347,19 @@ export class StubSmsService implements SmsService {
     }
   }
 
+  async balance(): Promise<SmsBalance> {
+    // Deliberately comfortable. The stub exists so `npm run e2e` can drive the
+    // real routes, and a stub that reported a low balance would have the smoke
+    // test asserting on a warning banner that says nothing about the code.
+    return {
+      kind: 'known',
+      credits: 1000,
+      bonus: null,
+      low: false,
+      checked_at: new Date().toISOString(),
+    }
+  }
+
   async send(recipients: string[], message: string): Promise<SmsSendOutcome> {
     StubSmsService.sent.push({ recipients, message })
     return {
@@ -252,6 +382,12 @@ class UnconfiguredSmsService implements SmsService {
   }
   async send(): Promise<SmsSendOutcome> {
     return { kind: 'not_configured', provider_message: this.config.reason ?? 'SMS is not set up.' }
+  }
+  async balance(): Promise<SmsBalance> {
+    // Distinct from `unknown`: there is nothing wrong with mNotify, there is
+    // no key to ask them with. The screen already explains that above, and a
+    // "could not reach the provider" here would contradict it.
+    return { kind: 'not_configured', reason: this.config.reason ?? 'SMS is not set up.' }
   }
 }
 

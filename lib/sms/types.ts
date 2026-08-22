@@ -94,6 +94,11 @@ export type SendSmsResponse =
       /** Members with no usable phone number. Named, so they can be fixed. */
       no_phone: string[]
       provider_message: string | null
+      /** What mNotify said was left AFTER this send, when it said anything.
+       *  Free: it rides back on the send response, so reporting it costs no
+       *  extra call. Null when the provider omitted it or the send never
+       *  reached them — never 0, which would read as "out of credit". */
+      credit_left: number | null
     }
   | { ok: false; error: string }
 
@@ -110,5 +115,43 @@ export type BirthdaySmsResponse =
       sent: number
       failed: number
       skipped: number
+      /** As on a manual send. Worth returning even though no human is watching
+       *  a cron: this is the one send nobody sees fail, so the number belongs
+       *  in whatever the scheduler logs. */
+      credit_left: number | null
     }
+  | { ok: false; error: string }
+
+// --- credit balance ---------------------------------------------------------
+
+/**
+ * What the provider says is left in the account.
+ *
+ * `unknown` is a distinct kind rather than a null number, for the same reason
+ * `not_configured` is distinct from `rejected` above: "mNotify would not tell
+ * us" and "you have nothing left" call for opposite reactions, and a screen
+ * that renders both as a blank figure will eventually talk somebody out of a
+ * send on the strength of a lookup that simply timed out.
+ *
+ * `low` is computed on the server from `LOW_CREDIT_AT` rather than compared in
+ * the page, so the dashboard, the send screen and any future warning cannot
+ * disagree about what "low" means.
+ */
+export type SmsBalance =
+  | {
+      kind: 'known'
+      /** mNotify's own figure, in whatever unit their account is denominated
+       *  in. Reported, never converted — see `MnotifyService.balance()`. */
+      credits: number
+      /** Promotional credit, when the account has any. Kept separate because
+       *  it is not always spendable on the same routes. */
+      bonus: number | null
+      low: boolean
+      checked_at: string
+    }
+  | { kind: 'unknown'; reason: string }
+  | { kind: 'not_configured'; reason: string }
+
+export type SmsBalanceResponse =
+  | { ok: true; balance: SmsBalance; low_at: number }
   | { ok: false; error: string }
