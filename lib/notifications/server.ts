@@ -271,10 +271,81 @@ export async function claimRun(
   }
 }
 
+/**
+ * Write down that a job RAN. Never refuses, never gates anything.
+ *
+ * ── Why this is not `claimRun` ─────────────────────────────────────────────
+ *
+ * `claimRun` exists to make a second firing do nothing: it inserts, and a 409
+ * on the (run_date, kind) unique index means "somebody already sent this".
+ * That is right for the push, where the whole payload goes out in one shot and
+ * a repeat means the team's phones buzz twice.
+ *
+ * It would be exactly WRONG for the SMS job. That one is idempotent per
+ * MEMBER, on `sms_messages.dedupe_key`, precisely so a run that dies at member
+ * forty of sixty can be re-run to text the remaining twenty and none of the
+ * first forty. Give it a per-day claim and one of two things breaks: the retry
+ * is refused and twenty people never hear from the church, or the claim is
+ * released and forty people are texted twice.
+ *
+ * So this UPSERTS. A 409 means today's row already exists — the normal state
+ * on the second call of the day — and the answer is to update it, never to
+ * tell the caller to stop.
+ *
+ * Failures are swallowed, for the same reason `finishRun` swallows its own: an
+ * audit row that cannot be written must not turn a successful send into a
+ * reported failure. Observability is worth a great deal, but never more than
+ * the thing it observes.
+ */
+export async function recordRun(
+  databases: Databases,
+  runDate: string,
+  kind: string,
+  triggeredBy: string,
+  outcome: {
+    status: string
+    celebrant_count: number
+    sent: number
+    failed: number
+    skipped: number
+  },
+): Promise<void> {
+  const row = {
+    run_date: runDate,
+    kind,
+    ran_at: new Date().toISOString(),
+    triggered_by: triggeredBy,
+    ...outcome,
+  }
+
+  try {
+    await databases.createDocument(DATABASE_ID, COLLECTIONS.notification_runs, ID.unique(), row)
+    return
+  } catch (err) {
+    if ((err as { code?: number }).code !== 409) return
+  }
+
+  // Today's row exists. Overwrite it with the latest outcome — the most recent
+  // call is the most recent truth, and a run that finally texted the remaining
+  // twenty should not be remembered by the attempt that stalled at forty.
+  try {
+    const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.notification_runs, [
+      Query.equal('run_date', runDate),
+      Query.equal('kind', kind),
+      Query.limit(1),
+    ])
+    const id = existing.documents[0]?.$id
+    if (!id) return
+    await databases.updateDocument(DATABASE_ID, COLLECTIONS.notification_runs, id, row)
+  } catch {
+    // See above: never fail a send over its own audit trail.
+  }
+}
+
 export async function finishRun(
   databases: Databases,
   id: string,
-  tally: { celebrant_count: number; sent: number; failed: number },
+  tally: { celebrant_count: number; sent: number; failed: number; status?: string },
 ): Promise<void> {
   await databases
     .updateDocument(DATABASE_ID, COLLECTIONS.notification_runs, id, tally)

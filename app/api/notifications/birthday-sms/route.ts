@@ -4,6 +4,8 @@ import { authoriseCronRun, cronRefusal } from '@/lib/notifications/cron'
 import { listMembers } from '@/lib/members/server'
 import { todayInAccra } from '@/lib/attendance/occurrenceResolver'
 import { celebrantsForNotification } from '@/lib/birthdays/upcoming'
+import { recordRun } from '@/lib/notifications/server'
+import { NOTIFICATION_KINDS } from '@/lib/appwrite/config'
 import { createSmsService } from '@/lib/sms/mnotify'
 import { resolveBirthdayTemplate, sendToMembers, type SendTarget } from '@/lib/sms/server'
 import type { BirthdaySmsResponse } from '@/lib/sms/types'
@@ -48,12 +50,37 @@ export async function POST(request: NextRequest) {
   const { databases } = createAdminClient()
   const runDate = todayInAccra()
 
+  /**
+   * Answer, and leave a trace that this job ran.
+   *
+   * Every exit goes through here, which is the point. Before this, three of
+   * the four ways out wrote nothing at all: on a day when nobody has a
+   * birthday the job returned `nobody_celebrating` having touched no
+   * collection, so a firing was indistinguishable from a scheduler that never
+   * fired. The only proof the job was alive was somebody happening to have a
+   * birthday — which is to say, the evidence was absent on exactly the
+   * ordinary days you would want to check.
+   *
+   * The row is written BEFORE the response is returned but AFTER the work is
+   * done, and it never gates anything: see `recordRun`.
+   */
+  const answer = async (body: Extract<BirthdaySmsResponse, { ok: true }>) => {
+    await recordRun(databases, runDate, NOTIFICATION_KINDS.birthday_sms, authorised.who, {
+      status: body.status,
+      celebrant_count: body.celebrant_count,
+      sent: body.sent,
+      failed: body.failed,
+      skipped: body.skipped,
+    })
+    return NextResponse.json<BirthdaySmsResponse>(body)
+  }
+
   const sms = createSmsService()
   const config = sms.status()
   if (!config.configured) {
     // Reported, not thrown, and NOT a claim. Nothing was sent, so a later call
     // once the sender ID is approved must still be free to send.
-    return NextResponse.json<BirthdaySmsResponse>({
+    return answer({
       ok: true,
       status: 'not_configured',
       run_date: runDate,
@@ -71,7 +98,7 @@ export async function POST(request: NextRequest) {
   const celebrants = celebrantsForNotification(members, runDate, 0)
 
   if (celebrants.length === 0) {
-    return NextResponse.json<BirthdaySmsResponse>({
+    return answer({
       ok: true,
       status: 'nobody_celebrating',
       run_date: runDate,
@@ -99,7 +126,7 @@ export async function POST(request: NextRequest) {
     // loud rather than reported as success with zero sent, which would look
     // exactly like a quiet day and hide the missing template until somebody
     // noticed the church had stopped texting anyone.
-    return NextResponse.json<BirthdaySmsResponse>({
+    return answer({
       ok: true,
       status: 'no_template',
       run_date: runDate,
@@ -117,7 +144,7 @@ export async function POST(request: NextRequest) {
       runDate,
       automatic: true,
     })
-    return NextResponse.json<BirthdaySmsResponse>({
+    return answer({
       ok: true,
       status: 'sent',
       run_date: runDate,

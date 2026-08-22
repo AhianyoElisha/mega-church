@@ -82,6 +82,35 @@ export const COLLECTIONS = {
   sms_messages: 'sms_messages',
 } as const
 
+/**
+ * The `kind` values `notification_runs` rows carry.
+ *
+ * The two are NOT interchangeable, and the difference is not cosmetic:
+ *
+ *   birthday       the push to the celebrations team, the day BEFORE. Its row
+ *                  is a CLAIM — inserted before anything is sent, and a 409 on
+ *                  the unique index is what stops a retried cron buzzing the
+ *                  team twice.
+ *   birthday-sms   the text to the celebrant, ON the day. Its row is a RECORD
+ *                  — written so a firing leaves a trace, and deliberately NOT
+ *                  a claim. That job is idempotent per MEMBER, on
+ *                  `sms_messages.dedupe_key`, so that a run which dies at
+ *                  member forty of sixty can be re-run to text the remaining
+ *                  twenty. A per-day claim here would either forbid that retry
+ *                  or license a second text to the first forty.
+ *
+ * `birthday` keeps its historical value on purpose. Renaming it would free the
+ * (run_date, 'birthday') slot that existing rows occupy, and the first
+ * consequence would be the celebrations team notified twice on a day the job
+ * had already run.
+ */
+export const NOTIFICATION_KINDS = {
+  birthday_push: 'birthday',
+  birthday_sms: 'birthday-sms',
+} as const
+
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[keyof typeof NOTIFICATION_KINDS]
+
 export const BUCKETS = {
   /** Member profile photos, shown on the kiosk result screen (PRD §2.4). */
   member_photos: 'member-photos',

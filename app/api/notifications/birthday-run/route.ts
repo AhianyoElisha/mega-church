@@ -11,10 +11,10 @@ import {
   releaseRun,
   sendToAll,
 } from '@/lib/notifications/server'
-import { USER_LABELS } from '@/lib/appwrite/config'
+import { NOTIFICATION_KINDS, USER_LABELS } from '@/lib/appwrite/config'
 import type { BirthdayRunResponse } from '@/lib/notifications/types'
 
-const KIND = 'birthday'
+const KIND = NOTIFICATION_KINDS.birthday_push
 
 /**
  * Who is told. The celebrations team is the point of the feature; admins are
@@ -71,7 +71,12 @@ export async function POST(request: NextRequest) {
       // The claim STAYS. Nobody is celebrating tomorrow, and a scheduler that
       // fires hourly should not re-check and re-decide that fifteen more times
       // today. The claim expires naturally when the date rolls over.
-      await finishRun(databases, claim.id, { celebrant_count: 0, sent: 0, failed: 0 })
+      await finishRun(databases, claim.id, {
+        celebrant_count: 0,
+        sent: 0,
+        failed: 0,
+        status: 'nobody_celebrating',
+      })
       return NextResponse.json<BirthdayRunResponse>({
         ok: true,
         status: 'nobody_celebrating',
@@ -122,6 +127,7 @@ export async function POST(request: NextRequest) {
       celebrant_count: celebrants.length,
       sent: result.sent,
       failed: result.failed,
+      status: 'sent',
     })
 
     return NextResponse.json<BirthdayRunResponse>({
