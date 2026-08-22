@@ -149,3 +149,27 @@ export async function POST(request: NextRequest) {
     )
   }
 }
+
+/**
+ * GET — because that is the only verb Vercel Cron speaks.
+ *
+ * This is not a convenience alias. A Vercel Cron Job invokes its path with a
+ * **GET** (user agent `vercel-cron/1.0`); this route exported only POST, so
+ * every scheduled firing since the crons were declared answered
+ * **405 Method Not Allowed** and the POST handler above never ran. No row was
+ * written, no message was sent, and nothing anywhere reported a fault — the
+ * job simply looked like a church where nobody had a birthday.
+ *
+ * The reason it survived verification is worth recording: every manual proof
+ * was a `curl -X POST`, which worked perfectly. The scheduler's request and
+ * the tested request differed in exactly the one way nobody compared.
+ *
+ * Route Handlers are not cached by default (Next 16, "Route Handlers →
+ * Caching"), and this one reads an Authorization header, so the GET is not at
+ * risk of being served from a cache. Do NOT add `dynamic = 'force-static'`
+ * here: a cached 200 would make the cron appear to succeed forever while
+ * telling nobody about a single birthday.
+ */
+export async function GET(request: NextRequest) {
+  return POST(request)
+}
