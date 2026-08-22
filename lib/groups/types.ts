@@ -202,3 +202,7 @@ export type CreateLeaderResponse =
       password: string
     }
   | { ok: false; error: string }
+
+export type SetLeaderPasswordResponse =
+  | { ok: true; name: string; email: string; password: string }
+  | { ok: false; error: string }

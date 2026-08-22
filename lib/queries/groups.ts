@@ -22,6 +22,7 @@ import type {
   ListConstituenciesResponse,
   CreateLeaderResponse,
   ListLeadersResponse,
+  SetLeaderPasswordResponse,
   MembershipMode,
   MembershipResponse,
   MyGroupsResponse,
@@ -199,6 +200,20 @@ export function useCreateLeader() {
       apiFetch('/api/leaders', {
         method: 'POST',
         body: JSON.stringify(vars),
+      }),
+  )
+}
+
+/**
+ * Give an existing head a new password. Pass `password` to choose one, or omit
+ * it to have a readable one generated.
+ */
+export function useSetLeaderPassword() {
+  return useGroupMutation<SetLeaderPasswordResponse, { id: string; password?: string }>(
+    ({ id, password }) =>
+      apiFetch(`/api/leaders/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(password ? { password } : {}),
       }),
   )
 }
