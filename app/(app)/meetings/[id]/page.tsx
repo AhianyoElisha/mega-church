@@ -141,6 +141,7 @@ export default function MeetingDetailPage({ params }: { params: Promise<{ id: st
   return (
     <PageWrap className="max-w-4xl">
       <PageHeader
+        back={{ href: '/meetings', label: 'Meetings' }}
         title={meeting.name}
         subtitle={
           isService
@@ -149,9 +150,6 @@ export default function MeetingDetailPage({ params }: { params: Promise<{ id: st
         }
         actions={
           <>
-            <Button outline href="/meetings">
-              All meetings
-            </Button>
             {isOpen ? (
               <Button color="red" onClick={handleClose} disabled={close.isPending}>
                 End session

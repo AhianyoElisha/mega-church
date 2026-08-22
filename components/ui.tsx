@@ -4,7 +4,9 @@
 // runs through PickLT so every page in this app looks like the same product.
 
 import clsx from 'clsx'
+import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { ChevronLeftIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/shared/Button'
 import { Heading, Subheading } from '@/shared/Heading'
 
@@ -12,18 +14,51 @@ export function PageWrap({ children, className }: { children: ReactNode; classNa
   return <div className={clsx('container py-8 sm:py-12', className)}>{children}</div>
 }
 
+/**
+ * The way back, above the title.
+ *
+ * A LINK, never `router.back()`. Browser history is not the page hierarchy:
+ * arriving at a member from the kiosk, from a search, or by pasting a URL all
+ * leave different histories, and a back control that lands somewhere different
+ * each time is one people stop trusting. A fixed destination always means the
+ * same thing.
+ *
+ * It sits above the heading rather than in `actions` because it is navigation,
+ * not an action on this page — and because `actions` is where destructive
+ * controls like Delete live, which is not a neighbourhood for the button people
+ * click without looking.
+ */
+export function BackLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="group -ml-1 mb-2 inline-flex items-center gap-1.5 rounded-lg px-1 py-0.5 text-sm text-neutral-500 transition hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:text-neutral-400 dark:hover:text-white"
+    >
+      <ChevronLeftIcon
+        className="size-4 transition-transform group-hover:-translate-x-0.5"
+        aria-hidden="true"
+      />
+      {label}
+    </Link>
+  )
+}
+
 export function PageHeader({
   title,
   subtitle,
   actions,
+  back,
 }: {
   title: string
   subtitle?: string
   actions?: ReactNode
+  /** Where "up" is. Omitted on the destinations that ARE the top level. */
+  back?: { href: string; label: string }
 }) {
   return (
     <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
+        {back && <BackLink href={back.href} label={back.label} />}
         <Heading level={1} className="text-2xl! sm:text-3xl!">
           {title}
         </Heading>

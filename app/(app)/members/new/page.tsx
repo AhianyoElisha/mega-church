@@ -31,6 +31,7 @@ export default function NewMemberPage() {
   return (
     <PageWrap className="max-w-3xl">
       <PageHeader
+        back={{ href: '/members', label: 'Members' }}
         title="Register a member"
         subtitle="Name and call number are required. The photo and fingerprints come next."
       />

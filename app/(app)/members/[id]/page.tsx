@@ -108,13 +108,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   return (
     <PageWrap>
       <PageHeader
+        back={{ href: '/members', label: 'Members' }}
         title={name}
         subtitle={member.status === 'active' ? 'Active member' : 'Inactive — cannot be matched by a scanner'}
         actions={
           <>
-            <Button outline href="/members">
-              All members
-            </Button>
             {isAdmin && !editing && (
               <Button color="primary" onClick={() => setEditing(true)}>
                 Edit details

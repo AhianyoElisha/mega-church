@@ -53,6 +53,7 @@ export default function NewMeetingPage() {
   return (
     <PageWrap className="max-w-4xl">
       <PageHeader
+        back={{ href: '/meetings', label: 'Meetings' }}
         title="Create a meeting"
         subtitle="Choose who may attend. The list is saved, so reopening this meeting later needs no re-selecting."
       />

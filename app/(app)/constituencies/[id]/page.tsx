@@ -88,14 +88,16 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
   return (
     <PageWrap>
       <PageHeader
+        back={
+          isAdmin
+            ? { href: '/constituencies', label: 'All constituencies' }
+            : { href: '/my-groups', label: 'My groups' }
+        }
         title={group.name}
         subtitle={group.description ?? 'A constituency — where these members live.'}
         actions={
           isAdmin && (
             <>
-              <Button plain href="/constituencies">
-                All constituencies
-              </Button>
               <Button plain onClick={handleDelete} disabled={remove.isPending}>
                 Delete
               </Button>

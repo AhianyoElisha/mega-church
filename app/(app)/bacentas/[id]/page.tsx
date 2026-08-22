@@ -85,14 +85,16 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
   return (
     <PageWrap>
       <PageHeader
+        back={
+          isAdmin
+            ? { href: '/bacentas', label: 'All bacentas' }
+            : { href: '/my-groups', label: 'My groups' }
+        }
         title={group.name}
         subtitle={group.description ?? 'A bacenta — a work group members serve in.'}
         actions={
           isAdmin && (
             <>
-              <Button plain href="/bacentas">
-                All bacentas
-              </Button>
               <Button plain onClick={handleDelete} disabled={remove.isPending}>
                 Delete
               </Button>
