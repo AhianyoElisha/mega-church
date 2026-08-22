@@ -250,6 +250,19 @@ export type SendReport = {
   skipped: number
   no_phone: string[]
   provider_message: string | null
+  /**
+   * What the provider said was left after the last batch it accepted.
+   *
+   * This arrives free on the send response, so recording it costs nothing and
+   * gives the church a balance reading at the one moment they are certainly
+   * looking: just after spending. Null when mNotify omitted it, when the send
+   * never reached them, or when nothing was sent — deliberately not 0, which
+   * is a real balance and the worst possible thing to report by accident.
+   *
+   * When a send fans out into several batches (one per distinct message text)
+   * the LAST figure wins, because that is the most recent truth.
+   */
+  credit_left: number | null
 }
 
 /** `birthday:<member>:<date>` collides on a retry and writes nothing.
@@ -291,7 +304,14 @@ export async function sendToMembers(
   targets: SendTarget[],
   opts: { category: SmsCategory; sentBy: string; runDate: string; automatic: boolean },
 ): Promise<SendReport> {
-  const report: SendReport = { sent: 0, failed: 0, skipped: 0, no_phone: [], provider_message: null }
+  const report: SendReport = {
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+    no_phone: [],
+    provider_message: null,
+    credit_left: null,
+  }
   if (targets.length === 0) return report
 
   type Claimed = { docId: string; phone: string; text: string; memberId: string }
@@ -366,6 +386,9 @@ export async function sendToMembers(
     messages.push(outcome.provider_message)
 
     if (outcome.kind === 'sent') {
+      // Kept only when the provider actually gave a figure, so a batch that
+      // omits it cannot erase one an earlier batch reported.
+      if (outcome.credit_left !== null) report.credit_left = outcome.credit_left
       const rejected = new Set(outcome.rejected)
       for (const c of group) {
         const ok = !rejected.has(c.phone)

@@ -88,6 +88,8 @@ export async function POST(request: NextRequest) {
       sent: 0,
       failed: 0,
       skipped: 0,
+      // Nothing was sent, so nothing was learned. Not 0 — that is a balance.
+      credit_left: null,
     })
   }
 
@@ -106,6 +108,8 @@ export async function POST(request: NextRequest) {
       sent: 0,
       failed: 0,
       skipped: 0,
+      // Nothing was sent, so nothing was learned. Not 0 — that is a balance.
+      credit_left: null,
     })
   }
 
@@ -134,6 +138,8 @@ export async function POST(request: NextRequest) {
       sent: 0,
       failed: 0,
       skipped: 0,
+      // Nothing was sent, so nothing was learned. Not 0 — that is a balance.
+      credit_left: null,
     })
   }
 
@@ -155,6 +161,7 @@ export async function POST(request: NextRequest) {
       // celebrant count and `sent` is zero — which is exactly what "it did not
       // send twice" looks like from outside.
       skipped: report.skipped,
+      credit_left: report.credit_left,
     })
   } catch (err) {
     return NextResponse.json<BirthdaySmsResponse>(

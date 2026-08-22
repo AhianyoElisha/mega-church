@@ -110,6 +110,7 @@ export async function POST(request: NextRequest) {
       skipped: report.skipped,
       no_phone: report.no_phone,
       provider_message: report.provider_message,
+      credit_left: report.credit_left,
     })
   } catch (err) {
     // `sendToMembers` throws only when a template cannot render, which is an

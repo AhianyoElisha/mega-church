@@ -16,6 +16,7 @@ import type {
   ListSmsLogResponse,
   ListTemplatesResponse,
   SendSmsResponse,
+  SmsBalanceResponse,
   SmsTemplateInput,
   TemplateResponse,
 } from '@/lib/sms/types'
@@ -66,6 +67,24 @@ export function useSendSms() {
     SendSmsResponse,
     { member_ids: string[]; template_id: string; category: SmsCategory }
   >((vars) => apiFetch('/api/sms/send', { method: 'POST', body: JSON.stringify(vars) }))
+}
+
+/**
+ * The provider's credit balance.
+ *
+ * Refetched on focus rather than polled: the balance changes when somebody
+ * sends, and a poll would spend a provider request every interval to watch a
+ * number that mostly does not move. `retry: false` because a failed lookup is
+ * already a first-class answer — retrying three times only delays showing the
+ * reason.
+ */
+export function useSmsBalance() {
+  return useQuery<SmsBalanceResponse>({
+    queryKey: queryKeys.smsBalance,
+    queryFn: () => apiFetch('/api/sms/balance'),
+    retry: false,
+    staleTime: 60_000,
+  })
 }
 
 export function useSmsLog(category?: SmsCategory) {
