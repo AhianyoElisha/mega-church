@@ -7,7 +7,7 @@
     },
     {
       "path": "/api/notifications/birthday-sms",
-      "schedule": "0 8 * * *"
+      "schedule": "30 9 * * *"
     }
   ]
 }
