@@ -16,6 +16,8 @@ import 'server-only'
 import { ID, Query, type Databases, type Models } from 'node-appwrite'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 import { diffMembership, normaliseName, validateGroupName } from './tree'
+import { memberDocToMember } from '@/lib/attendance/server'
+import { fullName, type Member } from '@/lib/members/types'
 import type {
   Bacenta,
   BacentaCategory,
@@ -216,7 +218,7 @@ export async function assignConstituency(
   databases: Databases,
   constituencyId: string,
   opts:
-    | { mode: 'assign'; memberIds: string[] }
+    | { mode: 'assign'; memberIds: string[]; onlyUnassigned?: boolean }
     | { mode: 'unassign'; memberIds: string[] }
     | { mode: 'clear-all' },
 ): Promise<number> {
@@ -235,6 +237,35 @@ export async function assignConstituency(
     value = opts.mode === 'assign' ? constituencyId : null
   }
   if (ids.length === 0) return 0
+
+  /**
+   * The rule that makes this route safe for a group HEAD to call.
+   *
+   * A constituency is a field on the member, so "assign" is really "overwrite
+   * where this person lives". An admin may do that — moving somebody between
+   * constituencies is a real correction. A head must not: their own list would
+   * otherwise be a lever for pulling members out of a neighbouring
+   * constituency, and the neighbouring head would watch their roster shrink
+   * with nothing on screen to explain it.
+   *
+   * The filter lives HERE, next to the write, rather than in the route. A
+   * future second caller that forgets it would reintroduce exactly that, and
+   * the failure is silent — the assignment succeeds, it is simply the wrong
+   * person's.
+   */
+  if (opts.mode === 'assign' && opts.onlyUnassigned) {
+    const docs = await listAll(databases, COLLECTIONS.members, [
+      Query.select(['$id', 'constituency_id']),
+      Query.equal('$id', ids.slice(0, ID_CHUNK)),
+    ])
+    const free = new Set(
+      docs
+        .filter((d) => !((d as Doc).constituency_id as string | null))
+        .map((d) => d.$id),
+    )
+    ids = ids.filter((memberId) => free.has(memberId))
+    if (ids.length === 0) return 0
+  }
 
   const db = bulk(databases)
   let touched = 0
@@ -688,3 +719,27 @@ export async function unknownBacentaIds(
 }
 
 export { validateGroupName }
+
+/**
+ * Active members who belong to no constituency yet.
+ *
+ * This is the only view of the wider registry a group head is given, and it is
+ * deliberately the narrowest one that makes the feature work: they need to see
+ * who is unclaimed in order to claim the ones who live in their area. Members
+ * already filed into another constituency never appear, so a head cannot browse
+ * a neighbour's roster through this door.
+ *
+ * Inactive members are excluded for the same reason the bulk assigner excludes
+ * them: somebody who has left the church is not somebody to file into a
+ * constituency.
+ */
+export async function listUnassignedMembers(databases: Databases): Promise<Member[]> {
+  // Appwrite has no "is null" for an optional string that may be absent OR the
+  // empty string, so the filter is applied in memory after a scoped read. The
+  // set is bounded by the congregation size and this is not a hot path.
+  const docs = await listAll(databases, COLLECTIONS.members, [Query.equal('status', 'active')])
+  return docs
+    .map((d) => memberDocToMember(d as never))
+    .filter((m) => !m.constituency_id)
+    .sort((a, b) => fullName(a).localeCompare(fullName(b), 'en'))
+}

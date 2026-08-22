@@ -22,6 +22,7 @@ import type {
   ListConstituenciesResponse,
   CreateLeaderResponse,
   ListLeadersResponse,
+  ListUnassignedResponse,
   SetLeaderPasswordResponse,
   MembershipMode,
   MembershipResponse,
@@ -216,4 +217,19 @@ export function useSetLeaderPassword() {
         body: JSON.stringify(password ? { password } : {}),
       }),
   )
+}
+
+/**
+ * Members belonging to no constituency yet — the only slice of the wider
+ * registry a group head may see, so they can claim the ones who live in their
+ * area. `enabled` because the admin's own assigner uses the full member list
+ * instead and must not fire this.
+ */
+export function useUnassignedMembers(constituencyId: string | null, enabled = true) {
+  return useQuery<ListUnassignedResponse>({
+    queryKey: [...queryKeys.constituency(constituencyId ?? ''), 'unassigned'],
+    queryFn: () =>
+      apiFetch(`/api/constituencies/${encodeURIComponent(constituencyId!)}/unassigned`),
+    enabled: !!constituencyId && enabled,
+  })
 }
