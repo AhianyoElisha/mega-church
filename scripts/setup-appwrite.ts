@@ -501,6 +501,22 @@ async function setupNotificationRuns() {
   await ensureIntegerAttribute(COLLECTIONS.notification_runs, 'failed', true)
   await ensureStringAttribute(COLLECTIONS.notification_runs, 'ran_at', 32, true)
   await ensureStringAttribute(COLLECTIONS.notification_runs, 'triggered_by', 128, false)
+  /**
+   * What the run concluded, in its own words.
+   *
+   * Without this, two very different mornings are the same row. "Nobody has a
+   * birthday tomorrow" and "SMS is not configured, so nothing was even
+   * attempted" both land as celebrant_count 0, sent 0 — and the second is a
+   * fault somebody must fix, silently wearing the costume of a quiet Tuesday.
+   *
+   * Optional, because rows written before this attribute existed do not have
+   * it and a required attribute would strand them. Never defaulted: a default
+   * would put a confident word in the mouth of a run that never reported one.
+   */
+  await ensureStringAttribute(COLLECTIONS.notification_runs, 'status', 32, false)
+  /** Members the per-member dedupe suppressed. Only the SMS job sets it; the
+   *  push job has no per-member idempotency to skip anybody with. */
+  await ensureIntegerAttribute(COLLECTIONS.notification_runs, 'skipped', false, { xdefault: 0 })
 
   await waitForAttributes(COLLECTIONS.notification_runs)
   // The whole point of this collection. A cron that fires twice — a retry, an
