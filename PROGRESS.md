@@ -329,14 +329,91 @@ having a second wording ready makes that a choice rather than a project.
 
 ### Still to do for SMS
 
-1. **Watch the mNotify credit balance.** Nothing in the app warns when it runs
-   low — a send simply starts failing, with mNotify's own words recorded in the
-   log. Worth a standing reminder until somebody builds a balance check.
-2. **Confirm the first live cron firing.** The routes were proven by hand
-   against a real handset — including against the exact deployment host a cron
-   targets — but no *scheduled* invocation has run yet. The 2026-08-21 deploy
-   landed at 10:53 UTC, after that day's 06:00 and 08:00 slots.
+1. ~~**Watch the mNotify credit balance.**~~ ✅ Done 2026-08-22 (PR #15). The
+   balance is shown on `/sms`, warns below `LOW_CREDIT_AT`, and the confirm
+   dialog refuses to be quiet when a send costs more than the account holds.
+   `credit_left` was already arriving on every send response and being
+   discarded; it is now reported too. The threshold still wants calibrating
+   against the church's real send volume.
+2. ~~**Confirm the first live cron firing.**~~ ✅ Done 2026-08-22 — and it did
+   not work. See below.
 
-   The first firing with anybody to reach is **25 August** (team push about the
-   26th) and **26 August** (the SMS itself, to Chris Johnson Baffour). A row
-   stamped `scheduler` in `/sms` → Sent messages is the proof.
+## The cron had never once run — 2026-08-22
+
+Confirming the first scheduled firing took a full morning and four slots,
+because the answer was that **no scheduled firing had ever reached the route,
+on any day, since the crons were declared.**
+
+### The bug
+
+A Vercel Cron Job invokes its path with **GET**. Both notification routes
+exported only `POST`. Every firing answered **405 Method Not Allowed** before
+the handler ran.
+
+From the Vercel log of a manual Run at 11:03 UTC, on the production deployment
+host a cron actually targets:
+
+    GET /api/notifications/birthday-run -> 405
+    User Agent:  vercel-cron/1.0
+    Firewall:    Allowed
+    Middleware:  200
+
+That single entry also clears everything else that had been suspected.
+`Firewall: Allowed` and `Middleware: 200` mean deployment protection was never
+in the way and the `/api/notifications/*` proxy exemption works. `CRON_SECRET`
+is set correctly and was never reached, because 405 happens before auth.
+
+### Why it survived every check
+
+Every manual proof — in this file, in the smoke tests, in the by-hand checks
+against the exact deployment host — was a `curl -X POST`, and every one
+passed. The scheduler's request and the tested request differed in exactly the
+one dimension nobody compared.
+
+**Verify a cron the way the cron calls it.** "Proven by hand" and "proven as
+invoked" are different claims, and only the second keeps a birthday text
+arriving. The rule is now in `CLAUDE.md`.
+
+### Why it took a morning to see
+
+The other half of the problem was that a firing left no trace. `birthday-sms`
+had four exits and three wrote nothing at all, so on a day with no celebrants
+a firing was indistinguishable from a scheduler that never fired — and the
+only prescribed evidence, "a row stamped `scheduler` in the SMS log", could
+not exist unless somebody happened to have a birthday.
+
+Fixed in PR #16: every exit now records a `notification_runs` row via
+`recordRun`, which UPSERTS and never gates — deliberately not `claimRun`,
+because the SMS job is idempotent per member so a run that dies at member
+forty of sixty can be re-run for the remaining twenty.
+
+### Proven working
+
+Both fixes deployed, then the scheduler fired **unattended** at 11:21:30 UTC
+against a 11:15 slot, with nothing touched by hand:
+
+    notification_runs  2026-08-22  kind=birthday-sms  by=scheduler
+                       status=sent  celebrants=2  sent=2  failed=0  skipped=0
+    sms_messages       233599494442  sent  key=birthday:<member>:2026-08-22
+                       provider: "messages sent successfully"
+
+Two test members carrying that day's birthday received real texts. Both were
+deleted afterwards with `deleteMemberCascade`, verified to leave no orphan
+`sms_messages` rows, and the project is back to 116 members.
+
+Also confirmed along the way, by a manual tithe send at 10:44 that reached a
+real handset: credit, the approved sender ID, rendering, the dedupe key and
+the provider are all healthy. The fault was only ever the verb.
+
+### Left as it was
+
+The Hobby plan gives cron jobs a **one-hour flexible window**, so `0 8 * * *`
+fires somewhere in 08:00–09:00 UTC. That is not a fault and nothing in the app
+can make it punctual; a quiet log at 08:05 means nothing until 09:00 has
+passed.
+
+`birthday-run`'s `no_subscribers` and send-failure paths still call
+`releaseRun`, which deletes the row so a retry can send — so those two exits
+leave no trace. Closing that means separating the mutex from the audit trail,
+a larger change to a working lock. Its quiet-day path keeps its row, so the
+common case is covered.

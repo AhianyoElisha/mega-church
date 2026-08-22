@@ -132,6 +132,17 @@ large type; body text is black. Never yellow text on white below 18pt.
   constituency names truncate to the same string and ExcelJS *throws* on the
   duplicate — so the workbook a church with long group names asks for is
   exactly the one that fails. `safeSheetName()` de-duplicates; use it.
+- **A Vercel Cron invokes its path with `GET`, not `POST`.** Both
+  notification routes export a `GET` that delegates to `POST` for exactly
+  this reason. They shipped POST-only and every scheduled firing answered
+  **405** before the handler ran — no row, no text, no error anywhere, looking
+  precisely like a church where nobody had a birthday. It survived every check
+  because each manual proof was a `curl -X POST`, which works. The
+  scheduler's request and the tested request differed in the one dimension
+  nobody compared. **Verify a cron the way the cron calls it** — user agent
+  `vercel-cron/1.0`, method GET — not the way it is convenient to call by
+  hand. Never add `dynamic = 'force-static'` to these: a cached 200 would
+  report success forever while sending nothing.
 - **`/api/notifications/*` is exempt from the proxy's session gate** because a
   cron has no cookie jar. It is not unauthenticated — the route requires a
   constant-time-compared bearer token or an admin session. Gating it in
