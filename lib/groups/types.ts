@@ -112,6 +112,13 @@ export type MembershipResult = {
   removed: number
   /** Size of the group after the change. */
   total: number
+  /**
+   * Ticked but not assigned, because they had gained a constituency since the
+   * list was drawn. Only a group head can see this above zero — an admin may
+   * MOVE a member, so nothing is ever skipped for them. Reported rather than
+   * swallowed: a head who ticks nine and sees "7 added" deserves to know why.
+   */
+  skipped?: number
 }
 
 // --- responses --------------------------------------------------------------
@@ -201,4 +208,12 @@ export type CreateLeaderResponse =
        */
       password: string
     }
+  | { ok: false; error: string }
+
+export type SetLeaderPasswordResponse =
+  | { ok: true; name: string; email: string; password: string }
+  | { ok: false; error: string }
+
+export type ListUnassignedResponse =
+  | { ok: true; members: import('@/lib/members/types').Member[] }
   | { ok: false; error: string }

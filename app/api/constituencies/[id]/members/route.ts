@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
-import { assignConstituency, constituencyCounts, getConstituency } from '@/lib/groups/server'
+import {
+  assignConstituency,
+  canReadGroup,
+  constituencyCounts,
+  getConstituency,
+} from '@/lib/groups/server'
 import type { MembershipResponse } from '@/lib/groups/types'
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -19,8 +24,16 @@ type Ctx = { params: Promise<{ id: string }> }
  * a second group takes nothing away from the first.
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole('admin')
+  /**
+   * A group HEAD may call this, narrowly. See the two guards below.
+   *
+   * The church's own words: a head knows who lives in their area, and 84
+   * members were registered before constituencies existed. Making the head ask
+   * an admin to file each of them is how that backlog stays a backlog.
+   */
+  const auth = await requireRole(['admin', 'leader'])
   if ('error' in auth) return auth.error
+  const isAdmin = auth.user.label === 'admin'
 
   const { id } = await params
   let body: { member_ids?: unknown; mode?: unknown }
@@ -45,11 +58,43 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     return bad('No such constituency.', 404)
   }
 
+  if (!isAdmin) {
+    // Guard 1 — it has to be their own constituency.
+    const allowed = await canReadGroup(
+      databases,
+      { id: auth.user.id, label: auth.user.label },
+      'constituency',
+      id,
+    )
+    if (!allowed) return bad('You do not head that constituency.', 403)
+
+    // Guard 2 — a head may ADD, never remove. Removing sets the member's
+    // constituency to null, which is indistinguishable from "never assigned"
+    // and would let a head quietly empty a roster an admin had filled. If a
+    // head files somebody by mistake, an admin can move them; the reverse
+    // mistake has no such backstop.
+    if (mode !== 'add') {
+      return bad(
+        'A group head can add members to their constituency but not remove them. ' +
+          'Ask an administrator to move somebody out.',
+        403,
+      )
+    }
+  }
+
   const touched = await assignConstituency(
     databases,
     id,
     mode === 'add'
-      ? { mode: 'assign', memberIds }
+      ? {
+          mode: 'assign',
+          memberIds,
+          // Guard 3, and the one that actually protects other heads: an admin
+          // may MOVE a member between constituencies, a head may only claim
+          // one who belongs to none. Enforced inside `assignConstituency` so
+          // it sits next to the write rather than in front of it.
+          onlyUnassigned: !isAdmin,
+        }
       : { mode: 'unassign', memberIds },
   )
 
@@ -64,6 +109,10 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     added: mode === 'add' ? touched : 0,
     removed: mode === 'remove' ? touched : 0,
     total: counts.get(id) ?? 0,
+    // A head who ticks somebody who was filed elsewhere between the list
+    // loading and the button being pressed gets a number that is smaller than
+    // what they ticked. Saying so beats silently doing less than was asked.
+    skipped: mode === 'add' ? memberIds.length - touched : 0,
   })
 }
 

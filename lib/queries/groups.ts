@@ -22,6 +22,8 @@ import type {
   ListConstituenciesResponse,
   CreateLeaderResponse,
   ListLeadersResponse,
+  ListUnassignedResponse,
+  SetLeaderPasswordResponse,
   MembershipMode,
   MembershipResponse,
   MyGroupsResponse,
@@ -201,4 +203,33 @@ export function useCreateLeader() {
         body: JSON.stringify(vars),
       }),
   )
+}
+
+/**
+ * Give an existing head a new password. Pass `password` to choose one, or omit
+ * it to have a readable one generated.
+ */
+export function useSetLeaderPassword() {
+  return useGroupMutation<SetLeaderPasswordResponse, { id: string; password?: string }>(
+    ({ id, password }) =>
+      apiFetch(`/api/leaders/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(password ? { password } : {}),
+      }),
+  )
+}
+
+/**
+ * Members belonging to no constituency yet — the only slice of the wider
+ * registry a group head may see, so they can claim the ones who live in their
+ * area. `enabled` because the admin's own assigner uses the full member list
+ * instead and must not fire this.
+ */
+export function useUnassignedMembers(constituencyId: string | null, enabled = true) {
+  return useQuery<ListUnassignedResponse>({
+    queryKey: [...queryKeys.constituency(constituencyId ?? ''), 'unassigned'],
+    queryFn: () =>
+      apiFetch(`/api/constituencies/${encodeURIComponent(constituencyId!)}/unassigned`),
+    enabled: !!constituencyId && enabled,
+  })
 }

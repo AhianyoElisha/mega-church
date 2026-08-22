@@ -173,3 +173,72 @@ export async function createLeaderAccount(
 
   return { ok: true, id: account.$id, name, email, password }
 }
+
+export type SetPasswordResult =
+  | { ok: true; name: string; email: string; password: string }
+  | { ok: false; error: string; status: 400 | 403 | 404 }
+
+/**
+ * Give an existing head a new password.
+ *
+ * This exists because there is no forgot-password flow in this app. Without
+ * it, a head who loses the string they were shown once is locked out until
+ * somebody opens the Appwrite console — which is exactly the "the feature must
+ * be missing" experience that made head accounts look unimplemented in the
+ * first place.
+ *
+ * Restricted to accounts carrying the `leader` label, and that restriction is
+ * load-bearing rather than tidiness. This route runs with an admin API key, so
+ * without the check an admin could rewrite the password of the OTHER admin, an
+ * usher, or the kiosk appliance by pasting a different id into the request —
+ * from a screen whose entire visible purpose is managing group heads. Blast
+ * radius should match what the screen says it does.
+ */
+export async function setLeaderPassword(
+  users: Users,
+  userId: string,
+  password: string | null,
+): Promise<SetPasswordResult> {
+  let account
+  try {
+    account = await users.get(userId)
+  } catch {
+    return { ok: false, error: 'That account no longer exists.', status: 404 }
+  }
+
+  if (!(account.labels ?? []).includes(USER_LABELS.leader)) {
+    return {
+      ok: false,
+      error:
+        `${account.name || account.email} is not a leader account. ` +
+        'Only group head passwords can be changed here.',
+      status: 403,
+    }
+  }
+
+  const next = password?.trim() || generatePassword()
+  // Appwrite's own minimum. Checked here so the refusal names the rule instead
+  // of surfacing a provider error an admin has to interpret.
+  if (next.length < 8) {
+    return { ok: false, error: 'A password must be at least 8 characters.', status: 400 }
+  }
+
+  try {
+    await users.updatePassword(userId, next)
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not change that password.',
+      status: 400,
+    }
+  }
+
+  return {
+    ok: true,
+    name: account.name || account.email,
+    email: account.email,
+    // Returned ONCE, exactly like creation. Never stored, and the dialog that
+    // shows it says so before it will close.
+    password: next,
+  }
+}

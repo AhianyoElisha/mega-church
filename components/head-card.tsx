@@ -13,14 +13,14 @@
 // and appoint them in the same breath.
 
 import { useState } from 'react'
-import { UserPlusIcon } from '@heroicons/react/24/outline'
+import { KeyIcon, UserPlusIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/shared/Button'
 import Input from '@/shared/Input'
 import Select from '@/shared/Select'
 import { Description, Field, Label } from '@/shared/fieldset'
 import { Banner, Card } from '@/components/ui'
 import { useDialog } from '@/components/dialog'
-import { useCreateLeader, useLeaderAccounts } from '@/lib/queries/groups'
+import { useCreateLeader, useLeaderAccounts, useSetLeaderPassword } from '@/lib/queries/groups'
 
 export type HeadCardProps = {
   kind: 'constituency' | 'bacenta'
@@ -44,6 +44,7 @@ export default function HeadCard({
 }: HeadCardProps) {
   const leaders = useLeaderAccounts()
   const createLeader = useCreateLeader()
+  const setPassword = useSetLeaderPassword()
   const { confirm } = useDialog()
 
   const [selected, setSelected] = useState(headUserId ?? '')
@@ -54,7 +55,12 @@ export default function HeadCard({
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [chosenPassword, setChosenPassword] = useState('')
   const [newPassword, setNewPassword] = useState<{ email: string; password: string } | null>(null)
+
+  // The inline "change this head's password" form.
+  const [changing, setChanging] = useState(false)
+  const [replacement, setReplacement] = useState('')
 
   const accounts = leaders.data?.ok ? leaders.data.leaders : []
   const dirty = (selected || null) !== (headUserId ?? null)
@@ -101,7 +107,13 @@ export default function HeadCard({
   const submitNewLeader = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    const res = await createLeader.mutateAsync({ name, email })
+    const res = await createLeader.mutateAsync({
+      name,
+      email,
+      // Blank means "generate a readable one for me", which is what most
+      // admins want and what the field's own hint says.
+      ...(chosenPassword.trim() ? { password: chosenPassword.trim() } : {}),
+    })
     if (!res.ok) {
       setError(res.error)
       return
@@ -113,6 +125,25 @@ export default function HeadCard({
     setCreating(false)
     setName('')
     setEmail('')
+    setChosenPassword('')
+  }
+
+  const submitPasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    if (!headUserId) return
+    const res = await setPassword.mutateAsync({
+      id: headUserId,
+      ...(replacement.trim() ? { password: replacement.trim() } : {}),
+    })
+    if (!res.ok) {
+      setError(res.error)
+      return
+    }
+    setNewPassword({ email: res.email, password: res.password })
+    setChanging(false)
+    setReplacement('')
+    setNotice(`${res.name} has a new password. Copy it before closing this page.`)
   }
 
   return (
@@ -150,13 +181,52 @@ export default function HeadCard({
             <span className="font-mono text-base">{newPassword.password}</span>
           </p>
           <p className="mt-1 text-xs">
-            There is no password reset in this app. If it is lost, set a new one for this account
-            in the Appwrite console.
+            It is not stored anywhere. If it is lost, use{' '}
+            <strong>Change password</strong> here to set another — no need for the Appwrite
+            console.
           </p>
         </Banner>
       )}
 
-      {creating ? (
+      {changing ? (
+        <form onSubmit={submitPasswordChange} className="mt-5 grid gap-4 sm:max-w-md">
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Setting a new password for <strong>{headName}</strong>. They are signed out of nothing —
+            existing sessions keep working until they end — so tell them before they next need to
+            sign in.
+          </p>
+          <Field>
+            <Label>New password</Label>
+            <Input
+              value={replacement}
+              onChange={(e) => setReplacement(e.target.value)}
+              placeholder="Leave blank to generate one"
+              autoComplete="new-password"
+            />
+            <Description>
+              At least 8 characters. Blank generates a readable one. It is shown once and is not
+              stored, so copy it before closing.
+            </Description>
+          </Field>
+          {error && <Banner tone="error">{error}</Banner>}
+          <div className="flex gap-3">
+            <Button type="submit" color="primary" disabled={setPassword.isPending}>
+              {setPassword.isPending ? 'Changing…' : 'Set new password'}
+            </Button>
+            <Button
+              type="button"
+              plain
+              onClick={() => {
+                setChanging(false)
+                setReplacement('')
+                setError(null)
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      ) : creating ? (
         <form onSubmit={submitNewLeader} className="mt-5 grid gap-4 sm:max-w-md">
           <Field>
             <Label>Their name</Label>
@@ -171,8 +241,20 @@ export default function HeadCard({
               required
             />
             <Description>
-              A password is generated for you and shown once. The email is only a username — the
-              app never sends to it.
+              The email is only a username — the app never sends anything to it.
+            </Description>
+          </Field>
+          <Field>
+            <Label>Password</Label>
+            <Input
+              value={chosenPassword}
+              onChange={(e) => setChosenPassword(e.target.value)}
+              placeholder="Leave blank to generate one"
+              autoComplete="new-password"
+            />
+            <Description>
+              Blank generates a readable one — no look-alike characters, because this gets read
+              down a phone line. Either way it is shown once and can be changed later.
             </Description>
           </Field>
           {error && <Banner tone="error">{error}</Banner>}
@@ -240,6 +322,12 @@ export default function HeadCard({
               <UserPlusIcon data-slot="icon" />
               New leader account
             </Button>
+            {headUserId && (
+              <Button plain onClick={() => setChanging(true)}>
+                <KeyIcon data-slot="icon" />
+                Change password
+              </Button>
+            )}
           </div>
         </div>
       )}

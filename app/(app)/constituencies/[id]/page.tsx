@@ -9,6 +9,7 @@ import { Banner, Card, LoadingRow, PageHeader, PageWrap, StatCard, TabBar } from
 import GroupMemberAssigner from '@/components/group-member-assigner'
 import HeadCard from '@/components/head-card'
 import DayExport from '@/components/day-export'
+import HeadMemberClaim from '@/components/head-member-claim'
 import GroupRosterTable from '@/components/group-roster-table'
 import { useDialog } from '@/components/dialog'
 import { useAuth } from '@/components/auth'
@@ -88,14 +89,16 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
   return (
     <PageWrap>
       <PageHeader
+        back={
+          isAdmin
+            ? { href: '/constituencies', label: 'All constituencies' }
+            : { href: '/my-groups', label: 'My groups' }
+        }
         title={group.name}
         subtitle={group.description ?? 'A constituency — where these members live.'}
         actions={
           isAdmin && (
             <>
-              <Button plain href="/constituencies">
-                All constituencies
-              </Button>
               <Button plain onClick={handleDelete} disabled={remove.isPending}>
                 Delete
               </Button>
@@ -135,21 +138,44 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
         />
       )}
 
-      {isAdmin && (
-        <TabBar
-          className="mb-6"
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { value: 'members', label: `Members (${members.length})` },
-            { value: 'assign', label: 'Assign members' },
-          ]}
-        />
-      )}
+      {/* A head gets a tab bar too now. Their "assign" tab is a different,
+          much narrower screen — see HeadMemberClaim — but the navigation is
+          the same shape, so the page does not become two different pages
+          depending on who opens it. */}
+      <TabBar
+        className="mb-6"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'members', label: `Members (${members.length})` },
+          { value: 'assign', label: isAdmin ? 'Assign members' : 'Add members' },
+        ]}
+      />
 
-      {tab === 'members' || !isAdmin ? (
+      {tab === 'members' ? (
         <Card padded={false}>
           <GroupRosterTable members={members} linkToMembers={isAdmin} />
+        </Card>
+      ) : !isAdmin ? (
+        <Card>
+          <h2 className="mb-1 text-base font-semibold text-neutral-950 dark:text-white">
+            Add members to {group.name}
+          </h2>
+          <p className="mb-5 text-sm text-neutral-500 dark:text-neutral-400">
+            You can add members who have <strong>no constituency yet</strong>. Somebody already
+            placed in another constituency has to be moved by an administrator — that keeps two
+            heads from pulling the same member back and forth.
+          </p>
+          <HeadMemberClaim
+            constituencyId={id}
+            groupName={group.name}
+            busy={assign.isPending}
+            onClaim={async (ids) => {
+              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'add' })
+              if (!res.ok) throw new Error(res.error)
+              return { added: res.added, skipped: res.skipped ?? 0 }
+            }}
+          />
         </Card>
       ) : (
         <Card>
@@ -180,7 +206,8 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
 
       {!isAdmin && (
         <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
-          You are signed in as a head, so this view is read-only.{' '}
+          You are signed in as a head. You can add unassigned members to this constituency;
+          everything else here is read-only.{' '}
           <Link href="/my-groups" className="underline">
             Your other groups
           </Link>

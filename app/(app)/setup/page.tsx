@@ -212,6 +212,7 @@ export default function SetupPage() {
   return (
     <PageWrap className="max-w-4xl">
       <PageHeader
+        back={{ href: '/kiosk', label: 'Kiosk' }}
         title="Kiosk setup check"
         subtitle="What this machine still needs before fingerprint check-in will work"
       />
