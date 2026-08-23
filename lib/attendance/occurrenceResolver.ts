@@ -35,6 +35,13 @@ export type ResolveResult =
    */
   | { kind: 'multiple'; occurrences: MeetingOccurrence[] }
 
+/**
+ * A PAUSED occurrence is not open, and that single fact is the whole pause
+ * feature. It is not filtered out here as a special case — it simply is not
+ * `open`, so the kiosk sees no session and stops scanning, and `canActivate`
+ * below sees nothing in the way and lets another activity start. Both
+ * behaviours the church asked for fall out of the one status value.
+ */
 export function resolveOpenOccurrence(occurrences: MeetingOccurrence[]): ResolveResult {
   const open = occurrences.filter((o) => o.status === 'open')
   if (open.length === 0) return { kind: 'none' }
@@ -46,6 +53,11 @@ export type ActivationCheck =
   | { ok: true }
   | { ok: false; reason: 'already_open'; blocking: MeetingOccurrence }
   | { ok: false; reason: 'archived' }
+
+export type ResumeCheck =
+  | { ok: true }
+  | { ok: false; reason: 'not_paused' }
+  | { ok: false; reason: 'already_open'; blocking: MeetingOccurrence }
 
 /**
  * May `meeting` be activated right now, given everything currently open?
@@ -59,6 +71,10 @@ export type ActivationCheck =
  * Note what is deliberately NOT enforced: Second Service does not require that
  * First Service already ran today. A Sunday with only one service is normal,
  * and a rule that blocked it would be discovered at 9am on that Sunday.
+ *
+ * Nor does a PAUSED session block anything. Pausing exists so that a second
+ * activity can take attendance in the middle of a service; a pause that still
+ * held the slot would relieve the scanner and achieve nothing else.
  */
 export function canActivate(
   meeting: Pick<Meeting, 'archived'>,
@@ -78,6 +94,38 @@ export function canActivate(
 export function activationBlockedMessage(blockingMeetingName: string, wanted: string): string {
   return (
     `${blockingMeetingName} is still open. End it before activating ${wanted} — ` +
+    'only one session can run at a time.'
+  )
+}
+
+/**
+ * May this paused occurrence be resumed right now?
+ *
+ * The mirror of `canActivate`, and it has to exist separately rather than being
+ * folded into it: activating CREATES an occurrence, resuming returns an
+ * existing one to `open`, and only the second can fail because the thing being
+ * resumed is not actually paused.
+ *
+ * The single-active invariant is the same one. Pausing First Service to run a
+ * committee meeting is the point of the feature — but resuming First Service
+ * while that committee meeting is still open would put two sessions on the
+ * scanner at once, which is exactly what PRD §2.2 forbids. So a resume is
+ * refused, naming the meeting in the way, and the admin ends that one first.
+ */
+export function canResume(
+  occurrence: Pick<MeetingOccurrence, 'status'>,
+  openOccurrences: MeetingOccurrence[],
+): ResumeCheck {
+  if (occurrence.status !== 'paused') return { ok: false, reason: 'not_paused' }
+  const open = openOccurrences.filter((o) => o.status === 'open')
+  if (open.length > 0) return { ok: false, reason: 'already_open', blocking: open[0] }
+  return { ok: true }
+}
+
+/** The sentence shown when a resume is refused because something else is open. */
+export function resumeBlockedMessage(blockingMeetingName: string, wanted: string): string {
+  return (
+    `${blockingMeetingName} is open. End it before resuming ${wanted} — ` +
     'only one session can run at a time.'
   )
 }

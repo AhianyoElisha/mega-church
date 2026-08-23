@@ -98,8 +98,9 @@ end it.
 |---|---|---|
 | `meeting_id` | string(64) | |
 | `occurrence_date` | string(10) | `YYYY-MM-DD` in Africa/Accra |
-| `status` | enum | `open` \| `closed` |
+| `status` | enum | `open` \| `paused` \| `closed` |
 | `opened_at` | string(32) | ISO |
+| `paused_at` | string(32) \| null | ISO. Set on pause, cleared on resume |
 | `closed_at` | string(32) \| null | ISO |
 | `opened_by` / `closed_by` | string(128) | admin email |
 | `present_count` | integer | denormalised tally, written on close |
@@ -295,9 +296,41 @@ two of anything. Enforced server-side in
 
 Consequences:
 
-- First Service must be **ended** before Second Service can be activated.
+- First Service must be **ended or paused** before Second Service can be
+  activated.
 - The two services can never run concurrently.
 - The kiosk never has to ask *which* session it is marking.
+
+#### Pausing
+
+A session may be **paused**: it is still running, but has let go of the
+scanner. The church's case is a service that has not ended while a different
+activity has to take attendance in the middle of it.
+
+`paused` is defined as precisely "not `open`", and both behaviours the church
+asked for fall out of that one fact rather than being special-cased anywhere:
+
+- every "is a session live?" check filters on `open`, so **the kiosk stops
+  scanning**;
+- `canActivate` filters on `open`, so **the slot is free** and another activity
+  can be activated while the service stays paused.
+
+What pausing is NOT is a small close. **Nothing is frozen.** `present_count` is
+still computed from the rows at close, so attendance marked before the pause
+and after the resume belongs to the same occurrence and is counted once.
+Closing and re-activating instead would give the church two half-counts of one
+service and no way to add them up afterwards.
+
+Resuming is refused, naming the blocker, while something else is `open` — that
+would put two sessions on the scanner, which is the rule above. A paused
+session may be closed directly without being resumed first; a service that was
+paused and then simply finished is the ordinary way this ends.
+
+Paused sessions are invisible to every liveness check by design, so the UI
+carries them explicitly — the Services page lists them, the header pill names
+one instead of saying "No session open", and the kiosk says *"First Service is
+paused"* rather than *"No session is open"*. Somebody told the second walks
+away; somebody told the first waits.
 
 ### 2.3 Restricted meetings
 

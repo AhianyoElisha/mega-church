@@ -41,7 +41,20 @@ export type MeetingRosterEntry = {
   added_by: string | null
 }
 
-export type OccurrenceStatus = 'open' | 'closed'
+/**
+ * `paused` is a session that is still RUNNING but has let go of the scanner.
+ *
+ * The church's case: a service has not ended, but a different activity has to
+ * take attendance in the middle of it. Ending the service to do that would
+ * freeze its tally and make the rest of the service a second occurrence; making
+ * the other activity wait is not an option either.
+ *
+ * So `paused` is precisely "not `open`". Everything that asks "is a session
+ * live?" filters on `open`, which means a paused session stops the kiosk AND
+ * frees the single-active slot for something else — both consequences of the
+ * one status value, neither of them a special case anybody has to remember.
+ */
+export type OccurrenceStatus = 'open' | 'paused' | 'closed'
 
 export type MeetingOccurrence = {
   $id: string
@@ -50,6 +63,9 @@ export type MeetingOccurrence = {
   occurrence_date: string
   status: OccurrenceStatus
   opened_at: string
+  /** When it was last paused, or null. Sits beside `status` exactly as
+   *  `closed_at` does — `status` is the truth, this is the timestamp. */
+  paused_at: string | null
   closed_at: string | null
   opened_by: string | null
   closed_by: string | null
@@ -82,7 +98,22 @@ export type MeetingDetailResponse =
   | { ok: false; error: string }
 
 export type ActiveSessionResponse =
-  | { ok: true; session: ActiveSession | null }
+  | {
+      ok: true
+      session: ActiveSession | null
+      /**
+       * Sessions that are paused, and therefore NOT `session`.
+       *
+       * Carried on the same response because every consumer that cares whether
+       * the scanner is armed also needs to distinguish "nothing is running"
+       * from "First Service is paused" — the kiosk says so on its idle screen,
+       * and the Services page needs it to offer Resume. Fetching it separately
+       * would be a second poll answering half of one question.
+       *
+       * Usually empty, occasionally one. Never the active session.
+       */
+      paused: ActiveSession[]
+    }
   | { ok: false; error: string }
 
 export type ActivateResponse =
@@ -97,3 +128,13 @@ export type ActivateResponse =
 export type CloseOccurrenceResponse =
   | { ok: true; occurrence: MeetingOccurrence; present_count: number }
   | { ok: false; error: string }
+
+/**
+ * Pausing and resuming. `conflict` appears on a REFUSED resume for the same
+ * reason it appears on a refused activation: resuming would make two sessions
+ * open at once, and naming the one in the way is what makes the message
+ * actionable.
+ */
+export type PauseResumeResponse =
+  | { ok: true; session: ActiveSession }
+  | { ok: false; error: string; conflict?: ActiveSession }

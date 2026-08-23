@@ -7,10 +7,11 @@ import type {
   ActivateResponse,
   ActiveSessionResponse,
   CloseOccurrenceResponse,
+  PauseResumeResponse,
 } from '@/lib/meetings/types'
 
 /**
- * The single globally-open session, or null (PRD §2.2).
+ * The single globally-open session (or null), plus anything paused.
  *
  * Polled rather than pushed: it changes a handful of times a day, and every
  * screen in the app shows it, so a cheap poll beats holding a websocket open
@@ -69,7 +70,7 @@ export function useOccurrences(meetingId?: string) {
           meeting_id: string
           meeting_name: string
           occurrence_date: string
-          status: 'open' | 'closed'
+          status: 'open' | 'paused' | 'closed'
           opened_at: string
           closed_at: string | null
           present_count: number
@@ -79,5 +80,41 @@ export function useOccurrences(meetingId?: string) {
           ? `/api/occurrences?meeting_id=${encodeURIComponent(meetingId)}`
           : '/api/occurrences',
       ),
+  })
+}
+
+/**
+ * Pause and resume.
+ *
+ * Both invalidate the whole `occurrences` prefix, which includes
+ * `activeOccurrence` — the header pill, the kiosk and the Services page all
+ * read that one key, and a pause that left any of them showing "Session open"
+ * would be telling somebody the scanner is armed when it is not.
+ */
+export function usePauseOccurrence() {
+  const qc = useQueryClient()
+  return useMutation<PauseResumeResponse, Error, { occurrence_id: string }>({
+    mutationFn: ({ occurrence_id }) =>
+      apiFetch(`/api/occurrences/${encodeURIComponent(occurrence_id)}/pause`, {
+        method: 'POST',
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['occurrences'] })
+      void qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+  })
+}
+
+export function useResumeOccurrence() {
+  const qc = useQueryClient()
+  return useMutation<PauseResumeResponse, Error, { occurrence_id: string }>({
+    mutationFn: ({ occurrence_id }) =>
+      apiFetch(`/api/occurrences/${encodeURIComponent(occurrence_id)}/resume`, {
+        method: 'POST',
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['occurrences'] })
+      void qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
   })
 }

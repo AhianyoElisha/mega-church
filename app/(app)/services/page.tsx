@@ -14,7 +14,14 @@ import { Badge } from '@/shared/Badge'
 import { Banner, Card, EmptyState, LoadingRow, PageHeader, PageWrap, StatCard } from '@/components/ui'
 import { useDialog } from '@/components/dialog'
 import { useMeetings } from '@/lib/queries/meetings'
-import { useActivateOccurrence, useActiveSession, useCloseOccurrence } from '@/lib/queries/occurrences'
+import {
+  useActivateOccurrence,
+  useActiveSession,
+  useCloseOccurrence,
+  usePauseOccurrence,
+  useResumeOccurrence,
+} from '@/lib/queries/occurrences'
+import type { ActiveSession } from '@/lib/meetings/types'
 import { useLiveStats } from '@/lib/queries/attendance'
 import { SERVICE_IDS } from '@/lib/appwrite/config'
 
@@ -37,9 +44,15 @@ export default function ServicesPage() {
   const active = useActiveSession(15_000)
   const activate = useActivateOccurrence()
   const close = useCloseOccurrence()
+  const pause = usePauseOccurrence()
+  const resume = useResumeOccurrence()
   const [error, setError] = useState<string | null>(null)
 
   const session = active.data?.ok ? active.data.session : null
+  // Paused sessions are running but off the scanner, so they appear in no
+  // "is anything open?" check anywhere. This page is where they have to be
+  // visible, or a service gets paused and quietly forgotten.
+  const paused = active.data?.ok ? active.data.paused : []
   const stats = useLiveStats(session?.occurrence.$id ?? null)
 
   // A refusal is not an absence. resolveActiveSession() throws when more than
@@ -68,10 +81,10 @@ export default function ServicesPage() {
     }
   }
 
-  const handleClose = async () => {
-    if (!session) return
+  const handleClose = async (target: ActiveSession | null = session) => {
+    if (!target) return
     const ok = await dialog.confirm({
-      title: `End ${session.meeting.name}?`,
+      title: `End ${target.meeting.name}?`,
       message:
         'Kiosks will stop accepting scans immediately and the attendance count will be frozen. ' +
         'You can then activate the next session.',
@@ -80,10 +93,37 @@ export default function ServicesPage() {
     })
     if (!ok) return
     setError(null)
-    const res = await close.mutateAsync({ occurrence_id: session.occurrence.$id })
+    const res = await close.mutateAsync({ occurrence_id: target.occurrence.$id })
     if (!res.ok) setError(res.error)
   }
 
+  const handlePause = async (target: ActiveSession) => {
+    const ok = await dialog.confirm({
+      title: `Pause ${target.meeting.name}?`,
+      message:
+        'Kiosks stop accepting scans, but the session stays open and nothing is counted up yet — ' +
+        'everyone already marked stays marked. You can activate another session while it is ' +
+        'paused, then resume this one.',
+      confirmText: 'Pause session',
+    })
+    if (!ok) return
+    setError(null)
+    const res = await pause.mutateAsync({ occurrence_id: target.occurrence.$id })
+    if (!res.ok) setError(res.error)
+  }
+
+  const handleResume = async (target: ActiveSession) => {
+    setError(null)
+    const res = await resume
+      .mutateAsync({ occurrence_id: target.occurrence.$id })
+      .catch((e: Error) => {
+        setError(e.message)
+        return null
+      })
+    if (res && !res.ok) setError(res.error)
+  }
+
+  const pausedFor = (meetingId: string) => paused.find((p) => p.meeting.$id === meetingId) ?? null
   const blockedBy = session?.meeting.name ?? null
 
   return (
@@ -124,7 +164,10 @@ export default function ServicesPage() {
               <Button outline href="/monitor">
                 Live view
               </Button>
-              <Button color="red" onClick={handleClose} disabled={close.isPending}>
+              <Button outline onClick={() => handlePause(session)} disabled={pause.isPending}>
+                {pause.isPending ? 'Pausing…' : 'Pause'}
+              </Button>
+              <Button color="red" onClick={() => handleClose(session)} disabled={close.isPending}>
                 {close.isPending ? 'Ending…' : 'End session'}
               </Button>
             </div>
@@ -146,11 +189,53 @@ export default function ServicesPage() {
         <Banner tone="error" className="mb-8">
           <span className="font-semibold">Cannot read the open session.</span> {refusal}
         </Banner>
+      ) : paused.length > 0 ? (
+        <Banner tone="info" className="mb-8">
+          No session is taking scans right now. Resume a paused one below, or activate another.
+        </Banner>
       ) : (
         <Banner tone="info" className="mb-8">
           No session is open. Activate one below to start taking attendance.
         </Banner>
       )}
+
+      {/* Paused sessions, listed whether or not something else is open — the
+          case this feature exists for is precisely "First Service is paused
+          WHILE the committee meeting runs". */}
+      {paused.map((p) => (
+        <Card
+          key={p.occurrence.$id}
+          className="mb-4 border-2 border-dashed border-neutral-300! dark:border-neutral-600!"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="mb-1 flex items-center gap-2">
+                <span aria-hidden className="size-2 rounded-full bg-neutral-400" />
+                {/* Colour is never the only signal — the words carry it. PRD §2.4. */}
+                <span className="text-xs font-semibold tracking-wide text-neutral-600 uppercase dark:text-neutral-300">
+                  Session paused
+                </span>
+              </div>
+              <h3 className="text-lg font-semibold text-neutral-950 dark:text-white">
+                {p.meeting.name}
+              </h3>
+              <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-300">
+                Started {formatTime(p.occurrence.opened_at)}
+                {p.occurrence.paused_at ? `, paused ${formatTime(p.occurrence.paused_at)}` : ''} ·
+                still counting, not scanning
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button color="primary" onClick={() => handleResume(p)} disabled={resume.isPending}>
+                {resume.isPending ? 'Resuming…' : 'Resume'}
+              </Button>
+              <Button plain onClick={() => handleClose(p)} disabled={close.isPending}>
+                End session
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ))}
 
       <h2 className="mb-3 text-sm font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
         Sunday services
@@ -163,6 +248,9 @@ export default function ServicesPage() {
         <div className="mb-10 grid gap-4 sm:grid-cols-2">
           {services.map((m) => {
             const isOpen = session?.meeting.$id === m.$id
+            // A PAUSED session does not block anything — that is the point of
+            // pausing — so `disabled` deliberately looks only at the open one.
+            const pausedHere = pausedFor(m.$id)
             const disabled = !!session
             return (
               <Card key={m.$id} className={isOpen ? 'ring-2 ring-primary-500!' : undefined}>
@@ -177,6 +265,7 @@ export default function ServicesPage() {
                       </p>
                     </div>
                     {isOpen && <Badge color="green">Open</Badge>}
+                    {pausedHere && <Badge color="zinc">Paused</Badge>}
                   </div>
 
                   <p className="mb-4 text-xs text-neutral-400 dark:text-neutral-500">
@@ -185,8 +274,20 @@ export default function ServicesPage() {
 
                   <div className="mt-auto">
                     {isOpen ? (
-                      <Button color="red" onClick={handleClose} disabled={close.isPending}>
+                      <Button
+                        color="red"
+                        onClick={() => handleClose(session)}
+                        disabled={close.isPending}
+                      >
                         End {m.name}
+                      </Button>
+                    ) : pausedHere ? (
+                      <Button
+                        color="primary"
+                        onClick={() => handleResume(pausedHere)}
+                        disabled={resume.isPending}
+                      >
+                        Resume {m.name}
                       </Button>
                     ) : (
                       <>
@@ -197,7 +298,7 @@ export default function ServicesPage() {
                         >
                           Activate {m.name}
                         </Button>
-                        {disabled && (
+                        {disabled && !pausedHere && (
                           // Naming the blocker is the whole point — "end First
                           // Service first" is actionable; a greyed-out button
                           // on its own is a puzzle.
@@ -242,19 +343,29 @@ export default function ServicesPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {others.map((m) => {
             const isOpen = session?.meeting.$id === m.$id
+            const pausedHere = pausedFor(m.$id)
             const disabled = !!session
             return (
               <Card key={m.$id} className={isOpen ? 'ring-2 ring-primary-500!' : undefined}>
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <h3 className="font-semibold text-neutral-950 dark:text-white">{m.name}</h3>
                   {isOpen && <Badge color="green">Open</Badge>}
+                  {pausedHere && <Badge color="zinc">Paused</Badge>}
                 </div>
                 <p className="mb-4 text-xs text-neutral-500 dark:text-neutral-400">
                   {m.roster_size} authorised · last held {m.last_held ?? 'never'}
                 </p>
                 {isOpen ? (
-                  <Button color="red" onClick={handleClose} disabled={close.isPending}>
+                  <Button color="red" onClick={() => handleClose(session)} disabled={close.isPending}>
                     End
+                  </Button>
+                ) : pausedHere ? (
+                  <Button
+                    color="primary"
+                    onClick={() => handleResume(pausedHere)}
+                    disabled={resume.isPending}
+                  >
+                    Resume
                   </Button>
                 ) : (
                   <Button
@@ -265,13 +376,13 @@ export default function ServicesPage() {
                     Activate
                   </Button>
                 )}
-                {!isOpen && m.roster_size === 0 && (
+                {!isOpen && !pausedHere && m.roster_size === 0 && (
                   // An empty roster would refuse everybody at the door.
                   <p className="mt-2 text-xs text-red-600 dark:text-red-400">
                     Nobody is authorised yet — add members first.
                   </p>
                 )}
-                {!isOpen && disabled && m.roster_size > 0 && (
+                {!isOpen && !pausedHere && disabled && m.roster_size > 0 && (
                   <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                     End {blockedBy} first.
                   </p>

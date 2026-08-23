@@ -65,6 +65,10 @@ export default function KioskPage() {
   const dialog = useDialog()
 
   const [session, setSession] = useState<ActiveSession | null>(null)
+  // A session that is running but has let go of the scanner. The kiosk must not
+  // scan for it — it is not `session` — but "No session is open" in front of a
+  // congregation whose service is merely paused sends people away.
+  const [pausedName, setPausedName] = useState<string | null>(null)
   const [now, setNow] = useState<Date>(() => new Date())
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   const [pending, setPending] = useState<QueuedScan[]>([])
@@ -88,6 +92,7 @@ export default function KioskPage() {
       }
       const data = (await res.json()) as ActiveSessionResponse
       setSession(data.ok ? data.session : null)
+      setPausedName(data.ok ? (data.paused[0]?.meeting.name ?? null) : null)
     } catch {
       // Network errors do NOT clear the cached session — a flaky connection
       // must not blank the screen mid-service.
@@ -530,6 +535,10 @@ export default function KioskPage() {
             <span className="rounded-full bg-primary-500/20 px-3 py-1 text-sm font-semibold text-primary-400">
               ● {session.meeting.name}
             </span>
+          ) : pausedName ? (
+            <span className="rounded-full bg-white/10 px-3 py-1 text-sm text-white/60">
+              ‖ {pausedName} paused
+            </span>
           ) : (
             <span className="rounded-full bg-white/10 px-3 py-1 text-sm text-white/60">
               ◐ No session
@@ -650,7 +659,7 @@ export default function KioskPage() {
         )}
 
         {!session ? (
-          <WaitingPanel />
+          <WaitingPanel pausedName={pausedName} />
         ) : phase.kind === 'idle' ? (
           <IdlePanel
             scannerActive={scanReady}
@@ -691,7 +700,20 @@ export default function KioskPage() {
 
 // === Panels ================================================================
 
-function WaitingPanel() {
+function WaitingPanel({ pausedName }: { pausedName?: string | null }) {
+  // Paused and closed are the same thing to the scanner and NOT the same thing
+  // to the person standing in front of it. Somebody told "no session is open"
+  // during a paused service walks away; somebody told it is paused waits.
+  if (pausedName) {
+    return (
+      <div className="text-center">
+        <p className="kiosk-headline mb-3 text-white">{pausedName} is paused</p>
+        <p className="text-xl text-white/60">
+          Check-in will start again shortly. Please wait.
+        </p>
+      </div>
+    )
+  }
   return (
     <div className="text-center">
       <p className="kiosk-headline mb-3 text-white">No session is open</p>

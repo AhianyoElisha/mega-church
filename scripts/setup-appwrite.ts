@@ -618,8 +618,18 @@ async function setupOccurrences() {
   await ensureCollection(COLLECTIONS.meeting_occurrences, 'Meeting Occurrences')
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'meeting_id', 64, true)
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'occurrence_date', 10, true)
-  await ensureEnumAttribute(COLLECTIONS.meeting_occurrences, 'status', ['open', 'closed'], true)
+  // `paused` was added after the first deployment. `ensureEnumAttribute`
+  // WIDENS an existing enum in place rather than dropping and recreating it,
+  // so re-running this against a live project keeps every occurrence row and
+  // the `by_status` index over them.
+  await ensureEnumAttribute(
+    COLLECTIONS.meeting_occurrences,
+    'status',
+    ['open', 'paused', 'closed'],
+    true,
+  )
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'opened_at', 32, true)
+  await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'paused_at', 32, false)
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'closed_at', 32, false)
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'opened_by', 128, false)
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'closed_by', 128, false)

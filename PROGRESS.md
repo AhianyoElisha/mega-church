@@ -551,3 +551,104 @@ That is also what lets CI supply credentials it will never write to a file:
 
 **Fix the two stale values in `.env.local`** so the next person does not have to
 rediscover this.
+
+## Camera capture for member photos — 2026-08-23
+
+Uploading was the only way to give a member a photo. Now **Take photo** sits
+beside **Upload** on every screen that has the control (the member page, the
+head's member page, and the register flow) — one component, three call sites,
+no API change.
+
+`components/camera-capture.tsx` is a dialog: live preview, shutter, then a
+review step with **Retake** / **Use this photo**. It captures to a canvas at
+1280px on the long side and hands back a JPEG the existing upload mutation
+sends unchanged, so a photo behaves identically whichever door it came through.
+
+### The parts that are easy to lose in a refactor
+
+- **The stream is stopped on close, on unmount, before switching cameras, and
+  the moment there is a photo to review.** A `MediaStream` nobody stopped keeps
+  the lens live and the indicator light on after the dialog is gone — which
+  reads, to the person being photographed, as being recorded.
+- **`playsInline` and `muted`** — without both, iOS Safari takes the video
+  fullscreen and the shutter button is no longer on screen to press. Nothing
+  errors; the feature is just unusable on the phones most likely to be used.
+- **Nothing is mirrored.** The operator is photographing somebody across a
+  desk, not taking a selfie, and a face stored mirrored is a face an usher
+  compares against backwards on the kiosk card.
+- **Upload never goes away.** `navigator.mediaDevices` is undefined outside a
+  secure context — exactly how a kiosk PC on a church LAN is reached over plain
+  http — so `cameraAvailable()` is checked in an effect and the camera button
+  is simply not offered there.
+
+Rear camera is requested by `facingMode: { ideal: 'environment' }`, which
+degrades to the only camera on a laptop rather than failing. A **Switch
+camera** control appears when the device reports more than one, built from
+`enumerateDevices` after permission is granted — ids are not readable before
+that.
+
+getUserMedia rejections are translated by `DOMException.name`, not message:
+a refused permission says how to un-refuse it, a camera in use by another app
+says so, and both point at upload as the way through.
+
+## Pausing and resuming a session — 2026-08-23
+
+Activating used to leave exactly one way out: **End**. That is the wrong tool
+when a service has not finished but a different activity needs the scanner —
+ending freezes the tally and makes the rest of the service a second occurrence.
+
+`OccurrenceStatus` gains `paused`, defined as precisely **"not `open`"**, and
+both behaviours the church asked for fall out of that one fact:
+
+- every liveness check already filters on `open`, so **the kiosk stops
+  scanning**;
+- `canActivate` filters on `open`, so **the slot is free** and another session
+  can be activated while the first stays paused.
+
+Neither is a special case anybody has to remember, which is the point.
+
+| Layer | Change |
+|---|---|
+| `lib/attendance/occurrenceResolver.ts` | `canResume()`, `resumeBlockedMessage()` — pure, unit-tested |
+| `lib/attendance/server.ts` | `pauseOccurrence`, `resumeOccurrence`; `resolveSessions()` now returns `{ session, paused }` from ONE query; `closeOccurrence` accepts a paused session |
+| `POST /api/occurrences/[id]/pause` `…/resume` | admin only; resume 409s with the blocking session attached |
+| `GET /api/attendance/active` | carries `paused: ActiveSession[]` alongside `session` |
+| scan + manual routes | a 423 now says *"First Service is paused"* rather than *"No session is open"* |
+| Services page, session bar, header pill, kiosk | all name a paused session instead of implying nothing is running |
+
+### What pausing is NOT
+
+**A small close.** Nothing is frozen: `present_count` is still computed from
+the rows at close, so attendance marked before the pause and after the resume
+belongs to the same occurrence and is counted once. Closing and re-activating
+would give the church two half-counts of one service and no way to add them up
+afterwards — that difference is the whole reason this is not just a button that
+calls close.
+
+A paused session **can be closed directly**, without being resumed first. A
+service that was paused and then simply finished is the ordinary way this ends,
+and re-arming the scanner for a moment to satisfy a state machine is not.
+
+Resuming **is** refused while something else is open, naming it — that would
+put two sessions on the scanner, which PRD §2.2 forbids.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **223 passed**, 4 skipped (was 214). 9 new on the resolver,
+  including the two that matter: a paused session does not block activation,
+  and a resume is refused while something else is open.
+- `npm run build` — 76 routes.
+
+### ⚠️ The schema change has NOT been applied
+
+`meeting_occurrences.status` must gain `paused`, and `paused_at` must be added.
+Both are in `scripts/setup-appwrite.ts`, and `ensureEnumAttribute` **widens an
+existing enum in place** rather than dropping and recreating it — so no
+occurrence row and no index is lost.
+
+It was not run, because a real service was live at the time and a schema change
+during one is not worth the risk. **Run `npm run setup:appwrite` once the
+service has ended**, then `npm run verify:appwrite`. Until it is run, Pause will
+fail against the live project with an Appwrite enum error — the code is ready,
+the column is not.

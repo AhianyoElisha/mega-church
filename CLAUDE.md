@@ -198,6 +198,31 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **One active occurrence, globally.** Enforced in
   `lib/attendance/server.ts::activateOccurrence`. A second activation while one
   is open is a 409, not a UI-hidden button.
+- **`paused` means exactly "not `open`", and that is the entire feature.**
+  Every liveness check already filters on `open`, so a paused session stops the
+  kiosk AND frees the single-active slot for another activity — both
+  consequences of the one status value. Never add a `filter(s => s !== 'paused')`
+  anywhere: the day someone writes one, pausing starts blocking activation
+  again and the reason it existed is gone.
+- **Pausing freezes NOTHING.** `present_count` is still computed from the rows
+  at close, so marks either side of a pause land in the SAME occurrence and are
+  counted once. Closing and re-activating instead gives the church two
+  half-counts of one service and no way to add them up. This is the whole
+  difference between pause and close, and it is why pause is not "close with a
+  nicer button".
+- **A paused session may be CLOSED directly, but resumed only when nothing else
+  is open.** Closing does not require a resume first — a service that was
+  paused and then finished is the ordinary case, and re-arming the scanner for
+  a moment to satisfy a state machine is not. Resuming while something else is
+  open is a 409 naming the blocker, because it would put two sessions on the
+  scanner.
+- **A paused session is invisible to every liveness check, so the UI must name
+  it.** The Services page lists it, the header pill says "Paused · First
+  Service" instead of "No session open", and the kiosk says the service is
+  paused rather than that none is open. Somebody told "no session is open"
+  during a paused service walks away; somebody told it is paused waits. The
+  hazard the wording guards against is a service nobody remembers they are
+  still in the middle of.
 - **Attendance is never gated by `home_service`.** Any active member may be
   marked at either service. Only `restricted` meetings gate, and only via
   `meeting_members`.
@@ -207,6 +232,26 @@ large type; body text is black. Never yellow text on white below 18pt.
   matcher ran and nobody matched. Every other failure throws
   `MatcherUnavailableError` and becomes a 503 the kiosk can explain.
 - **Never store raw fingerprint images.** Templates only, `xyt:<base64>`.
+- **A member photo can be TAKEN as well as uploaded, and upload never goes
+  away.** `navigator.mediaDevices` is undefined outside a secure context, which
+  is exactly how a kiosk PC on a church LAN is reached over plain http — so
+  `cameraAvailable()` is checked in an effect and the camera button is simply
+  not offered there. Both doors write through the same upload mutation, so a
+  photo behaves identically whichever way it arrived.
+- **The camera stream is stopped on close, on unmount, and before switching
+  cameras.** A `MediaStream` nobody stopped keeps the lens live and the
+  indicator light on after the dialog is gone, which reads to the person being
+  photographed as being recorded. The capture path also stops it the moment
+  there is a photo to review, rather than holding it open while somebody
+  decides.
+- **`playsInline` and `muted` on the capture `<video>` are load-bearing.**
+  Without both, iOS Safari takes the video fullscreen and the shutter button is
+  no longer on screen to press. Nothing errors; the feature is just unusable on
+  the phones most likely to be used for it.
+- **The captured photo is never mirrored.** The operator is photographing
+  somebody across a desk, not taking a selfie, so the self-view convention does
+  not apply — and a face stored mirrored is a face an usher compares against
+  backwards on the kiosk card.
 - **`flipRows()` in `lib/biometrics/webusb.ts` is load-bearing.** Removing it
   makes every tablet stop recognising everyone. The comment explains why.
 - **The FS81's IN endpoint outlives the page.** A frame is 300 packets; a

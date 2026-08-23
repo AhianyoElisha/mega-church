@@ -45,6 +45,15 @@ Service can be activated" true, and it is enforced in
 `lib/attendance/server.ts::activateOccurrence` — not by the greyed-out button
 on the Services page, which is only a courtesy.
 
+A session can also be **paused**, which is the way out when a service has not
+ended but something else has to take attendance in the middle of it. Pausing
+stops the kiosks and frees the slot, so another session can be activated while
+the first stays paused; **Resume** puts it back on the scanner. Nothing is
+frozen by a pause — marks either side of it belong to the same session and are
+counted once, which is exactly what ending and re-activating would fail to do.
+Resuming is refused while something else is open, and a paused session can be
+ended directly without resuming first.
+
 **An unauthorised member is still identified.** For a restricted meeting,
 identification runs against the roster first and then against every active
 member, so somebody who is not on the list is recognised by name and told why
@@ -264,6 +273,16 @@ wrong token. The reply distinguishes the two failures that matter:
 
 Until a scheduler is wired, an admin can press **Send notification now** on
 `/birthdays`. That path is the same run and is equally idempotent.
+
+## Member photos
+
+Two ways in: **Take photo**, which uses the device camera, and **Upload**.
+
+The camera needs a secure context — HTTPS or localhost. Over plain `http://` on
+a LAN, `navigator.mediaDevices` does not exist and the button is simply not
+shown; upload works everywhere and is never removed. Nothing is mirrored: the
+photo is taken across a desk, not as a selfie, and an usher compares the stored
+face against the real one on the kiosk card.
 
 ## Fingerprint hardware
 
