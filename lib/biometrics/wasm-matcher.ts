@@ -28,7 +28,12 @@ import 'server-only';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
-import { pickBestCandidate, type CandidateScore, type MatchDecision } from './matching';
+import {
+  decisiveScore,
+  pickBestCandidate,
+  type CandidateScore,
+  type MatchDecision,
+} from './matching';
 import { decodeXytTemplate } from './codec';
 import type { MatcherCandidate } from './types';
 
@@ -88,12 +93,23 @@ export async function isWasmMatcherAvailable(): Promise<boolean> {
 }
 
 /**
- * Score `probe` against every template in `candidates` and apply the same
- * threshold rule the bridge applies.
+ * Score `probe` against `candidates` and apply the same threshold rule the
+ * bridge applies.
  *
- * Deliberately reuses `pickBestCandidate` rather than reimplementing "highest
- * score at or above threshold" — the bridge, the browser and this module must
- * not merely agree today, they must be the same rule.
+ * Two exits, and the difference between them is the whole latency story:
+ *
+ *   DECISIVE   a score at or above `decisiveScore(threshold)` ends the search
+ *              immediately. On the live gallery that is where the median
+ *              genuine scan (146) sits and where no impostor has ever been
+ *              observed (max 27). See the note in matching.ts.
+ *   ARGMAX     anything less and every candidate is scored, then
+ *              `pickBestCandidate` picks the highest — byte for byte the rule
+ *              that shipped before, so a marginal match is decided exactly as
+ *              it always was.
+ *
+ * `pickBestCandidate` is still the only place "highest at or above threshold"
+ * is written down: the bridge, the browser and this module must not merely
+ * agree today, they must be the same rule.
  */
 export async function matchWithWasm(
   probeXyt: string,
@@ -103,9 +119,12 @@ export async function matchWithWasm(
   const M = await loadModule();
   if (!M) throw new Error('NBIS wasm artifact not found on this server');
 
+  const decisive = decisiveScore(threshold, process.env.CHURCH_BIOMETRIC_DECISIVE);
   const probePtr = M.stringToNewUTF8(probeXyt);
   try {
     const scores: CandidateScore[] = [];
+    let decided: CandidateScore | null = null;
+
     for (const candidate of candidates) {
       let best = 0;
       for (const wire of candidate.templates) {
@@ -121,9 +140,18 @@ export async function matchWithWasm(
         } finally {
           M._free(ptr);
         }
+        // This member is already identified beyond doubt; their remaining
+        // impressions cannot change the answer, only the clock.
+        if (best >= decisive) break;
       }
       scores.push({ member_id: candidate.member_id, score: best });
+      if (best >= decisive) {
+        decided = { member_id: candidate.member_id, score: best };
+        break;
+      }
     }
+
+    if (decided) return { member_id: decided.member_id, score: decided.score };
     return pickBestCandidate(scores, threshold);
   } finally {
     M._free(probePtr);

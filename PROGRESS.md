@@ -681,3 +681,94 @@ Afterwards: 5 occurrence rows, all `closed`; 2 meetings, both real services;
 The run needed an admin session, and `SEED_ADMIN_PASSWORD` is still stale (see
 the open items), so it used a throwaway `e2e.admin@` account created through the
 server API key and **deleted afterwards** — no live login was touched.
+
+## Fingerprint identification was taking ~2.8 seconds — 2026-08-23
+
+The church reported check-in as too slow. Measured against the **live** gallery
+(99 members, 1,188 templates) before changing anything:
+
+| | |
+|---|---|
+| one identification | **2,799 ms** |
+| gallery fetch, cold | **5,876 ms**, and cached for only 60s |
+
+So a member stood at the scanner for ~2.8 seconds normally, and for ~8.7
+seconds once a minute when the cache had expired — with nothing on the kiosk to
+explain the difference. Both figures grow linearly with the congregation.
+
+### What the measurement killed
+
+The first hypothesis was that `decodeXytTemplate` re-validating every stored
+template on every scan (a per-line regex over ~1,188 templates) was the cost.
+**It was not.** Decoding once and reusing the wasm pointers came out at 1.0x —
+no improvement at all. bozorth3 itself is the whole bill, at ~3.2 ms per
+comparison × 1,188 comparisons.
+
+Worth writing down, because it is the obvious-looking optimisation and it is
+worthless.
+
+### What actually worked
+
+| Change | Effect |
+|---|---|
+| Stop on a **decisive** score instead of always taking the argmax | 1.9x |
+| **+ score the people who have not checked in yet first** | **4.3x** |
+
+They only work together: ordering alone buys nothing, because argmax has to
+look at everything anyway. It is the early exit that turns a good ordering into
+time saved.
+
+**2,799 ms → 646 ms**, measured through the shipping code path. All ten sampled
+scans named the same member before and after.
+
+### The honest cost
+
+Argmax over the whole gallery is the only rule that cannot, even in principle,
+be beaten by a candidate that was never scored. Exiting early trades that for
+speed, so the bar is set where an impostor realistically cannot reach: **twice
+the threshold** (66 by default), against a corpus where impostors scored 3-27
+and genuine pairs had a median of 84.
+
+On the live sample, genuine scans scored min 49 / median 146 / max 283. The one
+at 49 does **not** clear the bar — so that scan falls through to a full argmax
+and is decided exactly as it is today: slower, and correct. Failing to be
+decisive costs time, never accuracy, which is the direction this has to fail in.
+
+`CHURCH_BIOMETRIC_DECISIVE=9999` disables the early exit and restores exact
+argmax semantics. That is the escape hatch if a false accept is ever traced
+here.
+
+### The gallery-fetch cliff
+
+`invalidateCandidateCache()` is already called on every write that changes the
+gallery, so the TTL was never the freshness mechanism — only a backstop. It is
+now 5 minutes rather than 60 seconds, and **expiry serves the stale copy while
+refreshing underneath**, so no scan waits for a fetch.
+
+Explicit invalidation still DROPS the entry, deliberately: enrol-then-test is a
+real flow and a member just enrolled has to match on the very next press.
+
+`warmCandidateCache()` now runs on activate and on resume, so the first member
+of a service does not pay the fetch at the worst possible moment.
+
+### Not done, and the bigger lever
+
+`match_templates()` in `tools/nbis-wasm/src/nbis_wasm.c` re-parses **both**
+templates on every call — so the probe is parsed and analysed 1,188 times per
+scan, identically. Splitting it so the probe is prepared once per scan and each
+gallery template once per gallery load would cut the remaining time
+substantially **and preserve scores exactly**, since it is the same algorithm
+with the redundant work removed.
+
+It needs an emscripten rebuild of the wasm, and this machine has neither `emcc`
+nor Docker, and the NBIS sources are not vendored (`setup.sh` fetches them). So
+it is the obvious next step, not a skipped one.
+
+### One pre-existing thing the benchmark surfaced
+
+Under leave-one-out, **9 of 10** sampled members were identified correctly —
+the same 9 before and after, so this is not caused by these changes. One
+member's fresh press does not identify them at the current threshold. That is a
+false reject, and it is worth investigating separately against a wider corpus
+(the threshold note in `lib/biometrics/matching.ts` already flags that the
+calibration corpus is small).

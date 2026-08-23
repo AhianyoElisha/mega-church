@@ -248,13 +248,78 @@ export async function deleteTemplatesForFinger(
 // lib/services/biometricService.ts — see the note there on why an unauthorised
 // person must still be identified.
 
-const CANDIDATE_CACHE_TTL_MS = 60_000
+/**
+ * How long a loaded gallery is served before it is refreshed.
+ *
+ * Five minutes, not one, and the reason it can be this long is that every write
+ * that changes the gallery calls `invalidateCandidateCache()` explicitly —
+ * enrolling, deleting a template, deleting a member, flipping a member
+ * inactive. The TTL is the backstop, not the freshness mechanism.
+ *
+ * It used to be 60s, and the cost was measured rather than guessed: fetching
+ * the live gallery (99 members, 1,188 templates) takes **5.7 seconds**. At a
+ * 60-second TTL that bill landed on one unlucky member every minute, who stood
+ * at the scanner for eight seconds while the other fifty-nine got sub-second
+ * answers — and nothing on the kiosk could explain why.
+ */
+const CANDIDATE_CACHE_TTL_MS = 5 * 60_000
 
 /** Keyed by scope: `all` or `meeting:<id>`. */
 const candidateCache = new Map<string, { at: number; data: MatcherCandidate[] }>()
+/** Refreshes in flight, so a burst of scans triggers ONE re-fetch, not twenty. */
+const refreshing = new Map<string, Promise<MatcherCandidate[]>>()
 
 export function invalidateCandidateCache(): void {
   candidateCache.clear()
+  refreshing.clear()
+}
+
+/**
+ * Serve what we have, refresh underneath.
+ *
+ * A gallery that has aged past its TTL is still the right answer for the next
+ * few hundred milliseconds — the alternative is making somebody wait 5.7
+ * seconds to be told something the stale copy already knew. So an expired entry
+ * is returned immediately and a refresh runs in the background.
+ *
+ * Note the asymmetry with `invalidateCandidateCache`, and it is deliberate:
+ * expiry serves stale, but an explicit invalidation DROPS the entry so the next
+ * scan blocks on a fresh load. Enrol-then-immediately-test is a real flow, and
+ * a member who has just been enrolled must be matchable on the very next press.
+ */
+async function cached(
+  key: string,
+  maxAge: number,
+  load: () => Promise<MatcherCandidate[]>,
+): Promise<MatcherCandidate[]> {
+  const hit = candidateCache.get(key)
+  if (hit && Date.now() - hit.at < maxAge) return hit.data
+
+  if (hit) {
+    if (!refreshing.has(key)) {
+      const job = load()
+        .then((data) => {
+          candidateCache.set(key, { at: Date.now(), data })
+          return data
+        })
+        .catch(() => hit.data) // keep serving the stale copy; try again later
+        .finally(() => refreshing.delete(key))
+      refreshing.set(key, job)
+    }
+    return hit.data
+  }
+
+  // Nothing cached at all — this one has to wait.
+  const existing = refreshing.get(key)
+  if (existing) return existing
+  const job = load()
+    .then((data) => {
+      candidateCache.set(key, { at: Date.now(), data })
+      return data
+    })
+    .finally(() => refreshing.delete(key))
+  refreshing.set(key, job)
+  return job
 }
 
 function groupTemplates(docs: BiometricTemplateDoc[]): MatcherCandidate[] {
@@ -336,13 +401,9 @@ export async function loadAllCandidateTemplates(
   databases: Databases,
   opts: { maxAgeMs?: number } = {},
 ): Promise<MatcherCandidate[]> {
-  const maxAge = opts.maxAgeMs ?? CANDIDATE_CACHE_TTL_MS
-  const hit = candidateCache.get('all')
-  if (hit && Date.now() - hit.at < maxAge) return hit.data
-
-  const data = await templatesForMembers(databases, await activeMemberIds(databases))
-  candidateCache.set('all', { at: Date.now(), data })
-  return data
+  return cached('all', opts.maxAgeMs ?? CANDIDATE_CACHE_TTL_MS, async () =>
+    templatesForMembers(databases, await activeMemberIds(databases)),
+  )
 }
 
 /** A restricted meeting's roster — the small, fast, correct gallery. */
@@ -351,12 +412,29 @@ export async function loadCandidatesForMeeting(
   meetingId: string,
   opts: { maxAgeMs?: number } = {},
 ): Promise<MatcherCandidate[]> {
-  const key = `meeting:${meetingId}`
-  const maxAge = opts.maxAgeMs ?? CANDIDATE_CACHE_TTL_MS
-  const hit = candidateCache.get(key)
-  if (hit && Date.now() - hit.at < maxAge) return hit.data
+  return cached(
+    `meeting:${meetingId}`,
+    opts.maxAgeMs ?? CANDIDATE_CACHE_TTL_MS,
+    async () => templatesForMembers(databases, await rosterMemberIds(databases, meetingId)),
+  )
+}
 
-  const data = await templatesForMembers(databases, await rosterMemberIds(databases, meetingId))
-  candidateCache.set(key, { at: Date.now(), data })
-  return data
+/**
+ * Load the gallery ahead of the first scan.
+ *
+ * Called when a session is activated or resumed. Without it the FIRST member of
+ * the service pays the whole 5.7-second fetch while standing at the scanner,
+ * which is both the worst possible moment and the one someone always notices.
+ *
+ * Fire-and-forget on purpose: activation must not fail, or even wait, because
+ * the gallery was slow to load.
+ */
+export function warmCandidateCache(
+  databases: Databases,
+  scope: { meeting_id: string; restricted: boolean },
+): void {
+  void loadAllCandidateTemplates(databases).catch(() => {})
+  if (scope.restricted) {
+    void loadCandidatesForMeeting(databases, scope.meeting_id).catch(() => {})
+  }
 }

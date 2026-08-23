@@ -17,7 +17,7 @@ import { ID, Query, type Databases, type Models } from 'node-appwrite'
 
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 import { getBiometricService } from '@/lib/services/biometricService'
-import { rosterMemberIds } from '@/lib/biometrics/server'
+import { rosterMemberIds, warmCandidateCache } from '@/lib/biometrics/server'
 import { fullName, type Member } from '@/lib/members/types'
 import type {
   ActiveSession,
@@ -323,6 +323,13 @@ export async function activateOccurrence(
   )
 
   invalidateActiveSession()
+  // Start loading the gallery NOW, so the first member of the service does not
+  // stand at the scanner paying for it. Fire-and-forget: activation must not
+  // wait on, or fail because of, a slow fetch.
+  warmCandidateCache(databases, {
+    meeting_id: meeting.$id,
+    restricted: meeting.restricted,
+  })
   const occurrence = occurrenceDocToOccurrence(doc as Models.Document & Record<string, unknown>)
   const roster_size = meeting.restricted
     ? (await rosterMemberIds(databases, meeting.$id)).length
@@ -503,14 +510,19 @@ export async function resumeOccurrence(
   invalidateActiveSession()
 
   void resumedBy
-  return {
-    ok: true,
-    session: await hydrate(
-      databases,
-      occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
-    ),
-  }
+  const session = await hydrate(
+    databases,
+    occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
+  )
+  // Same reason as activation: the scanner is about to be live again, and the
+  // gallery may have aged out during the pause.
+  warmCandidateCache(databases, {
+    meeting_id: session.meeting.$id,
+    restricted: session.meeting.restricted,
+  })
+  return { ok: true, session }
 }
+
 
 async function loadMeetingName(databases: Databases, meetingId: string): Promise<string | null> {
   try {
@@ -604,6 +616,9 @@ async function resolveAndRecord(
 
   const already = await existingRecord(databases, session.occurrence.$id, member.$id)
   if (already) {
+    // The database says they are marked; teach the ordering hint, which may be
+    // a fresh instance that has seen nothing yet.
+    noteMarked(session.occurrence.$id, member.$id)
     return { kind: 'already_marked', member: summary, marked_at: already.marked_at }
   }
 
@@ -635,10 +650,17 @@ async function resolveAndRecord(
     // duplicate guarantee real. Losing that race means somebody else marked
     // them a millisecond ago — which is `already_marked`, not an error.
     if (e && typeof e === 'object' && (e as { code?: number }).code === 409) {
+      // They ARE marked, so the ordering hint should know it even though this
+      // path did not write the row.
+      noteMarked(session.occurrence.$id, member.$id)
       return { kind: 'already_marked', member: summary, marked_at }
     }
     throw e
   }
+
+  // Ordering hint only — they now go to the back of the gallery for subsequent
+  // scans at this occurrence. Never read as truth; see `markedByOccurrence`.
+  noteMarked(session.occurrence.$id, member.$id)
 
   return {
     kind: 'marked',
@@ -646,6 +668,31 @@ async function resolveAndRecord(
     marked_at,
     sequence: await countRecords(databases, session.occurrence.$id),
   }
+}
+
+/**
+ * Who has already been marked at an occurrence, for ORDERING only.
+ *
+ * In memory and deliberately not authoritative. It is seeded by nothing and
+ * grows as this process marks people, which means a freshly-started instance
+ * knows nobody and simply gets no speed-up — correct, just slower. That is the
+ * right failure mode for a hint: on a serverless deployment there is no shared
+ * memory to be wrong about, and every consequence of being wrong is measured in
+ * milliseconds rather than in a member being turned away.
+ *
+ * Never consult this to decide anything. `existingRecord` is the source of
+ * truth for "already marked", and it asks the database.
+ */
+const markedByOccurrence = new Map<string, Set<string>>()
+
+function markedSoFar(occurrenceId: string): string[] {
+  return [...(markedByOccurrence.get(occurrenceId) ?? [])]
+}
+
+function noteMarked(occurrenceId: string, memberId: string): void {
+  const set = markedByOccurrence.get(occurrenceId)
+  if (set) set.add(memberId)
+  else markedByOccurrence.set(occurrenceId, new Set([memberId]))
 }
 
 export async function processScan(
@@ -656,9 +703,18 @@ export async function processScan(
   // Scope the gallery to who could plausibly be here. For a restricted meeting
   // that is the roster (with a fall-through to everyone, so an unauthorised
   // person is still identified); for a service it is every active member.
+  //
+  // `already_marked` is an ordering hint, not a filter: whoever has checked in
+  // already goes last, because the next person at the sensor is almost never
+  // one of them. Mid-service that is half the congregation and it roughly
+  // halves the work before the genuine match turns up.
   const biometric = getBiometricService({
     databases,
-    scope: { meeting_id: session.meeting.$id, restricted: session.meeting.restricted },
+    scope: {
+      meeting_id: session.meeting.$id,
+      restricted: session.meeting.restricted,
+      already_marked: markedSoFar(session.occurrence.$id),
+    },
   })
 
   const match = await biometric.match(req.fingerprint_data)

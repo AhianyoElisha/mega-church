@@ -231,6 +231,35 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **`null` from `BiometricService.match()` means exactly one thing:** the
   matcher ran and nobody matched. Every other failure throws
   `MatcherUnavailableError` and becomes a 503 the kiosk can explain.
+- **Identification stops early on a DECISIVE score, and only then.** Scoring
+  every template and taking the argmax cost **2,799 ms per scan** on the live
+  gallery (99 members, 1,188 templates) — measured, not estimated. A score at
+  or above `decisiveScore(threshold)` (2x the threshold) ends the search;
+  anything less still falls through to the full argmax and is decided exactly
+  as before. Failing to be decisive costs TIME, never accuracy — that is the
+  direction this must fail in. `CHURCH_BIOMETRIC_DECISIVE=9999` disables it and
+  restores exact argmax, which is the escape hatch if a false accept is ever
+  traced here.
+- **`orderByLikelihood` ORDERS the gallery, it never filters it.** Members
+  already marked at this occurrence go last, because the next person at the
+  sensor is almost never one of them. They must stay in the gallery: somebody
+  who scans twice has to be identified so the kiosk can say "already checked
+  in" BY NAME rather than "not recognised" (PRD §4). Ordering only pays off
+  together with the early exit — argmax looks at everything regardless.
+- **`already_marked` on the matcher scope is a HINT and may be stale or empty.**
+  It lives in process memory, so a fresh serverless instance knows nobody and
+  simply gets no speed-up. Never read it to decide anything; `existingRecord`
+  asks the database and is the source of truth.
+- **The candidate cache serves STALE on expiry and DROPS on invalidation**, and
+  the asymmetry is deliberate. Fetching the live gallery takes **5.7 seconds**;
+  at the old 60s TTL that bill landed on one member a minute, who stood there
+  for eight seconds with nothing on screen to explain it. Expiry now serves the
+  stale copy and refreshes underneath. An explicit `invalidateCandidateCache()`
+  still drops the entry, because enrol-then-immediately-test is a real flow and
+  a member just enrolled must match on the very next press.
+- **`warmCandidateCache()` runs on activate and on resume.** Without it the
+  FIRST member of the service pays the whole gallery fetch, at the worst
+  possible moment and the one everybody notices.
 - **Never store raw fingerprint images.** Templates only, `xyt:<base64>`.
 - **A member photo can be TAKEN as well as uploaded, and upload never goes
   away.** `navigator.mediaDevices` is undefined outside a secure context, which
@@ -316,6 +345,7 @@ NEXT_PUBLIC_APPWRITE_PROJECT_ID
 NEXT_PUBLIC_CHURCH_BRIDGE_URL    # optional, default http://127.0.0.1:7788
 CHURCH_BIOMETRIC_MATCHER_URL     # optional — set on a PC kiosk running the bridge
 CHURCH_BIOMETRIC_THRESHOLD       # optional, default 33
+CHURCH_BIOMETRIC_DECISIVE        # optional, default threshold x2 - see below
 CHURCH_WASM_MATCHER              # optional, "0" disables the in-process matcher
 
 NEXT_PUBLIC_VAPID_PUBLIC_KEY     # optional — without it, push is off and says so
