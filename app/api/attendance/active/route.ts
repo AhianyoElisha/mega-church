@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
-import { resolveActiveSession } from '@/lib/attendance/server'
+import { resolveSessions } from '@/lib/attendance/server'
 import type { ActiveSessionResponse } from '@/lib/meetings/types'
 
 /**
- * GET /api/attendance/active — the one open session, or null.
+ * GET /api/attendance/active — the one open session, plus anything paused.
  *
  * Open to every role: the kiosk polls it to know whether to arm the scanner,
  * ushers watch it, and admins see it in the header. Nothing here is sensitive
@@ -21,9 +21,9 @@ export async function GET() {
 
   const { databases } = createAdminClient()
   try {
-    const session = await resolveActiveSession(databases)
+    const { session, paused } = await resolveSessions(databases)
     return NextResponse.json<ActiveSessionResponse>(
-      { ok: true, session },
+      { ok: true, session, paused },
       { headers: { 'Cache-Control': 'private, no-store' } },
     )
   } catch (e) {

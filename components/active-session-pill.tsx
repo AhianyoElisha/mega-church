@@ -27,18 +27,31 @@ export default function ActiveSessionPill({ className }: { className?: string })
   }
 
   const session = data?.ok ? data.session : null
+  const paused = data?.ok ? data.paused : []
 
   if (!session) {
+    // A paused session is not open, but "No session open" would be a lie that
+    // reads as "nothing is running" — and the whole hazard of pausing is a
+    // service somebody forgets they are still in the middle of. Name it.
+    const first = paused[0]
     return (
       <Link
         href="/services"
+        title={first ? `Paused · ${first.meeting.name}` : undefined}
         className={clsx(
           className,
-          'inline-flex items-center gap-x-1.5 rounded-full bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700',
+          'inline-flex min-w-0 max-w-40 items-center gap-x-1.5 rounded-full bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 xl:max-w-56 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700',
         )}
       >
         <span aria-hidden className="size-1.5 rounded-full bg-neutral-400" />
-        No session open
+        {first ? (
+          <span className="truncate">
+            Paused · {first.meeting.name}
+            {paused.length > 1 ? ` +${paused.length - 1}` : ''}
+          </span>
+        ) : (
+          'No session open'
+        )}
       </Link>
     )
   }

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
-import { processScan, resolveActiveSession } from '@/lib/attendance/server'
+import { processScan, resolveSessions } from '@/lib/attendance/server'
 import { MatcherUnavailableError } from '@/lib/services/biometricService'
 import type { ScanRequest, ScanResponse } from '@/lib/attendance/types'
 
@@ -57,8 +57,11 @@ export async function POST(request: NextRequest) {
   const { databases } = createAdminClient()
 
   let session
+  let pausedName: string | null = null
   try {
-    session = await resolveActiveSession(databases)
+    const snapshot = await resolveSessions(databases)
+    session = snapshot.session
+    pausedName = snapshot.paused[0]?.meeting.name ?? null
   } catch (e) {
     return NextResponse.json<ScanResponse>(
       { ok: false, error: e instanceof Error ? e.message : 'Could not resolve the session.' },
@@ -66,8 +69,16 @@ export async function POST(request: NextRequest) {
     )
   }
   if (!session) {
+    // Paused and closed are both "not open" to this route, and both refuse.
+    // They are NOT the same thing to whoever is standing at the scanner, so the
+    // message distinguishes them — "wait" and "go away" are different answers.
     return NextResponse.json<ScanResponse>(
-      { ok: false, error: 'No session is open.' },
+      {
+        ok: false,
+        error: pausedName
+          ? `${pausedName} is paused. Check-in will start again when it is resumed.`
+          : 'No session is open.',
+      },
       { status: 423 },
     )
   }

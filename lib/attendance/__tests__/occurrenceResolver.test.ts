@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
   canActivate,
+  canResume,
   resolveOpenOccurrence,
   todayInAccra,
 } from '@/lib/attendance/occurrenceResolver'
 import type { MeetingOccurrence } from '@/lib/meetings/types'
 
-function occ(id: string, status: 'open' | 'closed'): MeetingOccurrence {
+function occ(id: string, status: 'open' | 'paused' | 'closed'): MeetingOccurrence {
   return {
     $id: id,
     meeting_id: `m-${id}`,
     occurrence_date: '2026-08-09',
     status,
     opened_at: '2026-08-09T08:00:00.000Z',
+    paused_at: status === 'paused' ? '2026-08-09T09:00:00.000Z' : null,
     closed_at: status === 'closed' ? '2026-08-09T10:00:00.000Z' : null,
     opened_by: 'admin@church',
     closed_by: null,
@@ -95,5 +97,58 @@ describe('canActivate', () => {
     // A Sunday with only one service is normal. A rule requiring the first
     // would be discovered at 9am on that Sunday.
     expect(canActivate(live, [])).toEqual({ ok: true })
+  })
+})
+
+// A paused session is running but off the scanner. Everything below is a
+// consequence of it simply not being `open` — none of it is a special case.
+describe('paused occurrences', () => {
+  it('is not the live session, so the kiosk sees none', () => {
+    expect(resolveOpenOccurrence([occ('a', 'paused')])).toEqual({ kind: 'none' })
+  })
+
+  it('does not count towards the two-open refusal', () => {
+    const result = resolveOpenOccurrence([occ('a', 'paused'), occ('b', 'open')])
+    expect(result).toEqual({ kind: 'open', occurrence: occ('b', 'open') })
+  })
+
+  // The whole point of pausing: it frees the slot so another activity can run.
+  it('does NOT block activating something else', () => {
+    expect(canActivate({ archived: false }, [occ('a', 'paused')])).toEqual({ ok: true })
+  })
+
+  it('still blocks nothing even when several are paused', () => {
+    expect(
+      canActivate({ archived: false }, [occ('a', 'paused'), occ('b', 'paused')]),
+    ).toEqual({ ok: true })
+  })
+})
+
+describe('canResume', () => {
+  it('resumes a paused session when nothing else is open', () => {
+    expect(canResume(occ('a', 'paused'), [])).toEqual({ ok: true })
+  })
+
+  it('ignores other PAUSED sessions — they hold no slot', () => {
+    expect(canResume(occ('a', 'paused'), [occ('b', 'paused')])).toEqual({ ok: true })
+  })
+
+  // Pausing First Service to run a committee meeting is the point; resuming it
+  // while that meeting is still open would put two on the scanner at once.
+  it('refuses while another session is open, and names the blocker', () => {
+    const blocking = occ('b', 'open')
+    expect(canResume(occ('a', 'paused'), [blocking])).toEqual({
+      ok: false,
+      reason: 'already_open',
+      blocking,
+    })
+  })
+
+  it('refuses to resume something that is already open', () => {
+    expect(canResume(occ('a', 'open'), [])).toEqual({ ok: false, reason: 'not_paused' })
+  })
+
+  it('refuses to resume a closed session — that is a new occurrence', () => {
+    expect(canResume(occ('a', 'closed'), [])).toEqual({ ok: false, reason: 'not_paused' })
   })
 })

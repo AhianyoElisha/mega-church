@@ -25,7 +25,13 @@ import type {
   MeetingOccurrence,
 } from '@/lib/meetings/types'
 import { aggregateLive } from './liveStats'
-import { canActivate, resolveOpenOccurrence, todayInAccra } from './occurrenceResolver'
+import {
+  canActivate,
+  canResume,
+  resolveOpenOccurrence,
+  resumeBlockedMessage,
+  todayInAccra,
+} from './occurrenceResolver'
 import type {
   AttendanceRecord,
   AttendanceRecordPayload,
@@ -123,6 +129,10 @@ export function occurrenceDocToOccurrence(
     occurrence_date: String(d.occurrence_date ?? ''),
     status: (d.status as MeetingOccurrence['status']) ?? 'closed',
     opened_at: String(d.opened_at ?? ''),
+    // `|| null` and not `?? null`: Appwrite hands back an unset optional string
+    // as '', and an empty string here would render as a paused-at time of
+    // nothing rather than as "never paused".
+    paused_at: (d.paused_at as string | null) || null,
     closed_at: (d.closed_at as string | null) ?? null,
     opened_by: (d.opened_by as string | null) ?? null,
     closed_by: (d.closed_by as string | null) ?? null,
@@ -157,41 +167,27 @@ function recordDocToRecord(d: Models.Document & Record<string, unknown>): Attend
  * which the close path then reconciles.
  */
 const ACTIVE_TTL_MS = 10_000
-let activeCache: { at: number; value: ActiveSession | null } | null = null
+/**
+ * What is running right now: the one open session, and anything paused.
+ *
+ * The two travel together because they come from ONE query and answer one
+ * question. Every caller that wants to know whether the scanner is armed also
+ * needs to tell "nothing is running" apart from "First Service is paused" —
+ * splitting them would be a second poll for half an answer.
+ */
+export type SessionSnapshot = { session: ActiveSession | null; paused: ActiveSession[] }
+
+let activeCache: { at: number; value: SessionSnapshot } | null = null
 
 export function invalidateActiveSession(): void {
   activeCache = null
 }
 
-export async function resolveActiveSession(
+/** An occurrence plus its meeting and roster size. */
+async function hydrate(
   databases: Databases,
-  opts: { fresh?: boolean } = {},
-): Promise<ActiveSession | null> {
-  if (!opts.fresh && activeCache && Date.now() - activeCache.at < ACTIVE_TTL_MS) {
-    return activeCache.value
-  }
-
-  const docs = await listAll<Models.Document & Record<string, unknown>>(
-    databases,
-    COLLECTIONS.meeting_occurrences,
-    [Query.equal('status', 'open')],
-  )
-  const resolved = resolveOpenOccurrence(docs.map(occurrenceDocToOccurrence))
-
-  if (resolved.kind === 'multiple') {
-    // Refuse rather than guess. See occurrenceResolver.ts.
-    throw new Error(
-      `${resolved.occurrences.length} sessions are open at once ` +
-        `(${resolved.occurrences.map((o) => o.$id).join(', ')}). ` +
-        'Close all but one before recording attendance.',
-    )
-  }
-  if (resolved.kind === 'none') {
-    activeCache = { at: Date.now(), value: null }
-    return null
-  }
-
-  const occurrence = resolved.occurrence
+  occurrence: MeetingOccurrence,
+): Promise<ActiveSession> {
   const meetingDoc = await databases.getDocument(
     DATABASE_ID,
     COLLECTIONS.meetings,
@@ -201,10 +197,60 @@ export async function resolveActiveSession(
   const roster_size = meeting.restricted
     ? (await rosterMemberIds(databases, meeting.$id)).length
     : 0
+  return { occurrence, meeting, roster_size }
+}
 
-  const value: ActiveSession = { occurrence, meeting, roster_size }
+export async function resolveSessions(
+  databases: Databases,
+  opts: { fresh?: boolean } = {},
+): Promise<SessionSnapshot> {
+  if (!opts.fresh && activeCache && Date.now() - activeCache.at < ACTIVE_TTL_MS) {
+    return activeCache.value
+  }
+
+  // Both statuses in ONE query. The kiosk polls this endpoint on a fast
+  // cadence, and a second round trip per poll to find paused sessions would be
+  // paid on every tick to answer "usually none".
+  const docs = await listAll<Models.Document & Record<string, unknown>>(
+    databases,
+    COLLECTIONS.meeting_occurrences,
+    [Query.equal('status', ['open', 'paused'])],
+  )
+  const occurrences = docs.map(occurrenceDocToOccurrence)
+  const resolved = resolveOpenOccurrence(occurrences)
+
+  if (resolved.kind === 'multiple') {
+    // Refuse rather than guess. See occurrenceResolver.ts.
+    throw new Error(
+      `${resolved.occurrences.length} sessions are open at once ` +
+        `(${resolved.occurrences.map((o) => o.$id).join(', ')}). ` +
+        'Close all but one before recording attendance.',
+    )
+  }
+
+  const paused: ActiveSession[] = []
+  for (const o of occurrences.filter((o) => o.status === 'paused')) {
+    try {
+      paused.push(await hydrate(databases, o))
+    } catch {
+      // Its meeting was deleted out from under it. A paused session nobody can
+      // name is not worth failing the whole endpoint over — the kiosk and the
+      // header both depend on this call answering.
+    }
+  }
+
+  const session = resolved.kind === 'open' ? await hydrate(databases, resolved.occurrence) : null
+  const value: SessionSnapshot = { session, paused }
   activeCache = { at: Date.now(), value }
   return value
+}
+
+/** Just the open one. The shape almost every caller wants. */
+export async function resolveActiveSession(
+  databases: Databases,
+  opts: { fresh?: boolean } = {},
+): Promise<ActiveSession | null> {
+  return (await resolveSessions(databases, opts)).session
 }
 
 // === Activate / close ======================================================
@@ -268,6 +314,7 @@ export async function activateOccurrence(
       occurrence_date: todayInAccra(now),
       status: 'open',
       opened_at: now.toISOString(),
+      paused_at: null,
       closed_at: null,
       opened_by: openedBy,
       closed_by: null,
@@ -303,7 +350,11 @@ export async function closeOccurrence(
   } catch {
     return { ok: false, error: 'That session no longer exists.' }
   }
-  if (occurrence.status !== 'open') {
+  // A PAUSED session may be closed directly. Requiring it to be resumed first
+  // would mean re-arming the scanner for a moment purely to satisfy a state
+  // machine, and a service that was paused and then simply finished is the
+  // ordinary way this ends.
+  if (occurrence.status === 'closed') {
     return { ok: false, error: 'That session is already closed.' }
   }
 
@@ -331,6 +382,142 @@ export async function closeOccurrence(
     ok: true,
     occurrence: occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
     present_count: records.length,
+  }
+}
+
+// === Pause / resume ========================================================
+
+export type PauseOutcome =
+  | { ok: true; session: ActiveSession }
+  | { ok: false; error: string; conflict?: ActiveSession }
+
+async function loadOccurrence(
+  databases: Databases,
+  occurrenceId: string,
+): Promise<MeetingOccurrence | null> {
+  try {
+    return occurrenceDocToOccurrence(
+      (await databases.getDocument(
+        DATABASE_ID,
+        COLLECTIONS.meeting_occurrences,
+        occurrenceId,
+      )) as Models.Document & Record<string, unknown>,
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Pause an open session: it stays running, but lets go of the scanner.
+ *
+ * The church's case is a service that has not ended while a different activity
+ * needs to take attendance. Ending the service would freeze its tally and turn
+ * the rest of it into a second occurrence with a second count; making the other
+ * activity wait is not an option either.
+ *
+ * Nothing is frozen here and no tally is written — `present_count` is still
+ * computed at close, from the rows, so attendance marked before the pause and
+ * after the resume lands in the SAME occurrence and is counted once.
+ */
+export async function pauseOccurrence(
+  databases: Databases,
+  occurrenceId: string,
+  pausedBy: string,
+): Promise<PauseOutcome> {
+  const occurrence = await loadOccurrence(databases, occurrenceId)
+  if (!occurrence) return { ok: false, error: 'That session no longer exists.' }
+
+  if (occurrence.status === 'closed') {
+    return { ok: false, error: 'That session has already ended.' }
+  }
+  if (occurrence.status === 'paused') {
+    return { ok: false, error: 'That session is already paused.' }
+  }
+
+  const updated = await databases.updateDocument(
+    DATABASE_ID,
+    COLLECTIONS.meeting_occurrences,
+    occurrenceId,
+    { status: 'paused', paused_at: new Date().toISOString() },
+  )
+  // Without this the kiosk keeps accepting scans for up to the cache TTL after
+  // the admin was told the session was paused.
+  invalidateActiveSession()
+
+  void pausedBy
+  return {
+    ok: true,
+    session: await hydrate(
+      databases,
+      occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
+    ),
+  }
+}
+
+/**
+ * Return a paused session to `open`.
+ *
+ * Refused while something else is open — that would put two sessions on the
+ * scanner at once, which is the one thing PRD §2.2 forbids. The refusal names
+ * the meeting in the way, because "end the committee meeting first" is
+ * actionable and "cannot resume" is not.
+ */
+export async function resumeOccurrence(
+  databases: Databases,
+  occurrenceId: string,
+  resumedBy: string,
+): Promise<PauseOutcome> {
+  const occurrence = await loadOccurrence(databases, occurrenceId)
+  if (!occurrence) return { ok: false, error: 'That session no longer exists.' }
+
+  // Fresh, not cached — this is the check the single-active invariant rests on,
+  // and a ten-second-old answer is exactly long enough to let two through.
+  const existing = await resolveActiveSession(databases, { fresh: true })
+  const check = canResume(occurrence, existing ? [existing.occurrence] : [])
+
+  if (!check.ok) {
+    if (check.reason === 'not_paused') {
+      return {
+        ok: false,
+        error:
+          occurrence.status === 'open'
+            ? 'That session is already running.'
+            : 'That session has ended and cannot be resumed. Activate it again instead.',
+      }
+    }
+    const wanted = (await loadMeetingName(databases, occurrence.meeting_id)) ?? 'that session'
+    return {
+      ok: false,
+      error: resumeBlockedMessage(existing!.meeting.name, wanted),
+      conflict: existing!,
+    }
+  }
+
+  const updated = await databases.updateDocument(
+    DATABASE_ID,
+    COLLECTIONS.meeting_occurrences,
+    occurrenceId,
+    { status: 'open', paused_at: null },
+  )
+  invalidateActiveSession()
+
+  void resumedBy
+  return {
+    ok: true,
+    session: await hydrate(
+      databases,
+      occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
+    ),
+  }
+}
+
+async function loadMeetingName(databases: Databases, meetingId: string): Promise<string | null> {
+  try {
+    const doc = await databases.getDocument(DATABASE_ID, COLLECTIONS.meetings, meetingId)
+    return meetingDocToMeeting(doc as Models.Document & Record<string, unknown>).name
+  } catch {
+    return null
   }
 }
 
