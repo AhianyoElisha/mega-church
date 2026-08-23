@@ -75,24 +75,24 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
   // naming it. The pages themselves also render read-only, because a button
   // that 403s is worse than no button.
   //
-  // Absent deliberately, and all for the same reason — they are consoles for
-  // DOING something rather than screens for reading data:
+  // `/services` and `/meetings` are here so a shepherd can see what is running
+  // and who is authorised for what — but EVERY control on those two pages is
+  // gated on the admin label, and `/meetings/new` bounces a non-admin back to
+  // the list. A prefix cannot express "this path but not that child", so that
+  // one redirect lives in the page.
   //
-  //   /sms        spends the church's money
-  //   /kiosk      an appliance that writes attendance
-  //   /services   activate, pause, end
-  //   /meetings   create, edit rosters
+  // Still absent, and for a reason a gate cannot fix:
   //
-  // What a shepherd would actually want from the last two — which sessions ran
-  // and who attended — is on /reports and /monitor, without a row of buttons
-  // that would refuse them. Widen this list if the church asks; the API for
-  // meetings and occurrences already admits a shepherd on GET.
+  //   /sms      a send console that spends the church's money
+  //   /kiosk    an appliance that writes attendance
   shepherd: [
     '/members',
     '/constituencies',
     '/bacentas',
     '/my-groups',
     '/birthdays',
+    '/meetings',
+    '/services',
     '/monitor',
     '/reports',
   ],

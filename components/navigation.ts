@@ -104,7 +104,7 @@ export const NAVIGATION: NavItem[] = [
     name: 'Services',
     href: '/services',
     icon: CalendarDaysIcon,
-    roles: ['admin'],
+    roles: ['admin', 'shepherd'],
     quick: true,
     group: 'gatherings',
   },
@@ -112,7 +112,7 @@ export const NAVIGATION: NavItem[] = [
     name: 'Meetings',
     href: '/meetings',
     icon: RectangleGroupIcon,
-    roles: ['admin'],
+    roles: ['admin', 'shepherd'],
     group: 'gatherings',
   },
   {

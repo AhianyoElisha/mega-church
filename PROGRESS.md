@@ -864,11 +864,10 @@ actions to fall out of date.
 
 Withheld on purpose, because they are not congregation data: raw fingerprint
 templates, the SMS log and balance, the kiosk provisioning pack, and the leader
-account list. `/services` and `/meetings` are withheld as PAGES for a different
-reason — they are consoles for activating, pausing and editing rosters, and what
-a shepherd would want from them (which sessions ran, who attended) is already on
-`/reports` and `/monitor` without a row of buttons that would refuse them. Their
-APIs admit a shepherd on GET, so widening that is a proxy + nav change.
+account list.
+
+Only `/sms` and `/kiosk` are closed as PAGES, for a reason no gate fixes: one
+spends the church's money and the other is an appliance that writes attendance.
 
 ### One real trap this surfaced
 
@@ -910,3 +909,38 @@ Worth ten minutes with the shepherd login once nothing is running.
 deleted during earlier verification. That is the account `SEED_LEADER_EMAIL`
 names, so `npm run e2e:groups` can now find its leader again — one of the two
 stale credentials flagged above is fixed. `SEED_ADMIN_PASSWORD` is still wrong.
+
+### `/services` and `/meetings` opened to shepherds — same day
+
+Initially scoped out because they are action consoles and half-gating a dozen
+buttons is how one gets missed. The church asked for them, so they were gated
+properly instead:
+
+| Page | What a shepherd sees | What is hidden |
+|---|---|---|
+| `/services` | which session is open or paused, present/expected counts, every service and meeting card | Activate, Pause, Resume, End, and the "end X first" hints, which only mean something to somebody who has buttons |
+| `/meetings` | the list, the open-session bar | Create a meeting |
+| `/meetings/[id]` | the meeting, its authorised roster, its past sessions | Activate/End, Save changes, Archive, Delete |
+| `/meetings/new` | — | redirects to `/meetings` |
+
+`MemberChecklist` gained a `readOnly` mode. A checkbox that still ticks with no
+Save button is a lie: it looks like an edit and is silently discarded on
+navigation. Read-only disables the inputs and drops the bulk select control.
+
+`/meetings/new` redirects rather than being excluded by the proxy, because a
+path prefix cannot express "this path but not that child". `POST /api/meetings`
+is what actually refuses them; the redirect is so nobody fills in a form that
+cannot be submitted.
+
+### Verified — 17 more checks, against a LIVE service
+
+Second Service was open at the time, which made the write checks worth more
+than usual. The session-mutating probes were aimed at a **closed** occurrence on
+purpose: if the role gate had been broken they would have failed on the state
+check instead of pausing a service that was actually running.
+
+- reads at 200: the meetings list, a meeting in detail with its roster, that
+  meeting's past sessions, live attendance stats, and the open session
+- writes at 403: create / edit roster / archive / delete a meeting, activate,
+  **pause, resume and end** a session
+- and the running session was confirmed **untouched** afterwards

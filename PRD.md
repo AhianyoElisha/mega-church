@@ -553,12 +553,17 @@ shepherd-proof the moment it is written, because the default is refusal.
 
 Three reads are deliberately withheld, because they are not congregation data:
 raw fingerprint templates (`/api/biometrics/templates`), the SMS log and
-balance, and the kiosk provisioning pack. `/services` and `/meetings` are
-withheld as PAGES for a different reason — they are consoles for activating,
-pausing and editing, and what a shepherd would want from them (which sessions
-ran, who attended) is on `/reports` and `/monitor` without a row of buttons
-that would refuse them. Their APIs already admit a shepherd on GET, so widening
-this is a proxy and navigation change if the church asks.
+balance, and the kiosk provisioning pack.
+
+A shepherd DOES see `/services` and `/meetings` — what is running, and who is
+authorised for which meeting, is data. Every control on those two pages is
+gated on the admin label, and the roster checklist renders disabled rather than
+letting a reader tick boxes that will never save. `/meetings/new` redirects a
+non-admin back to the list, because a path prefix cannot express "this page but
+not that child".
+
+Only `/sms` and `/kiosk` remain closed, for a reason no gate fixes: one spends
+the church's money and the other is an appliance that writes attendance.
 
 ### 5.1 Why `leader` is one label and not two
 

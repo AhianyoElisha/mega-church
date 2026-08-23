@@ -349,6 +349,16 @@ large type; body text is black. Never yellow text on white below 18pt.
   read-only role could open a group page. Pages that offer writes to a head now
   test `canWrite` (admin OR leader) and keep `isAdmin` for admin-only controls;
   reusing `!isAdmin` for head-only UI hands a shepherd a button that 403s.
+- **A page a reader can open must gate its CONTROLS, not rely on the API.** The
+  API refusing is the enforcement; the gate is so nobody is offered a button
+  that answers 403. `/services`, `/meetings` and `/meetings/[id]` each carry a
+  `canAct` test for this reason, and `MemberChecklist` takes `readOnly` — a
+  checkbox that still ticks with no Save button is a lie, because it looks like
+  an edit and is discarded on navigation.
+- **`/meetings/new` redirects a non-admin to `/meetings`.** A proxy prefix
+  cannot express "this path but not that child", so the one page that has no
+  read-only meaning bounces in the page itself. `POST /api/meetings` is what
+  actually refuses them.
 - **Cascades are manual.** Deleting a member means deleting their
   `biometric_templates`, `meeting_members`, `bacenta_members` and
   `attendance_records` first. Deleting a constituency means clearing
