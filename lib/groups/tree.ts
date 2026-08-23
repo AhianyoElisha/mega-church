@@ -155,3 +155,187 @@ export function headsAnything(
     bacentas.some((b) => b.head_user_id === userId)
   )
 }
+
+/**
+ * Narrow a registration submitted by a group HEAD down to what they may write.
+ *
+ * A head registering a member is the one place where somebody who is otherwise
+ * read-only creates a row, so the boundary is stated once, here, as a function
+ * of its arguments — the route has a database handle and a session and is the
+ * wrong place to be reasoning about this.
+ *
+ * Three refusals, and each is a specific failure that would otherwise be silent:
+ *
+ *   no constituency held  a bacenta-only head has no basis for deciding where
+ *                         anybody LIVES, and a member registered with no
+ *                         constituency lands in the unassigned pool where a
+ *                         second head may claim them.
+ *   constituency omitted  REFUSED, never defaulted to "their first one" — the
+ *                         same rule as `/api/reports/export` (CLAUDE.md). A
+ *                         head of two constituencies who forgot to choose must
+ *                         be asked, not guessed at; the guess is invisible
+ *                         afterwards because the member simply appears in the
+ *                         wrong roster.
+ *   a foreign group       filing somebody into a neighbour's constituency, or
+ *                         into a choir they do not run, is exactly the write
+ *                         `onlyUnassigned` exists to prevent on the bulk
+ *                         assigner. Same boundary, different door.
+ *
+ * An admin never comes through here: they may file anyone anywhere.
+ */
+export type HeadRegistrationScope =
+  | { ok: true; constituency_id: string; bacenta_ids: string[] }
+  | { ok: false; error: string; status: 400 | 403 }
+
+export function headRegistrationScope(
+  input: { constituency_id?: unknown; bacenta_ids?: readonly string[] },
+  heads: { constituencies: readonly string[]; bacentas: readonly string[] },
+): HeadRegistrationScope {
+  if (heads.constituencies.length === 0) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        'You do not head a constituency, so there is nowhere to register this member. ' +
+        'Ask an administrator to register them.',
+    }
+  }
+
+  const constituencyId =
+    typeof input.constituency_id === 'string' && input.constituency_id.length > 0
+      ? input.constituency_id
+      : null
+  if (!constituencyId) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Choose which of your constituencies this member lives in.',
+    }
+  }
+  if (!heads.constituencies.includes(constituencyId)) {
+    return { ok: false, status: 403, error: 'You do not head that constituency.' }
+  }
+
+  const bacentaIds = [...new Set(input.bacenta_ids ?? [])]
+  const foreign = bacentaIds.filter((id) => !heads.bacentas.includes(id))
+  if (foreign.length > 0) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        'You can only put a new member into a bacenta you head. ' +
+        'Ask the head of that bacenta, or an administrator, to add them.',
+    }
+  }
+
+  return { ok: true, constituency_id: constituencyId, bacenta_ids: bacentaIds }
+}
+
+/**
+ * Narrow an EDIT submitted by a group head down to what they may change.
+ *
+ * The sibling of `headRegistrationScope`, and the differences are the point.
+ * Registering happens before the member exists, so the head supplies
+ * everything; editing happens to a member who already has answers, some of
+ * them put there by an admin or by another head. So this function is mostly
+ * about what it must NOT let a head overwrite.
+ *
+ * Scope is wider here than on registration, deliberately. A head may edit
+ * anyone in a constituency OR a bacenta they head — "their own members" in the
+ * plain sense, and the same set their group page already shows them in full.
+ * (Registering stays constituency-only, because a bacenta head has no basis for
+ * saying where somebody LIVES.)
+ *
+ * Three refusals, each naming the field rather than quietly dropping it. A
+ * silent strip is how a head comes away believing they changed something:
+ *
+ *   status            flipping somebody `inactive` removes them from the
+ *                     matcher's gallery church-wide.
+ *   sms_template_id   picks which text the church pays to send.
+ *   constituency_id   MOVING a member is an admin's job — it is the write
+ *                     `onlyUnassigned` blocks on the bulk assigner, arriving
+ *                     through a different door. Resending the value it already
+ *                     has is not a move and is accepted, because the shared
+ *                     form always sends the field.
+ */
+export type HeadEditScope =
+  | { ok: true; fields: Record<string, unknown>; bacenta_ids: string[] | undefined }
+  | { ok: false; error: string; status: 400 | 403 }
+
+export function headEditScope(
+  input: { fields: Record<string, unknown>; bacenta_ids: string[] | undefined },
+  member: { constituency_id: string | null; bacenta_ids: readonly string[] },
+  heads: { constituencies: readonly string[]; bacentas: readonly string[] },
+): HeadEditScope {
+  const inScope =
+    (member.constituency_id !== null && heads.constituencies.includes(member.constituency_id)) ||
+    member.bacenta_ids.some((id) => heads.bacentas.includes(id))
+  if (!inScope) {
+    return { ok: false, status: 403, error: 'That member is not in a group you head.' }
+  }
+
+  const fields = { ...input.fields }
+
+  if ('status' in fields) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        'Only an administrator can make a member active or inactive. ' +
+        'An inactive member stops being recognised by the scanner.',
+    }
+  }
+  if ('sms_template_id' in fields) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'Only an administrator can change which birthday message a member is sent.',
+    }
+  }
+  if ('constituency_id' in fields) {
+    if (fields.constituency_id !== member.constituency_id) {
+      return {
+        ok: false,
+        status: 403,
+        error:
+          'Moving a member to a different constituency is an administrator\u2019s job. ' +
+          'Everything else on this form you can change yourself.',
+      }
+    }
+    // A no-op the form sent because it always sends it. Dropped rather than
+    // written, so an edit of a phone number is a one-field update.
+    delete fields.constituency_id
+  }
+
+  return {
+    ok: true,
+    fields,
+    bacenta_ids:
+      input.bacenta_ids === undefined
+        ? undefined
+        : headBacentaMerge(input.bacenta_ids, member.bacenta_ids, heads.bacentas),
+  }
+}
+
+/**
+ * What a head's bacenta tick-list actually means for a member's FULL list.
+ *
+ * The form sends the complete answer for the boxes it drew, and a head is only
+ * ever shown the bacentas they head. Writing that list verbatim would remove
+ * the member from every OTHER bacenta — a constituency head correcting a phone
+ * number would silently take somebody out of the choir, which is the exact
+ * failure `readBacentaIds` returning `undefined` exists to prevent one level up.
+ *
+ * So the answer is a merge, not a replacement: memberships outside the head's
+ * reach are carried through untouched, and the head's ticks decide only the
+ * bacentas they run.
+ */
+export function headBacentaMerge(
+  submitted: readonly string[],
+  existing: readonly string[],
+  headed: readonly string[],
+): string[] {
+  const untouchable = existing.filter((id) => !headed.includes(id))
+  const chosen = submitted.filter((id) => headed.includes(id))
+  return [...new Set([...untouchable, ...chosen])]
+}

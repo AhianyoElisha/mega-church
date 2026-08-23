@@ -11,9 +11,12 @@ import { invalidateCandidateCache } from '@/lib/biometrics/server'
 import {
   bacentaIdsForMember,
   constituencyExists,
+  getConstituency,
+  leaderScope,
   setMemberBacentas,
   unknownBacentaIds,
 } from '@/lib/groups/server'
+import { headEditScope } from '@/lib/groups/tree'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 import type { MemberResponse } from '@/lib/members/types'
 import type { Models } from 'node-appwrite'
@@ -21,8 +24,15 @@ import type { Models } from 'node-appwrite'
 // Next 16: route params are async.
 type Ctx = { params: Promise<{ id: string }> }
 
+/**
+ * GET — one member, with their bacentas and the NAME of their constituency.
+ *
+ * A `leader` may read a member who is in a constituency or a bacenta they head:
+ * the same set their group page already shows them in full, so this adds no
+ * visibility, it only makes the details reachable one row at a time.
+ */
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole(['admin', 'usher'])
+  const auth = await requireRole(['admin', 'usher', 'leader'])
   if ('error' in auth) return auth.error
 
   const { id } = await params
@@ -32,10 +42,31 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
       databases.getDocument(DATABASE_ID, COLLECTIONS.members, id),
       bacentaIdsForMember(databases, id),
     ])
+    const member = memberDocToMember(doc as Models.Document & Record<string, unknown>)
+
+    if (auth.user.label === 'leader') {
+      const heads = await leaderScope(databases, auth.user.id)
+      const inScope =
+        (member.constituency_id !== null &&
+          heads.constituencies.some((c) => c.$id === member.constituency_id)) ||
+        bacenta_ids.some((b) => heads.bacentas.some((h) => h.$id === b))
+      if (!inScope) {
+        return NextResponse.json<MemberResponse>(
+          { ok: false, error: 'That member is not in a group you head.' },
+          { status: 403 },
+        )
+      }
+    }
+
+    const constituency = member.constituency_id
+      ? await getConstituency(databases, member.constituency_id)
+      : null
+
     return NextResponse.json<MemberResponse>({
       ok: true,
-      member: memberDocToMember(doc as Models.Document & Record<string, unknown>),
+      member,
       bacenta_ids,
+      constituency_name: constituency?.name ?? null,
     })
   } catch {
     return NextResponse.json<MemberResponse>(
@@ -45,9 +76,23 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   }
 }
 
+/**
+ * PATCH — correct a member's details.
+ *
+ * Admins, and a group HEAD for a member in a constituency or bacenta they head.
+ * A head who registers somebody and mistypes their phone number has to be able
+ * to fix it; sending that back through an admin is how the number stays wrong.
+ *
+ * What a head may NOT change is enforced by `headEditScope` and refused BY
+ * NAME rather than silently dropped, so nobody comes away believing an edit
+ * landed. Their bacenta ticks are MERGED, never written verbatim — see
+ * `headBacentaMerge`, and note that this is the same hazard as the
+ * `undefined` / `[]` rule a few lines down, one level deeper.
+ */
 export async function PATCH(request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole('admin')
+  const auth = await requireRole(['admin', 'leader'])
   if ('error' in auth) return auth.error
+  const isAdmin = auth.user.label === 'admin'
 
   const { id } = await params
   let body: unknown
@@ -80,14 +125,72 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 
   const { databases } = createAdminClient()
 
-  const constituencyId = validated.value.constituency_id
+  let fields = validated.value
+  let effectiveBacentaIds = bacentaIds
+
+  if (!isAdmin) {
+    // The member as they stand, because an edit is only meaningful against
+    // what is already there — the scope check, the "did you MOVE them"
+    // comparison and the bacenta merge all need the current row.
+    let current
+    try {
+      const [doc, currentBacentas] = await Promise.all([
+        databases.getDocument(DATABASE_ID, COLLECTIONS.members, id),
+        bacentaIdsForMember(databases, id),
+      ])
+      current = {
+        member: memberDocToMember(doc as Models.Document & Record<string, unknown>),
+        bacenta_ids: currentBacentas,
+      }
+    } catch {
+      return NextResponse.json<MemberResponse>(
+        { ok: false, error: 'No such member.' },
+        { status: 404 },
+      )
+    }
+
+    const heads = await leaderScope(databases, auth.user.id)
+    const narrowed = headEditScope(
+      { fields, bacenta_ids: bacentaIds },
+      {
+        constituency_id: current.member.constituency_id,
+        bacenta_ids: current.bacenta_ids,
+      },
+      {
+        constituencies: heads.constituencies.map((c) => c.$id),
+        bacentas: heads.bacentas.map((b) => b.$id),
+      },
+    )
+    if (!narrowed.ok) {
+      return NextResponse.json<MemberResponse>(
+        { ok: false, error: narrowed.error },
+        { status: narrowed.status },
+      )
+    }
+    fields = narrowed.fields
+    effectiveBacentaIds = narrowed.bacenta_ids
+
+    // The no-op `constituency_id` may have been dropped above, which can empty
+    // a request that looked non-empty to the check further up.
+    if (Object.keys(fields).length === 0 && effectiveBacentaIds === undefined) {
+      return NextResponse.json<MemberResponse>(
+        { ok: false, error: 'Nothing to update.' },
+        { status: 400 },
+      )
+    }
+  }
+
+  const constituencyId = fields.constituency_id
   if (typeof constituencyId === 'string' && !(await constituencyExists(databases, constituencyId))) {
     return NextResponse.json<MemberResponse>(
       { ok: false, error: 'That constituency no longer exists. Reload and pick another.' },
       { status: 400 },
     )
   }
-  if (bacentaIds !== undefined && (await unknownBacentaIds(databases, bacentaIds)).length > 0) {
+  if (
+    effectiveBacentaIds !== undefined &&
+    (await unknownBacentaIds(databases, effectiveBacentaIds)).length > 0
+  ) {
     return NextResponse.json<MemberResponse>(
       { ok: false, error: 'One of those bacentas no longer exists. Reload and try again.' },
       { status: 400 },
@@ -96,22 +199,22 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 
   try {
     const member =
-      Object.keys(validated.value).length > 0
-        ? await updateMember(databases, id, validated.value)
+      Object.keys(fields).length > 0
+        ? await updateMember(databases, id, fields)
         : memberDocToMember(
             (await databases.getDocument(DATABASE_ID, COLLECTIONS.members, id)) as Models.Document &
               Record<string, unknown>,
           )
-    if (bacentaIds !== undefined) {
-      await setMemberBacentas(databases, id, bacentaIds, auth.user.email)
+    if (effectiveBacentaIds !== undefined) {
+      await setMemberBacentas(databases, id, effectiveBacentaIds, auth.user.email)
     }
     // A member flipped to `inactive` must drop out of the matcher's gallery
     // immediately, not at the next 60s cache expiry.
-    if ('status' in validated.value) invalidateCandidateCache()
+    if ('status' in fields) invalidateCandidateCache()
     return NextResponse.json<MemberResponse>({
       ok: true,
       member,
-      bacenta_ids: bacentaIds ?? (await bacentaIdsForMember(databases, id)),
+      bacenta_ids: effectiveBacentaIds ?? (await bacentaIdsForMember(databases, id)),
     })
   } catch {
     return NextResponse.json<MemberResponse>(

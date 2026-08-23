@@ -78,8 +78,27 @@ through the backlog of people registered before any of this existed.
 
 ## Group heads
 
-A head signs in and sees **only** their own group's members, read-only: details,
-birthdays, and how often each has attended.
+A head signs in and sees **only** their own group's members: details, birthdays,
+and how often each has attended.
+
+They can also **register a new member** into a constituency they head — the
+button is on that constituency's page, and the form always files into that one
+group. It collects everything the full form does apart from three fields the
+church decides rather than the head (status, birthday wording, and which
+constituency), plus the photo on the screen that follows.
+
+They can also **correct a member's details** — click any row on their group's
+roster. That reaches anyone in a constituency *or* a bacenta they head, which is
+wider than registering on purpose: a bacenta head cannot say where somebody
+lives, but they can certainly fix a wrong phone number for one of their singers.
+Only the bacentas a head runs appear on that form, and saving it can never
+remove somebody from a bacenta the head cannot see.
+
+**Fingerprints are not part of any of it.** Enrolment stays with an admin, at
+the machine the scanner is plugged into. A member registered by a head can be
+marked present by hand straight away, and by the kiosk once someone has enrolled
+them. Moving anyone between groups, marking anyone inactive, deleting a member
+and creating groups are all still admin-only.
 
 Heads use the single `leader` label, never two. The same person frequently
 heads a constituency *and* a bacenta, and the label grants nothing by itself —

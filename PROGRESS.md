@@ -417,3 +417,105 @@ passed.
 leave no trace. Closing that means separating the mutex from the audit trail,
 a larger change to a working lock. Its quiet-day path keeps its row, so the
 common case is covered.
+
+## Constituency heads register members — 2026-08-23
+
+A head was read-only. They now have a third write, and it is the one the church
+asked for: **registering a new member into a constituency they head**, with
+every detail in PRD §1.1 except the three the church decides rather than the
+head. **Biometric enrolment is not part of it and is not reachable from it.**
+
+| Layer | Change |
+|---|---|
+| `lib/groups/tree.ts` | `headRegistrationScope()` — pure, the whole boundary in one function |
+| `POST /api/members` | `admin` → `admin \| leader`; a leader is narrowed by the above, then `status` and `sms_template_id` are FORCED |
+| `POST /api/members/[id]/photo` | `admin` → `admin \| leader`, gated on `canReadGroup` over the MEMBER's own constituency |
+| `/constituencies/[id]/register` | the head's front desk — one page, files into one group, photo on the screen after |
+| `components/member-form.tsx` | a `restrict` prop, so it is the same form minus what a head may not decide — not a second form that can drift |
+| `useBacentas` / `useSmsTemplates` | gained `enabled`, because both 403 a leader and a cached failure would put a broken page in front of them |
+
+### Why the constituency is refused rather than defaulted
+
+A head of two constituencies who does not say which one gets a 400, never
+"their first". It is the same rule `/api/reports/export` follows, for the same
+reason: a guessed constituency is invisible afterwards — the member simply
+turns up in the wrong roster and nobody knows to look.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **197 passed**, 4 skipped (was 186). 11 new, all on
+  `headRegistrationScope`: the positive case, both foreign-group refusals, the
+  omitted constituency, and a bacenta-only head, who is refused because they
+  have no basis for saying where anybody LIVES.
+- `npm run build` — 73 routes, including `/constituencies/[id]/register`.
+- Anonymous callers still get 401 from both widened routes, and the new page
+  307s to `/login` — it sits under the `/constituencies` prefix the proxy
+  already covers, so no matcher change was needed.
+
+### NOT verified — the live e2e could not run
+
+`scripts/e2e-groups.mjs` gained 13 checks for this (an omitted constituency, a
+neighbour's constituency, a foreign bacenta, the positive registration, both
+forced fields, phone normalisation through a head registration, and proof that
+a head still cannot enrol fingerprints or edit the member afterwards). **They
+have not been run.** `npm run e2e:groups` stops at the first step:
+
+    admin login failed (401): Invalid email or password
+
+`SEED_ADMIN_PASSWORD` in `.env.local` is no longer what the account holds —
+consistent with `seed:users` never resetting a password somebody has changed.
+Re-run the suite once the credential is corrected; the checks are written and
+`node --check` passes on the script, but "written" is not "proven", and this
+project has already been bitten once by treating those as the same thing.
+
+## Heads edit their own members too — 2026-08-23
+
+The door left shut above, opened in the same session. A head may now correct any
+member in a constituency **or** a bacenta they head.
+
+| Layer | Change |
+|---|---|
+| `lib/groups/tree.ts` | `headEditScope()` and `headBacentaMerge()` |
+| `GET /api/members/[id]` | `admin \| usher` → `+ leader`, scoped; now also returns `constituency_name`, because a head cannot resolve the id themselves (`/api/constituencies` 403s them) |
+| `PATCH /api/members/[id]` | `admin` → `admin \| leader`, narrowed by `headEditScope` |
+| `/my-groups/members/[id]` | the head's member page — details, photo, nothing else |
+| `components/group-roster-table.tsx` | `linkToMembers: boolean` → `memberHref: (id) => string`, because admins and heads go to different pages for the same member |
+
+### Two decisions worth keeping
+
+**Editing is scoped wider than registering.** Registering demands a
+constituency the head runs — a bacenta head cannot say where somebody lives.
+Editing reaches anyone their group pages already show them in full. Different
+scopes, on purpose, in two separate functions.
+
+**Bacenta ticks are MERGED, not substituted.** A head only ever sees the
+bacentas they head, so writing that list as the member's complete answer would
+remove them from every other one — a constituency head correcting a phone
+number would silently take somebody out of the choir. This is the
+`undefined`/`[]` rule from `CLAUDE.md` one level deeper, and it would have
+failed in exactly the same silent way. `headBacentaMerge` carries untouchable
+memberships through, and the form says so on screen rather than showing a head
+an unticked list that reads as "in no other bacenta".
+
+A refused field is refused **by name**: a `PATCH` carrying `status` or
+`sms_template_id` gets a 403 saying which and why. Silently stripping it would
+answer 200 and leave the head believing it saved.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **214 passed**, 4 skipped (was 197). 17 new, on
+  `headEditScope` and `headBacentaMerge`, including the merge case that is the
+  whole reason the second function exists.
+- `npm run build` — 74 routes.
+
+### Still NOT verified — same blocker as above
+
+`scripts/e2e-groups.mjs` now carries 26 checks for the two features together
+(the registration set, plus: a head reading and correcting their own member,
+all three refusals, the resent-constituency no-op, the bacenta merge with a
+bacenta an admin added, delete and enrol both still 403, and a member outside
+every group they head refused on both read and write). **None have been run** —
+`npm run e2e:groups` still stops at `admin login failed (401)`. Fix
+`SEED_ADMIN_PASSWORD` in `.env.local` and run it; written is not proven.

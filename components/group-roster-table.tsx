@@ -14,11 +14,19 @@ import type { GroupMember } from '@/lib/groups/types'
 
 export default function GroupRosterTable({
   members,
-  /** Heads get no links out — every member page is admin-only. */
-  linkToMembers = true,
+  /**
+   * Where a row points. Admins and heads go to DIFFERENT pages for the same
+   * member — `/members/[id]` carries Delete, the status control and enrolment;
+   * `/my-groups/members/[id]` carries the details a head may correct. Passing
+   * the href in rather than a boolean keeps this table from having to know
+   * which of those the reader is.
+   *
+   * Omitted ⇒ the rows are not links at all.
+   */
+  memberHref,
 }: {
   members: GroupMember[]
-  linkToMembers?: boolean
+  memberHref?: (memberId: string) => string
 }) {
   if (members.length === 0) {
     return (
@@ -44,7 +52,7 @@ export default function GroupRosterTable({
         {members.map((m) => {
           const photo = memberPhotoUrl(m.photo_file_id, 64)
           return (
-            <TableRow key={m.$id} href={linkToMembers ? `/members/${m.$id}` : undefined}>
+            <TableRow key={m.$id} href={memberHref?.(m.$id)}>
               <TableCell>
                 <div className="flex items-center gap-3">
                   <Avatar

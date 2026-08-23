@@ -142,7 +142,12 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
 
       {tab === 'members' || !isAdmin ? (
         <Card padded={false}>
-          <GroupRosterTable members={members} linkToMembers={isAdmin} />
+          <GroupRosterTable
+            members={members}
+            memberHref={(mid) =>
+              isAdmin ? `/members/${mid}` : `/my-groups/members/${mid}`
+            }
+          />
         </Card>
       ) : (
         <Card>
@@ -172,7 +177,8 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
 
       {!isAdmin && (
         <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
-          You are signed in as a head, so this view is read-only.{' '}
+          You are signed in as a head. Open any member to correct their details; the group
+          itself, and who is in it, is an administrator&rsquo;s to change.{' '}
           <Link href="/my-groups" className="underline">
             Your other groups
           </Link>

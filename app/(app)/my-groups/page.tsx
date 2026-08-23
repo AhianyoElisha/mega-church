@@ -135,8 +135,9 @@ export default function MyGroupsPage() {
 
       {!isAdmin && (
         <p className="mt-8 text-sm text-neutral-400 dark:text-neutral-500">
-          You can see your members&rsquo; details, birthdays and attendance. Registering members
-          and moving them between groups is done by an administrator.
+          You can see and correct your members&rsquo; details, and register new members into a
+          constituency you head. Moving somebody between groups, marking them inactive, and
+          enrolling fingerprints are all done by an administrator.
         </p>
       )}
     </PageWrap>

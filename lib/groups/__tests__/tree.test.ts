@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   buildBacentaTree,
   diffMembership,
+  headBacentaMerge,
+  headEditScope,
+  headRegistrationScope,
   headsAnything,
   normaliseName,
   sortByOrderThenName,
@@ -189,5 +192,204 @@ describe('headsAnything', () => {
 
   it('is false for a leader account nobody has appointed yet', () => {
     expect(headsAnything('u1', [withHead('u2')], [withHead('u3')])).toBe(false)
+  })
+})
+
+describe('headRegistrationScope', () => {
+  const heads = { constituencies: ['c1', 'c2'], bacentas: ['b1'] }
+
+  it('accepts a registration into a constituency they head', () => {
+    expect(headRegistrationScope({ constituency_id: 'c1', bacenta_ids: [] }, heads)).toEqual({
+      ok: true,
+      constituency_id: 'c1',
+      bacenta_ids: [],
+    })
+  })
+
+  it('accepts bacentas they head alongside it', () => {
+    const out = headRegistrationScope({ constituency_id: 'c2', bacenta_ids: ['b1'] }, heads)
+    expect(out).toEqual({ ok: true, constituency_id: 'c2', bacenta_ids: ['b1'] })
+  })
+
+  it('de-duplicates a repeated bacenta id', () => {
+    const out = headRegistrationScope({ constituency_id: 'c1', bacenta_ids: ['b1', 'b1'] }, heads)
+    expect(out).toEqual({ ok: true, constituency_id: 'c1', bacenta_ids: ['b1'] })
+  })
+
+  it('refuses a bacenta-only head — they cannot say where anybody LIVES', () => {
+    const out = headRegistrationScope(
+      { constituency_id: 'c1' },
+      { constituencies: [], bacentas: ['b1'] },
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  // The rule that /api/reports/export already follows: a head who does not say
+  // which constituency is REFUSED, never defaulted to their first one. A wrong
+  // guess is invisible afterwards — the member simply appears in the wrong
+  // roster, and nobody knows to look.
+  it('refuses an omitted constituency rather than defaulting to their first', () => {
+    const out = headRegistrationScope({ bacenta_ids: [] }, heads)
+    expect(out).toMatchObject({ ok: false, status: 400 })
+    expect(out).not.toMatchObject({ constituency_id: 'c1' })
+  })
+
+  it('refuses an empty-string constituency the same way', () => {
+    expect(headRegistrationScope({ constituency_id: '' }, heads)).toMatchObject({
+      ok: false,
+      status: 400,
+    })
+  })
+
+  it('refuses a constituency they do not head', () => {
+    const out = headRegistrationScope({ constituency_id: 'c9' }, heads)
+    expect(out).toMatchObject({ ok: false, status: 403 })
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toContain('do not head that constituency')
+  })
+
+  it('refuses a bacenta they do not head, even into their own constituency', () => {
+    const out = headRegistrationScope({ constituency_id: 'c1', bacenta_ids: ['b9'] }, heads)
+    expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('refuses the whole registration when ONE bacenta is foreign', () => {
+    const out = headRegistrationScope({ constituency_id: 'c1', bacenta_ids: ['b1', 'b9'] }, heads)
+    expect(out.ok).toBe(false)
+  })
+
+  it('treats a non-string constituency as not given', () => {
+    expect(headRegistrationScope({ constituency_id: 42 }, heads)).toMatchObject({
+      ok: false,
+      status: 400,
+    })
+  })
+})
+
+describe('headBacentaMerge', () => {
+  // The whole reason this function exists: a head only ever sees their own
+  // bacentas, so writing their tick-list verbatim would silently remove the
+  // member from every other one.
+  it('preserves memberships the head cannot see', () => {
+    expect(headBacentaMerge([], ['choir', 'tech'], ['tech'])).toEqual(['choir'])
+  })
+
+  it('applies the head’s ticks within their own bacentas', () => {
+    expect(headBacentaMerge(['tech'], ['choir'], ['tech']).sort()).toEqual(['choir', 'tech'])
+  })
+
+  it('removes from a bacenta the head heads when they untick it', () => {
+    expect(headBacentaMerge([], ['choir', 'tech'], ['tech'])).toEqual(['choir'])
+  })
+
+  it('ignores a tick for a bacenta they do not head', () => {
+    expect(headBacentaMerge(['choir'], [], ['tech'])).toEqual([])
+  })
+
+  it('does not duplicate one they already had', () => {
+    expect(headBacentaMerge(['tech'], ['tech'], ['tech'])).toEqual(['tech'])
+  })
+
+  it('leaves everything alone for a head who heads no bacenta', () => {
+    expect(headBacentaMerge([], ['choir', 'tech'], [])).toEqual(['choir', 'tech'])
+  })
+})
+
+describe('headEditScope', () => {
+  const heads = { constituencies: ['c1'], bacentas: ['b1'] }
+  const member = { constituency_id: 'c1', bacenta_ids: ['b1', 'b2'] }
+
+  it('lets a head correct an ordinary field', () => {
+    const out = headEditScope(
+      { fields: { call_number: '+233240000000' }, bacenta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toEqual({
+      ok: true,
+      fields: { call_number: '+233240000000' },
+      bacenta_ids: undefined,
+    })
+  })
+
+  it('reaches a member through a BACENTA they head, with no constituency in common', () => {
+    const out = headEditScope(
+      { fields: { address: 'x' }, bacenta_ids: undefined },
+      { constituency_id: 'somewhere-else', bacenta_ids: ['b1'] },
+      heads,
+    )
+    expect(out.ok).toBe(true)
+  })
+
+  it('refuses a member in no group they head', () => {
+    const out = headEditScope(
+      { fields: { address: 'x' }, bacenta_ids: undefined },
+      { constituency_id: 'c9', bacenta_ids: ['b9'] },
+      heads,
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('refuses a member with no constituency and no shared bacenta', () => {
+    const out = headEditScope(
+      { fields: { address: 'x' }, bacenta_ids: undefined },
+      { constituency_id: null, bacenta_ids: [] },
+      heads,
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  // Named, not silently dropped — a head who is told nothing assumes it saved.
+  it('refuses a status change and says so', () => {
+    const out = headEditScope({ fields: { status: 'inactive' }, bacenta_ids: undefined }, member, heads)
+    expect(out).toMatchObject({ ok: false, status: 403 })
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toMatch(/active or inactive/i)
+  })
+
+  it('refuses a birthday-message change', () => {
+    const out = headEditScope({ fields: { sms_template_id: 't1' }, bacenta_ids: undefined }, member, heads)
+    expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('refuses MOVING the member to another constituency', () => {
+    const out = headEditScope(
+      { fields: { constituency_id: 'c2' }, bacenta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  // The shared form always sends the field. Resending what is already stored is
+  // not a move, and must not be treated as one.
+  it('accepts the constituency it already has, and drops it from the write', () => {
+    const out = headEditScope(
+      { fields: { constituency_id: 'c1', address: 'x' }, bacenta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toEqual({ ok: true, fields: { address: 'x' }, bacenta_ids: undefined })
+  })
+
+  it('treats a null constituency resent as null as unchanged', () => {
+    const out = headEditScope(
+      { fields: { constituency_id: null }, bacenta_ids: undefined },
+      { constituency_id: null, bacenta_ids: ['b1'] },
+      heads,
+    )
+    expect(out).toEqual({ ok: true, fields: {}, bacenta_ids: undefined })
+  })
+
+  it('merges bacentas rather than replacing them', () => {
+    const out = headEditScope({ fields: {}, bacenta_ids: [] }, member, heads)
+    // b2 is outside their reach and survives; b1 is theirs and was unticked.
+    expect(out).toEqual({ ok: true, fields: {}, bacenta_ids: ['b2'] })
+  })
+
+  it('leaves bacentas untouched when the request never mentions them', () => {
+    const out = headEditScope({ fields: { address: 'x' }, bacenta_ids: undefined }, member, heads)
+    if (!out.ok) throw new Error('expected acceptance')
+    expect(out.bacenta_ids).toBeUndefined()
   })
 })
