@@ -640,15 +640,44 @@ put two sessions on the scanner, which PRD §2.2 forbids.
   and a resume is refused while something else is open.
 - `npm run build` — 76 routes.
 
-### ⚠️ The schema change has NOT been applied
+### Schema applied — 2026-08-23, after the service ended
 
-`meeting_occurrences.status` must gain `paused`, and `paused_at` must be added.
-Both are in `scripts/setup-appwrite.ts`, and `ensureEnumAttribute` **widens an
-existing enum in place** rather than dropping and recreating it — so no
-occurrence row and no index is lost.
+`npm run setup:appwrite` reported **`attributes created 2`**: the `status` enum
+widened to `open|closed|paused`, and `paused_at` added. A second run reported
+`created 0` across the board — idempotency confirmed, not assumed.
 
-It was not run, because a real service was live at the time and a schema change
-during one is not worth the risk. **Run `npm run setup:appwrite` once the
-service has ended**, then `npm run verify:appwrite`. Until it is run, Pause will
-fail against the live project with an Appwrite enum error — the code is ready,
-the column is not.
+The widening was **in place**. All five occurrence rows survived with their
+statuses intact, and the `by_status` index over them was never dropped. That is
+`ensureEnumAttribute` doing what it was written to do; dropping and recreating
+an enum attribute would have taken the index and every row's status with it.
+
+`npm run verify:appwrite` passes.
+
+### Proven against the live project
+
+A focused check drove the whole state machine through the HTTP API, on its own
+throwaway member and two throwaway meetings — **neither real service was
+touched** — and deleted everything in a `finally`. 24 checks, all passing:
+
+- pause returns 200, `status=paused`, `paused_at` stamped
+- **the kiosk sees no live session** — `/api/attendance/active` reports
+  `session: null` with the paused one named on the same response
+- a check-in during the pause is **423, and the message says it is paused**
+  rather than that no session is open
+- **another session activates while the first stays paused** — the slot really
+  is free, which is the entire reason this feature exists
+- resuming while that other session is open is **409, naming the blocker**
+- after it ends, resume returns 200, `status=open`, `paused_at` cleared
+- **the member marked BEFORE the pause is still marked after it**, and the
+  session closes with `present_count = 1` — one occurrence, counted once across
+  the pause. This is the claim that separates pause from close, and it is now
+  proven rather than argued.
+- a paused session can be **ended directly** without being resumed first
+- a closed session **cannot** be resumed
+
+Afterwards: 5 occurrence rows, all `closed`; 2 meetings, both real services;
+133 members. Nothing left behind.
+
+The run needed an admin session, and `SEED_ADMIN_PASSWORD` is still stale (see
+the open items), so it used a throwaway `e2e.admin@` account created through the
+server API key and **deleted afterwards** — no live login was touched.
