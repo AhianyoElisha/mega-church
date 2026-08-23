@@ -6,7 +6,7 @@ import type { MemberStatsResponse } from '@/lib/members/types'
 
 // GET /api/members/stats — the dashboard's headline numbers.
 export async function GET() {
-  const auth = await requireRole(['admin', 'usher'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

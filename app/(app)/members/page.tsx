@@ -184,11 +184,18 @@ export default function MembersPage() {
         </>
       )}
 
-      {!isAdmin && (
+      {user?.label === 'shepherd' ? (
         <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
-          You are signed in as an usher. <Link href="/monitor" className="underline">Go to the live view</Link>{' '}
-          to mark attendance.
+          You are signed in as a shepherd. You can read the whole registry; changing it is an
+          administrator&rsquo;s job.
         </p>
+      ) : (
+        !isAdmin && (
+          <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
+            You are signed in as an usher. <Link href="/monitor" className="underline">Go to the live view</Link>{' '}
+            to mark attendance.
+          </p>
+        )
       )}
     </PageWrap>
   )

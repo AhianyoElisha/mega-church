@@ -138,6 +138,20 @@ export const USER_LABELS = {
   leader: 'leader',
   /** The team that prepares birthday flyers and shoutouts. PRD §2.8. */
   celebrations: 'celebrations',
+  /**
+   * A shepherd: sees everything, changes nothing.
+   *
+   * Distinct from `leader` in BOTH directions, which is why it is a fifth label
+   * rather than a flag on the fourth. A leader sees only the groups that name
+   * them as head, but may claim, register and correct members inside them. A
+   * shepherd sees the whole church and may write nothing at all — wider read,
+   * zero write.
+   *
+   * Enforced by absence: `shepherd` appears on GET handlers only, so a mutating
+   * route refuses it without having to name it. There is no list of things a
+   * shepherd may not do that could fall out of date.
+   */
+  shepherd: 'shepherd',
 } as const
 
 export type CollectionId = (typeof COLLECTIONS)[keyof typeof COLLECTIONS]

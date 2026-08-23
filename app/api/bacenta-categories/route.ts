@@ -12,7 +12,7 @@ import type { BacentaCategoryResponse } from '@/lib/groups/types'
  * `/api/bacentas` without ever touching this route.
  */
 export async function GET() {
-  const auth = await requireRole(['admin', 'usher'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

@@ -25,7 +25,7 @@ import type {
 // Ushers may read it (they look people up for a manual check-in); only admins
 // may write.
 export async function GET(request: NextRequest) {
-  const auth = await requireRole(['admin', 'usher'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

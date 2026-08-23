@@ -46,7 +46,9 @@ export default function MyGroupsPage() {
     [active, constituencies, bacentas],
   )
 
-  const isAdmin = user?.label === 'admin'
+  // A shepherd gets the same whole-church list an admin does — the API already
+  // serves them everything, so the heading and the footer must agree with it.
+  const isAdmin = user?.label === 'admin' || user?.label === 'shepherd'
 
   if (isLoading) {
     return (

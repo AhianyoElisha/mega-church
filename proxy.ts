@@ -27,6 +27,7 @@ const RECOGNISED_LABELS: readonly UserLabel[] = [
   'kiosk',
   'leader',
   'celebrations',
+  'shepherd',
 ]
 
 const LABEL_HOMES: Record<UserLabel, string> = {
@@ -37,6 +38,10 @@ const LABEL_HOMES: Record<UserLabel, string> = {
   // the database per request — the route is the same for every leader.
   leader: '/my-groups',
   celebrations: '/birthdays',
+  // A shepherd is here to look at the congregation, so they land where the
+  // congregation is rather than on an admin dashboard of controls they cannot
+  // press.
+  shepherd: '/members',
 }
 
 /** Paths each non-admin label is allowed to reach. Admin reaches everything. */
@@ -63,6 +68,34 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
   // The birthday team. Deliberately narrow: they prepare flyers and shoutouts,
   // so they need the celebrant list and nothing else in the registry.
   celebrations: ['/birthdays'],
+  // A shepherd reads the whole church. This is the WIDEST non-admin list in
+  // here, and that is the point of the role — but it is only where they may
+  // NAVIGATE. What stops them changing anything is not this list: `shepherd`
+  // appears on GET handlers only, so every mutating route refuses it without
+  // naming it. The pages themselves also render read-only, because a button
+  // that 403s is worse than no button.
+  //
+  // Absent deliberately, and all for the same reason — they are consoles for
+  // DOING something rather than screens for reading data:
+  //
+  //   /sms        spends the church's money
+  //   /kiosk      an appliance that writes attendance
+  //   /services   activate, pause, end
+  //   /meetings   create, edit rosters
+  //
+  // What a shepherd would actually want from the last two — which sessions ran
+  // and who attended — is on /reports and /monitor, without a row of buttons
+  // that would refuse them. Widen this list if the church asks; the API for
+  // meetings and occurrences already admits a shepherd on GET.
+  shepherd: [
+    '/members',
+    '/constituencies',
+    '/bacentas',
+    '/my-groups',
+    '/birthdays',
+    '/monitor',
+    '/reports',
+  ],
 }
 
 function isPublic(pathname: string) {

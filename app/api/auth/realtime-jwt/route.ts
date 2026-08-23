@@ -11,7 +11,7 @@ import { createSessionClient, requireRole } from '@/lib/appwrite/server'
  * permissions — no wider.
  */
 export async function POST() {
-  const auth = await requireRole(['admin', 'usher'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const client = await createSessionClient()

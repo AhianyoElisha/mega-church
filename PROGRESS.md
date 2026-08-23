@@ -840,3 +840,73 @@ to say "a prerequisite script has not run".
 And `build.sh` now copies the result to `public/nbis/`. There is one artifact on
 purpose; a rebuild that forgot the copy would leave the deployed matcher stale,
 and the symptom is nothing at all — the old build works, just slowly.
+
+## `shepherd` — a read-everything, write-nothing account — 2026-08-23
+
+A fifth label. Sees the whole church, especially the people's group tabs;
+changes nothing anywhere.
+
+### Why not a flag on `leader`
+
+They differ in **both** directions, so neither is a subset of the other:
+
+| | sees | may change |
+|---|---|---|
+| `leader` | only the groups naming them as head | members inside those groups |
+| `shepherd` | the whole church | nothing |
+
+### Enforced by absence, not by a deny-list
+
+`shepherd` was added to **GET handlers only** — 20 of them. Every mutating route
+refuses it without naming it, and a POST written next year is shepherd-proof the
+moment it exists, because the default is refusal. There is no list of forbidden
+actions to fall out of date.
+
+Withheld on purpose, because they are not congregation data: raw fingerprint
+templates, the SMS log and balance, the kiosk provisioning pack, and the leader
+account list. `/services` and `/meetings` are withheld as PAGES for a different
+reason — they are consoles for activating, pausing and editing rosters, and what
+a shepherd would want from them (which sessions ran, who attended) is already on
+`/reports` and `/monitor` without a row of buttons that would refuse them. Their
+APIs admit a shepherd on GET, so widening that is a proxy + nav change.
+
+### One real trap this surfaced
+
+**`!isAdmin` had quietly come to mean "a head".** Three group pages used it to
+render leader-only write UI — the Assign tab, the "Register a member" button,
+the claim form — so a read-only account would have been handed controls that
+403. Those now test `canWrite` (admin OR leader), and `isAdmin` is kept for
+admin-only controls. `OpenSessionBar` had no role test at all and offered
+Pause / End / Resume to anyone who could see it.
+
+### Verified — 43 checks against the live project
+
+`shepherd@megachurch.local` created via `npm run seed:users`.
+
+- **18 reads at 200**, including a constituency roster in full (28 members), a
+  bacenta roster (8), one member in detail, that member's attendance history,
+  and an unscoped whole-church `.xlsx` export.
+- `my-groups` returns **4 constituencies and 12 bacentas** — the whole church,
+  where a leader gets only what they head. That contrast is the role.
+- **16 writes at 403**: register / edit / delete a member, upload a photo,
+  create / rename / delete a constituency, assign members, create a bacenta, a
+  category, a meeting, activate a session, mark somebody present, enrol a
+  fingerprint, send an SMS, create a leader account.
+- **5 out-of-scope reads at 403**: fingerprint templates, SMS log, SMS balance,
+  kiosk pack, leader list.
+
+### Not done: the browser pass
+
+A real service (Second Service) was live, and the browser on this machine held a
+working admin session on the dev server. Signing it out to check the read-only
+screens is exactly the interference to avoid mid-service, so the UI was left
+untested in a browser. The API boundary is proven; what is unverified is purely
+cosmetic — whether the gated buttons are absent rather than merely refusing.
+Worth ten minutes with the shepherd login once nothing is running.
+
+### Side effect worth knowing
+
+`npm run seed:users` also recreated `leader@megachurch.local`, which had been
+deleted during earlier verification. That is the account `SEED_LEADER_EMAIL`
+names, so `npm run e2e:groups` can now find its leader again — one of the two
+stale credentials flagged above is fixed. `SEED_ADMIN_PASSWORD` is still wrong.

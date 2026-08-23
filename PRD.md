@@ -531,6 +531,34 @@ Appwrite User Labels, exactly one per user.
 | `kiosk` | `/kiosk` only — POST scans, read the active occurrence |
 | `leader` | a constituency head, a bacenta head, or **both**. Read-only, and only the groups that name them as head |
 | `celebrations` | the birthday team: the celebrant list and push notifications, nothing else |
+| `shepherd` | reads the whole church, writes nothing at all |
+
+### 5.0 Why `shepherd` is not a variant of `leader`
+
+The two differ in **both** directions, which is why a fifth label beats a flag
+on the fourth:
+
+| | sees | may change |
+|---|---|---|
+| `leader` | only the groups naming them as head | members inside those groups |
+| `shepherd` | the whole church | nothing |
+
+A shepherd is wider on read and empty on write. Neither is a subset of the
+other, so no single "scope" field expresses both.
+
+**Enforced by absence.** `shepherd` appears on GET handlers only, so every
+mutating route refuses it without naming it. There is no list of forbidden
+actions that could fall out of date as routes are added — a new POST is
+shepherd-proof the moment it is written, because the default is refusal.
+
+Three reads are deliberately withheld, because they are not congregation data:
+raw fingerprint templates (`/api/biometrics/templates`), the SMS log and
+balance, and the kiosk provisioning pack. `/services` and `/meetings` are
+withheld as PAGES for a different reason — they are consoles for activating,
+pausing and editing, and what a shepherd would want from them (which sessions
+ran, who attended) is on `/reports` and `/monitor` without a row of buttons
+that would refuse them. Their APIs already admit a shepherd on GET, so widening
+this is a proxy and navigation change if the church asks.
 
 ### 5.1 Why `leader` is one label and not two
 
