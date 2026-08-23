@@ -20,6 +20,7 @@ import {
   type FingerLabel,
 } from '@/lib/appwrite/config'
 import { decodeXytTemplate, countMinutiae } from './codec'
+import { resetPreparedTemplates } from './wasm-matcher'
 import type {
   BiometricTemplateDoc,
   BiometricTemplateMeta,
@@ -272,6 +273,10 @@ const refreshing = new Map<string, Promise<MatcherCandidate[]>>()
 export function invalidateCandidateCache(): void {
   candidateCache.clear()
   refreshing.clear()
+  // The matcher holds these templates PARSED, in wasm memory. Dropping the
+  // gallery without dropping those would leak a few megabytes every time
+  // somebody is enrolled, and keep a deleted member's fingerprints resident.
+  resetPreparedTemplates()
 }
 
 /**

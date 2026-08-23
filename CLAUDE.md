@@ -261,6 +261,32 @@ large type; body text is black. Never yellow text on white below 18pt.
   FIRST member of the service pays the whole gallery fetch, at the worst
   possible moment and the one everybody notices.
 - **Never store raw fingerprint images.** Templates only, `xyt:<base64>`.
+- **1:N identification uses `set_probe` + `match_prepared`, NEVER
+  `match_templates` in a loop.** `match_templates` is a 1:1 VERIFICATION call
+  that parses both templates and rebuilds the probe's O(n²) comparison Web on
+  every invocation — so a 1,236-template gallery rebuilt the same Web 1,236
+  times to produce 1,236 identical intermediate results. Measured cost of that
+  mistake: **2,799 ms** per scan, against 935 ms for the same full scan through
+  the split API. `bozorth_main` IS `bozorth_probe_init` + `bozorth_to_gallery`;
+  NBIS ships the split for exactly this case and `bz_drvrs.c` says so.
+- **The probe Web lives in NBIS globals, so `set_probe` is per-SCAN and the
+  matcher is not thread-safe.** That is what makes reuse possible at all. One
+  scan at a time per process; `match_prepared` returns -1 if no probe was set,
+  rather than scoring against whatever was left behind.
+- **Prepared gallery templates are cached by WIRE STRING, not by member.** The
+  same template re-fetched after a gallery refresh is the same string, so a
+  cache tick does not re-parse 1,236 templates. `invalidateCandidateCache()`
+  frees them — skipping that leaks wasm memory on every enrolment and keeps a
+  deleted member's fingerprints resident.
+- **`matchWithWasm` falls back to `match_templates` when the artifact is old.**
+  `public/nbis/` is committed, and server code can be deployed against a wasm
+  build that has not been refreshed. The fallback is correct and slow; without
+  it, the deploy would crash on `M._set_probe is not a function`.
+- **`tools/nbis-wasm/build.sh` publishes to `public/nbis/` itself.** There is
+  ONE artifact on purpose — the browser fetches it and the Next server loads the
+  same file, so they cannot drift into disagreeing about scores. A rebuild that
+  forgot the copy would leave the deployed matcher stale, and the symptom is
+  nothing at all: the old build works, just slowly.
 - **A member photo can be TAKEN as well as uploaded, and upload never goes
   away.** `navigator.mediaDevices` is undefined outside a secure context, which
   is exactly how a kiosk PC on a church LAN is reached over plain http — so

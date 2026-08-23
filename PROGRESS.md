@@ -772,3 +772,71 @@ member's fresh press does not identify them at the current threshold. That is a
 false reject, and it is worth investigating separately against a wider corpus
 (the threshold note in `lib/biometrics/matching.ts` already flags that the
 calibration corpus is small).
+
+### The wasm probe re-parsing, fixed — same day
+
+The lever named as "not done" above turned out to be reachable: `emsdk` installs
+on Windows, and the NBIS sources are a `git clone` plus two headers that NBIS's
+own setup generates from `.src` templates.
+
+`match_templates()` is a **1:1 verification** call. Using it for 1:N was the
+whole problem, because `bozorth_main` is literally:
+
+    probe_len = bozorth_probe_init( pstruct );      <- parse + O(n^2) Web build
+    return bozorth_to_gallery( probe_len, pstruct, gstruct );
+
+so a 1,236-template gallery rebuilt the **same** probe Web 1,236 times to
+produce 1,236 identical intermediate results.
+
+NBIS already ships the split — `bz_drvrs.c` documents `bozorth_probe_init` as
+being for exactly this scenario. Three new entry points expose it:
+
+| | when it runs |
+|---|---|
+| `set_probe()` | once per **scan** |
+| `prepare_template()` | once per **gallery load** |
+| `match_prepared()` | the per-comparison work, and only that |
+
+`struct xyt_struct` is ~2.4 KB, so holding the whole gallery parsed is under
+3 MB — cheap enough that parsing belongs at load time rather than in the loop.
+
+### Proven identical, not assumed
+
+The old artifact was still in `public/nbis/`, so both were run side by side over
+the real gallery: **7,416 score comparisons across 6 probes, 0 mismatches.**
+Also checked: a prepared template reused three times scores the same each time,
+and switching probes mid-life does not contaminate the next result.
+
+That equivalence is expected — this is the same call sequence with the
+loop-invariant half hoisted — but "expected" and "checked" are different claims,
+and this is a matcher.
+
+### The numbers
+
+Measured on the live gallery, which had grown to 103 members / 1,236 templates
+(so this is *more* work than the 2,799 ms baseline was doing):
+
+| | before | after |
+|---|---|---|
+| full scan, no early exit | 2,799 ms | **935 ms** |
+| + decisive early exit | — | 565 ms |
+| + unmarked-first ordering | 646 ms | **225 ms** |
+
+**~2.8 s → ~0.23 s end to end**, and every configuration named the same member
+on all ten sampled scans.
+
+### Two things the build needed
+
+`build.sh` word-split its source lists, so a checkout under a path containing a
+space (any Windows home directory) handed `emcc` half a directory name. Fixed
+with arrays.
+
+It also assumed the bridge's `setup.sh` had run, because two NBIS headers are
+generated from `.src` templates. The wasm build needs neither the native
+binaries nor Linux — only those headers — so it now generates them itself. A
+bare clone used to fail with `'an2k.h' file not found`, which is a confusing way
+to say "a prerequisite script has not run".
+
+And `build.sh` now copies the result to `public/nbis/`. There is one artifact on
+purpose; a rebuild that forgot the copy would leave the deployed matcher stale,
+and the symptom is nothing at all — the old build works, just slowly.

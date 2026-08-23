@@ -155,11 +155,92 @@ static int parse_xyt(const char *text, struct xyt_struct *out) {
  * what counts as a match. Returns -1 if either template is unusable.
  */
 EXPORT int match_templates(const char *probe_xyt, const char *gallery_xyt) {
-    static struct xyt_struct probe;   // ~36KB each — static keeps them off the
+    static struct xyt_struct probe;   // ~2.4KB each — static keeps them off the
     static struct xyt_struct gallery; // stack, which is small under wasm.
     if (errorfp == NULL) errorfp = stderr;
     if (probe_xyt == NULL || gallery_xyt == NULL) return -1;
     if (parse_xyt(probe_xyt, &probe) == 0) return -1;
     if (parse_xyt(gallery_xyt, &gallery) == 0) return -1;
     return bozorth_main(&probe, &gallery);
+}
+
+/* === 1:N identification ==================================================
+ *
+ * `match_templates` above is a 1:1 VERIFICATION call, and using it for 1:N
+ * identification is what made check-in slow. `bozorth_main` is, verbatim:
+ *
+ *     probe_len = bozorth_probe_init( pstruct );      <- O(n^2) "Web" build
+ *     return bozorth_to_gallery( probe_len, pstruct, gstruct );
+ *
+ * so a 1,188-template gallery rebuilt the SAME probe Web 1,188 times, and
+ * re-parsed the same probe text 1,188 times, to produce 1,188 identical
+ * intermediate results.
+ *
+ * NBIS already ships the split — bz_drvrs.c documents `bozorth_probe_init` as
+ * being for exactly this scenario. The three entry points below expose it:
+ *
+ *     set_probe()        parse once, build the Web once, per SCAN
+ *     prepare_template() parse a gallery template once, per GALLERY LOAD
+ *     match_prepared()   the per-comparison work, and only that
+ *
+ * Scores are unchanged BY CONSTRUCTION: this is the same call sequence
+ * `bozorth_main` makes, with the loop-invariant half hoisted out. Nothing is
+ * approximated and no threshold moves.
+ *
+ * Not thread-safe, and neither is bozorth3 — the probe Web lives in NBIS
+ * globals (`scols` / `scolpt`), which is precisely why it can be reused across
+ * calls. One scan at a time per process, which is what the callers do.
+ */
+
+static struct xyt_struct g_probe;
+static int g_probe_len = 0;
+static int g_probe_ready = 0;
+
+/**
+ * Parse `probe_xyt` and build its comparison Web, once, for the scan about to
+ * happen. Returns 1 on success, 0 if the template is unusable.
+ */
+EXPORT int set_probe(const char *probe_xyt) {
+    if (errorfp == NULL) errorfp = stderr;
+    g_probe_ready = 0;
+    if (probe_xyt == NULL) return 0;
+    if (parse_xyt(probe_xyt, &g_probe) == 0) return 0;
+    g_probe_len = bozorth_probe_init(&g_probe);
+    g_probe_ready = 1;
+    return 1;
+}
+
+/**
+ * Parse one gallery template into a struct the caller keeps.
+ *
+ * ~2.4KB each, so a 1,188-template gallery held permanently is under 3MB —
+ * cheap enough that parsing belongs at gallery-load time rather than in the
+ * scan loop. Free with free_prepared(). NULL if the text is unusable.
+ */
+EXPORT struct xyt_struct *prepare_template(const char *xyt) {
+    struct xyt_struct *out;
+    if (xyt == NULL) return NULL;
+    out = (struct xyt_struct *)malloc(sizeof(struct xyt_struct));
+    if (out == NULL) return NULL;
+    if (parse_xyt(xyt, out) == 0) {
+        free(out);
+        return NULL;
+    }
+    return out;
+}
+
+EXPORT void free_prepared(struct xyt_struct *t) {
+    if (t != NULL) free(t);
+}
+
+/**
+ * Score the current probe against one prepared gallery template.
+ *
+ * The only work that is genuinely per-comparison. Returns -1 if no probe has
+ * been set — a caller that forgets `set_probe` gets a clear failure rather than
+ * a plausible-looking score against whatever was left in the globals.
+ */
+EXPORT int match_prepared(struct xyt_struct *gallery) {
+    if (!g_probe_ready || gallery == NULL) return -1;
+    return bozorth_to_gallery(g_probe_len, &g_probe, gallery);
 }
