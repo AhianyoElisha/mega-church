@@ -24,13 +24,28 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BASE = process.env.BASE_URL ?? 'http://localhost:3111'
 
-const env = Object.fromEntries(
-  fs
-    .readFileSync(path.join(ROOT, '.env.local'), 'utf8')
-    .split(/\r?\n/)
-    .filter((l) => l.includes('=') && !l.trimStart().startsWith('#'))
-    .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
-)
+/**
+ * `.env.local` first, then the real environment ON TOP.
+ *
+ * The override matters when the seeded credentials have drifted from what the
+ * project actually holds — someone changes the admin password in the console,
+ * or the template `leader` account is replaced by the church’s real heads, and
+ * the suite stops being runnable at all. Being able to point it at a throwaway
+ * pair for one run is the difference between running it and shelving it. It is
+ * also what lets CI supply credentials it will never write to a file.
+ */
+const env = {
+  ...Object.fromEntries(
+    fs
+      .readFileSync(path.join(ROOT, '.env.local'), 'utf8')
+      .split(/\r?\n/)
+      .filter((l) => l.includes('=') && !l.trimStart().startsWith('#'))
+      .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
+  ),
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(([k, v]) => k.startsWith('SEED_') && v),
+  ),
+}
 
 let failures = 0
 const ok = (m) => console.log(`  ✓ ${m}`)

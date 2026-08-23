@@ -198,9 +198,13 @@ Needs people, hardware or a decision — not more code:
    them, but no device has subscribed yet. On iPhone the app must be added to
    the Home Screen first — Safari does not deliver push to an ordinary tab, and
    the birthdays page says so before anyone tries.
-3. **The rest of the head accounts.** `npm run seed:users` creates one template
-   `leader`. The church needs one per head — create them in the Appwrite console
-   with the same `leader` label, then appoint each from its group's page.
+3. ~~**The rest of the head accounts.**~~ ✅ Done — four `leader` accounts
+   (`alos`, `tsalack`, `anagkazo`, `anadeia`) exist as of 2026-08-22, and heads
+   are now created in-app rather than in the console (Plan 3). **`.env.local`
+   was never updated:** `SEED_LEADER_EMAIL` still names the deleted template
+   account `leader@megachurch.local`, and `SEED_ADMIN_PASSWORD` is no longer
+   what `admin@megachurch.local` holds. Both break `npm run e2e:groups` until
+   corrected — see "How it was run" under the head-editing section.
 4. **Real constituency names.** "Ahodwo" was created during verification as a
    placeholder and has three members filed into it. Rename or delete it and
    create the church's actual four.
@@ -453,21 +457,12 @@ turns up in the wrong roster and nobody knows to look.
   307s to `/login` — it sits under the `/constituencies` prefix the proxy
   already covers, so no matcher change was needed.
 
-### NOT verified — the live e2e could not run
+### Proven against the live project
 
-`scripts/e2e-groups.mjs` gained 13 checks for this (an omitted constituency, a
-neighbour's constituency, a foreign bacenta, the positive registration, both
-forced fields, phone normalisation through a head registration, and proof that
-a head still cannot enrol fingerprints or edit the member afterwards). **They
-have not been run.** `npm run e2e:groups` stops at the first step:
-
-    admin login failed (401): Invalid email or password
-
-`SEED_ADMIN_PASSWORD` in `.env.local` is no longer what the account holds —
-consistent with `seed:users` never resetting a password somebody has changed.
-Re-run the suite once the credential is corrected; the checks are written and
-`node --check` passes on the script, but "written" is not "proven", and this
-project has already been bitten once by treating those as the same thing.
+`npm run e2e:groups` — **72 checks, all passing**, including 13 for this
+strand: an omitted constituency refused, a neighbour's constituency refused, a
+foreign bacenta refused, the positive registration, both forced fields, phone
+normalisation through a head registration, and enrolment still 403.
 
 ## Heads edit their own members too — 2026-08-23
 
@@ -510,12 +505,49 @@ answer 200 and leave the head believing it saved.
   whole reason the second function exists.
 - `npm run build` — 74 routes.
 
-### Still NOT verified — same blocker as above
+### Proven against the live project
 
-`scripts/e2e-groups.mjs` now carries 26 checks for the two features together
-(the registration set, plus: a head reading and correcting their own member,
-all three refusals, the resent-constituency no-op, the bacenta merge with a
-bacenta an admin added, delete and enrol both still 403, and a member outside
-every group they head refused on both read and write). **None have been run** —
-`npm run e2e:groups` still stops at `admin login failed (401)`. Fix
-`SEED_ADMIN_PASSWORD` in `.env.local` and run it; written is not proven.
+`npm run e2e:groups` — **72 checks, all passing**, 26 of them for these two
+features together. The edit half:
+
+- a head opens one of their members, constituency resolved by NAME
+- corrects a mistyped number (200), and `0249999999` comes back `+233249999999`
+- `status` refused, `sms_template_id` refused, a CHANGED `constituency_id`
+  refused — each 403
+- the same `constituency_id` resent is **not** a move and is accepted
+- **the merge**: an admin put the member into a bacenta the head does not head,
+  the head then saved a form with everything unticked, and the invisible
+  membership survived while their own was removed
+- enrol 403, delete 403
+- a member outside every group they head: 403 on read AND on write
+
+`npm run verify:appwrite` afterwards — all checks pass, 116 members, 4
+constituencies. The suite deletes everything it creates in a `finally`, and it
+left nothing behind.
+
+### How it was run, and what that says about the seeded credentials
+
+Two things were stale and both would have shelved the suite indefinitely:
+
+1. `SEED_ADMIN_PASSWORD` is no longer what `admin@megachurch.local` holds.
+   Appwrite answers `user_invalid_credentials` to the credential directly, so
+   this is not the app. `seed:users` will not fix it — by design it never
+   resets a password somebody has changed.
+2. `SEED_LEADER_EMAIL` is `leader@megachurch.local`, which **no longer
+   exists**. The template head was replaced by the church's four real heads
+   (`alos`, `tsalack`, `anagkazo`, `anadeia`) on 2026-08-22, and nothing
+   updated the suite's expectation.
+
+Rather than reset a live login or borrow a real head's, the run used two
+throwaway accounts created through the server API key
+(`e2e.admin@`, `e2e.leader@`), and **both were deleted afterwards** — confirmed
+by re-listing the project's accounts.
+
+To make that possible without editing `.env.local`, the script now reads
+`.env.local` **first and the real environment on top**, for any `SEED_*` key.
+That is also what lets CI supply credentials it will never write to a file:
+
+    SEED_ADMIN_EMAIL=… SEED_ADMIN_PASSWORD=… npm run e2e:groups
+
+**Fix the two stale values in `.env.local`** so the next person does not have to
+rediscover this.
