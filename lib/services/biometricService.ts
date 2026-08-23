@@ -20,7 +20,7 @@ import {
   loadAllCandidateTemplates,
   loadCandidatesForMeeting,
 } from '@/lib/biometrics/server'
-import { parseThreshold, type MatchDecision } from '@/lib/biometrics/matching'
+import { orderByLikelihood, parseThreshold, type MatchDecision } from '@/lib/biometrics/matching'
 import type { MatcherCandidate, MatcherHealth } from '@/lib/biometrics/types'
 import { isWasmMatcherAvailable, matchWithWasm } from '@/lib/biometrics/wasm-matcher'
 
@@ -229,8 +229,18 @@ export interface BiometricServiceDeps {
    *
    * `meeting_id` is only meaningful together with `restricted: true` — an open
    * service's gallery IS every active member, so there is nothing to narrow.
+   *
+   * `already_marked` narrows NOTHING. It is an ORDERING hint: whoever has
+   * already checked in goes to the back of the queue, because the next person
+   * at the sensor is almost never one of them. They stay in the gallery, so a
+   * member who scans twice is still identified and still told "already checked
+   * in" by name rather than "not recognised".
+   *
+   * It is a heuristic and is allowed to be stale or absent — on a serverless
+   * deployment a given instance may know nothing about who has scanned. The
+   * cost of being wrong is a slower scan, never a wrong or failed one.
    */
-  scope?: { meeting_id: string; restricted: boolean }
+  scope?: { meeting_id: string; restricted: boolean; already_marked?: string[] }
 }
 
 /**
@@ -272,7 +282,10 @@ async function identifyAcrossScopes(
   for (const load of stages) {
     const candidates = await load()
     if (candidates.length === 0) continue
-    const decision = await identify(candidates)
+    // Ordering, not filtering — see `orderByLikelihood`. Applied here rather
+    // than inside each matcher so the bridge and the in-process matcher search
+    // the same list in the same order.
+    const decision = await identify(orderByLikelihood(candidates, scope?.already_marked))
     if (decision) return decision
   }
   return null

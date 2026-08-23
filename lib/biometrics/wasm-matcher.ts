@@ -28,16 +28,88 @@ import 'server-only';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
-import { pickBestCandidate, type CandidateScore, type MatchDecision } from './matching';
+import {
+  decisiveScore,
+  pickBestCandidate,
+  type CandidateScore,
+  type MatchDecision,
+} from './matching';
 import { decodeXytTemplate } from './codec';
 import type { MatcherCandidate } from './types';
 
 type NbisModule = {
   _malloc(size: number): number;
   _free(ptr: number): void;
+  /** 1:1 verification. Parses BOTH templates on every call — see below. */
   _match_templates(a: number, b: number): number;
   stringToNewUTF8(s: string): number;
+  // --- 1:N identification. Absent from artifacts built before 2026-08-23. ---
+  _set_probe?(ptr: number): number;
+  _prepare_template?(ptr: number): number;
+  _free_prepared?(ptr: number): void;
+  _match_prepared?(ptr: number): number;
 };
+
+/** Does this artifact expose the 1:N entry points? */
+function hasFastPath(
+  M: NbisModule,
+): M is NbisModule &
+  Required<Pick<NbisModule, '_set_probe' | '_prepare_template' | '_match_prepared'>> {
+  return (
+    typeof M._set_probe === 'function' &&
+    typeof M._prepare_template === 'function' &&
+    typeof M._match_prepared === 'function'
+  );
+}
+
+/**
+ * Gallery templates parsed into wasm memory, keyed by their wire form.
+ *
+ * `struct xyt_struct` is ~2.4 KB, so the whole live gallery (1,188 templates)
+ * is under 3 MB — cheap enough to parse at gallery-load time instead of inside
+ * the scan loop, which is where it used to happen 1,188 times per press.
+ *
+ * Keyed by the wire string rather than by member, because that is what makes
+ * the entry survive a gallery REFRESH: the same template re-fetched from
+ * Appwrite is the same string, so nothing is re-parsed just because the cache
+ * ticked over.
+ */
+const preparedTemplates = new Map<string, number>();
+/** ~5,000 x 2.4 KB ≈ 12 MB. A congregation past this re-parses, it never leaks. */
+const MAX_PREPARED = 5_000;
+let moduleRef: NbisModule | null = null;
+
+/** Free every prepared template. Called when the gallery is invalidated. */
+export function resetPreparedTemplates(): void {
+  const M = moduleRef;
+  if (M && typeof M._free_prepared === 'function') {
+    for (const ptr of preparedTemplates.values()) M._free_prepared(ptr);
+  }
+  preparedTemplates.clear();
+}
+
+function preparedPointer(
+  M: NbisModule & Required<Pick<NbisModule, '_prepare_template'>>,
+  wire: string,
+): number | null {
+  const hit = preparedTemplates.get(wire);
+  if (hit !== undefined) return hit;
+
+  const text = decodeXytTemplate(wire);
+  if (!text) return null;
+  const textPtr = M.stringToNewUTF8(text);
+  let ptr: number;
+  try {
+    ptr = M._prepare_template(textPtr);
+  } finally {
+    M._free(textPtr);
+  }
+  if (!ptr) return null;
+
+  if (preparedTemplates.size >= MAX_PREPARED) resetPreparedTemplates();
+  preparedTemplates.set(wire, ptr);
+  return ptr;
+}
 
 /**
  * Where the wasm lives at runtime. `public/nbis/` is the copy the browser
@@ -67,7 +139,9 @@ function loadModule(): Promise<NbisModule | null> {
       const mod = (await import(/* webpackIgnore: true */ href)) as {
         default: () => Promise<NbisModule>;
       };
-      return mod.default();
+      const instance = await mod.default();
+      moduleRef = instance;
+      return instance;
     })().catch((e) => {
       // Never cache a failure — a transient load error should not disable
       // fingerprint check-in until the process restarts.
@@ -88,12 +162,23 @@ export async function isWasmMatcherAvailable(): Promise<boolean> {
 }
 
 /**
- * Score `probe` against every template in `candidates` and apply the same
- * threshold rule the bridge applies.
+ * Score `probe` against `candidates` and apply the same threshold rule the
+ * bridge applies.
  *
- * Deliberately reuses `pickBestCandidate` rather than reimplementing "highest
- * score at or above threshold" — the bridge, the browser and this module must
- * not merely agree today, they must be the same rule.
+ * Two exits, and the difference between them is the whole latency story:
+ *
+ *   DECISIVE   a score at or above `decisiveScore(threshold)` ends the search
+ *              immediately. On the live gallery that is where the median
+ *              genuine scan (146) sits and where no impostor has ever been
+ *              observed (max 27). See the note in matching.ts.
+ *   ARGMAX     anything less and every candidate is scored, then
+ *              `pickBestCandidate` picks the highest — byte for byte the rule
+ *              that shipped before, so a marginal match is decided exactly as
+ *              it always was.
+ *
+ * `pickBestCandidate` is still the only place "highest at or above threshold"
+ * is written down: the bridge, the browser and this module must not merely
+ * agree today, they must be the same rule.
  */
 export async function matchWithWasm(
   probeXyt: string,
@@ -103,29 +188,72 @@ export async function matchWithWasm(
   const M = await loadModule();
   if (!M) throw new Error('NBIS wasm artifact not found on this server');
 
-  const probePtr = M.stringToNewUTF8(probeXyt);
+  const decisive = decisiveScore(threshold, process.env.CHURCH_BIOMETRIC_DECISIVE);
+  const fast = hasFastPath(M);
+
+  // The probe's comparison "Web" is built ONCE here, not once per gallery
+  // template. `bozorth_main` — what the slow path calls — is literally
+  // `bozorth_probe_init()` followed by `bozorth_to_gallery()`, so a 1,188
+  // template gallery rebuilt the same probe Web 1,188 times to get 1,188
+  // identical intermediate results. Same call sequence, loop-invariant half
+  // hoisted: scores are unchanged by construction.
+  let probePtr = 0;
+  if (fast) {
+    const p = M.stringToNewUTF8(probeXyt);
+    let ok: number;
+    try {
+      ok = M._set_probe(p);
+    } finally {
+      M._free(p);
+    }
+    if (!ok) return null; // unusable probe, not a failed match
+  } else {
+    probePtr = M.stringToNewUTF8(probeXyt);
+  }
+
   try {
     const scores: CandidateScore[] = [];
+    let decided: CandidateScore | null = null;
+
     for (const candidate of candidates) {
       let best = 0;
       for (const wire of candidate.templates) {
-        const text = decodeXytTemplate(wire);
         // A corrupt stored template must not take down the whole scan — skip
         // it and let the member's other impressions carry the match. This is
         // why multi-template enrolment is load-bearing (Plan 43 Phase A).
-        if (!text) continue;
-        const ptr = M.stringToNewUTF8(text);
-        try {
-          const score = M._match_templates(probePtr, ptr);
-          if (Number.isFinite(score) && score > best) best = score;
-        } finally {
-          M._free(ptr);
+        let score: number;
+        if (fast) {
+          const ptr = preparedPointer(M, wire);
+          if (ptr === null) continue;
+          score = M._match_prepared(ptr);
+        } else {
+          // Older artifact without the 1:N entry points. Correct, just slow —
+          // and worth keeping so new server code can be deployed against a
+          // wasm build that has not been refreshed yet.
+          const text = decodeXytTemplate(wire);
+          if (!text) continue;
+          const ptr = M.stringToNewUTF8(text);
+          try {
+            score = M._match_templates(probePtr, ptr);
+          } finally {
+            M._free(ptr);
+          }
         }
+        if (Number.isFinite(score) && score > best) best = score;
+        // This member is already identified beyond doubt; their remaining
+        // impressions cannot change the answer, only the clock.
+        if (best >= decisive) break;
       }
       scores.push({ member_id: candidate.member_id, score: best });
+      if (best >= decisive) {
+        decided = { member_id: candidate.member_id, score: best };
+        break;
+      }
     }
+
+    if (decided) return { member_id: decided.member_id, score: decided.score };
     return pickBestCandidate(scores, threshold);
   } finally {
-    M._free(probePtr);
+    if (probePtr) M._free(probePtr);
   }
 }

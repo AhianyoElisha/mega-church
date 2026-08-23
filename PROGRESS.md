@@ -681,3 +681,162 @@ Afterwards: 5 occurrence rows, all `closed`; 2 meetings, both real services;
 The run needed an admin session, and `SEED_ADMIN_PASSWORD` is still stale (see
 the open items), so it used a throwaway `e2e.admin@` account created through the
 server API key and **deleted afterwards** — no live login was touched.
+
+## Fingerprint identification was taking ~2.8 seconds — 2026-08-23
+
+The church reported check-in as too slow. Measured against the **live** gallery
+(99 members, 1,188 templates) before changing anything:
+
+| | |
+|---|---|
+| one identification | **2,799 ms** |
+| gallery fetch, cold | **5,876 ms**, and cached for only 60s |
+
+So a member stood at the scanner for ~2.8 seconds normally, and for ~8.7
+seconds once a minute when the cache had expired — with nothing on the kiosk to
+explain the difference. Both figures grow linearly with the congregation.
+
+### What the measurement killed
+
+The first hypothesis was that `decodeXytTemplate` re-validating every stored
+template on every scan (a per-line regex over ~1,188 templates) was the cost.
+**It was not.** Decoding once and reusing the wasm pointers came out at 1.0x —
+no improvement at all. bozorth3 itself is the whole bill, at ~3.2 ms per
+comparison × 1,188 comparisons.
+
+Worth writing down, because it is the obvious-looking optimisation and it is
+worthless.
+
+### What actually worked
+
+| Change | Effect |
+|---|---|
+| Stop on a **decisive** score instead of always taking the argmax | 1.9x |
+| **+ score the people who have not checked in yet first** | **4.3x** |
+
+They only work together: ordering alone buys nothing, because argmax has to
+look at everything anyway. It is the early exit that turns a good ordering into
+time saved.
+
+**2,799 ms → 646 ms**, measured through the shipping code path. All ten sampled
+scans named the same member before and after.
+
+### The honest cost
+
+Argmax over the whole gallery is the only rule that cannot, even in principle,
+be beaten by a candidate that was never scored. Exiting early trades that for
+speed, so the bar is set where an impostor realistically cannot reach: **twice
+the threshold** (66 by default), against a corpus where impostors scored 3-27
+and genuine pairs had a median of 84.
+
+On the live sample, genuine scans scored min 49 / median 146 / max 283. The one
+at 49 does **not** clear the bar — so that scan falls through to a full argmax
+and is decided exactly as it is today: slower, and correct. Failing to be
+decisive costs time, never accuracy, which is the direction this has to fail in.
+
+`CHURCH_BIOMETRIC_DECISIVE=9999` disables the early exit and restores exact
+argmax semantics. That is the escape hatch if a false accept is ever traced
+here.
+
+### The gallery-fetch cliff
+
+`invalidateCandidateCache()` is already called on every write that changes the
+gallery, so the TTL was never the freshness mechanism — only a backstop. It is
+now 5 minutes rather than 60 seconds, and **expiry serves the stale copy while
+refreshing underneath**, so no scan waits for a fetch.
+
+Explicit invalidation still DROPS the entry, deliberately: enrol-then-test is a
+real flow and a member just enrolled has to match on the very next press.
+
+`warmCandidateCache()` now runs on activate and on resume, so the first member
+of a service does not pay the fetch at the worst possible moment.
+
+### Not done, and the bigger lever
+
+`match_templates()` in `tools/nbis-wasm/src/nbis_wasm.c` re-parses **both**
+templates on every call — so the probe is parsed and analysed 1,188 times per
+scan, identically. Splitting it so the probe is prepared once per scan and each
+gallery template once per gallery load would cut the remaining time
+substantially **and preserve scores exactly**, since it is the same algorithm
+with the redundant work removed.
+
+It needs an emscripten rebuild of the wasm, and this machine has neither `emcc`
+nor Docker, and the NBIS sources are not vendored (`setup.sh` fetches them). So
+it is the obvious next step, not a skipped one.
+
+### One pre-existing thing the benchmark surfaced
+
+Under leave-one-out, **9 of 10** sampled members were identified correctly —
+the same 9 before and after, so this is not caused by these changes. One
+member's fresh press does not identify them at the current threshold. That is a
+false reject, and it is worth investigating separately against a wider corpus
+(the threshold note in `lib/biometrics/matching.ts` already flags that the
+calibration corpus is small).
+
+### The wasm probe re-parsing, fixed — same day
+
+The lever named as "not done" above turned out to be reachable: `emsdk` installs
+on Windows, and the NBIS sources are a `git clone` plus two headers that NBIS's
+own setup generates from `.src` templates.
+
+`match_templates()` is a **1:1 verification** call. Using it for 1:N was the
+whole problem, because `bozorth_main` is literally:
+
+    probe_len = bozorth_probe_init( pstruct );      <- parse + O(n^2) Web build
+    return bozorth_to_gallery( probe_len, pstruct, gstruct );
+
+so a 1,236-template gallery rebuilt the **same** probe Web 1,236 times to
+produce 1,236 identical intermediate results.
+
+NBIS already ships the split — `bz_drvrs.c` documents `bozorth_probe_init` as
+being for exactly this scenario. Three new entry points expose it:
+
+| | when it runs |
+|---|---|
+| `set_probe()` | once per **scan** |
+| `prepare_template()` | once per **gallery load** |
+| `match_prepared()` | the per-comparison work, and only that |
+
+`struct xyt_struct` is ~2.4 KB, so holding the whole gallery parsed is under
+3 MB — cheap enough that parsing belongs at load time rather than in the loop.
+
+### Proven identical, not assumed
+
+The old artifact was still in `public/nbis/`, so both were run side by side over
+the real gallery: **7,416 score comparisons across 6 probes, 0 mismatches.**
+Also checked: a prepared template reused three times scores the same each time,
+and switching probes mid-life does not contaminate the next result.
+
+That equivalence is expected — this is the same call sequence with the
+loop-invariant half hoisted — but "expected" and "checked" are different claims,
+and this is a matcher.
+
+### The numbers
+
+Measured on the live gallery, which had grown to 103 members / 1,236 templates
+(so this is *more* work than the 2,799 ms baseline was doing):
+
+| | before | after |
+|---|---|---|
+| full scan, no early exit | 2,799 ms | **935 ms** |
+| + decisive early exit | — | 565 ms |
+| + unmarked-first ordering | 646 ms | **225 ms** |
+
+**~2.8 s → ~0.23 s end to end**, and every configuration named the same member
+on all ten sampled scans.
+
+### Two things the build needed
+
+`build.sh` word-split its source lists, so a checkout under a path containing a
+space (any Windows home directory) handed `emcc` half a directory name. Fixed
+with arrays.
+
+It also assumed the bridge's `setup.sh` had run, because two NBIS headers are
+generated from `.src` templates. The wasm build needs neither the native
+binaries nor Linux — only those headers — so it now generates them itself. A
+bare clone used to fail with `'an2k.h' file not found`, which is a confusing way
+to say "a prerequisite script has not run".
+
+And `build.sh` now copies the result to `public/nbis/`. There is one artifact on
+purpose; a rebuild that forgot the copy would leave the deployed matcher stale,
+and the symptom is nothing at all — the old build works, just slowly.

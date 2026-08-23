@@ -231,7 +231,62 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **`null` from `BiometricService.match()` means exactly one thing:** the
   matcher ran and nobody matched. Every other failure throws
   `MatcherUnavailableError` and becomes a 503 the kiosk can explain.
+- **Identification stops early on a DECISIVE score, and only then.** Scoring
+  every template and taking the argmax cost **2,799 ms per scan** on the live
+  gallery (99 members, 1,188 templates) — measured, not estimated. A score at
+  or above `decisiveScore(threshold)` (2x the threshold) ends the search;
+  anything less still falls through to the full argmax and is decided exactly
+  as before. Failing to be decisive costs TIME, never accuracy — that is the
+  direction this must fail in. `CHURCH_BIOMETRIC_DECISIVE=9999` disables it and
+  restores exact argmax, which is the escape hatch if a false accept is ever
+  traced here.
+- **`orderByLikelihood` ORDERS the gallery, it never filters it.** Members
+  already marked at this occurrence go last, because the next person at the
+  sensor is almost never one of them. They must stay in the gallery: somebody
+  who scans twice has to be identified so the kiosk can say "already checked
+  in" BY NAME rather than "not recognised" (PRD §4). Ordering only pays off
+  together with the early exit — argmax looks at everything regardless.
+- **`already_marked` on the matcher scope is a HINT and may be stale or empty.**
+  It lives in process memory, so a fresh serverless instance knows nobody and
+  simply gets no speed-up. Never read it to decide anything; `existingRecord`
+  asks the database and is the source of truth.
+- **The candidate cache serves STALE on expiry and DROPS on invalidation**, and
+  the asymmetry is deliberate. Fetching the live gallery takes **5.7 seconds**;
+  at the old 60s TTL that bill landed on one member a minute, who stood there
+  for eight seconds with nothing on screen to explain it. Expiry now serves the
+  stale copy and refreshes underneath. An explicit `invalidateCandidateCache()`
+  still drops the entry, because enrol-then-immediately-test is a real flow and
+  a member just enrolled must match on the very next press.
+- **`warmCandidateCache()` runs on activate and on resume.** Without it the
+  FIRST member of the service pays the whole gallery fetch, at the worst
+  possible moment and the one everybody notices.
 - **Never store raw fingerprint images.** Templates only, `xyt:<base64>`.
+- **1:N identification uses `set_probe` + `match_prepared`, NEVER
+  `match_templates` in a loop.** `match_templates` is a 1:1 VERIFICATION call
+  that parses both templates and rebuilds the probe's O(n²) comparison Web on
+  every invocation — so a 1,236-template gallery rebuilt the same Web 1,236
+  times to produce 1,236 identical intermediate results. Measured cost of that
+  mistake: **2,799 ms** per scan, against 935 ms for the same full scan through
+  the split API. `bozorth_main` IS `bozorth_probe_init` + `bozorth_to_gallery`;
+  NBIS ships the split for exactly this case and `bz_drvrs.c` says so.
+- **The probe Web lives in NBIS globals, so `set_probe` is per-SCAN and the
+  matcher is not thread-safe.** That is what makes reuse possible at all. One
+  scan at a time per process; `match_prepared` returns -1 if no probe was set,
+  rather than scoring against whatever was left behind.
+- **Prepared gallery templates are cached by WIRE STRING, not by member.** The
+  same template re-fetched after a gallery refresh is the same string, so a
+  cache tick does not re-parse 1,236 templates. `invalidateCandidateCache()`
+  frees them — skipping that leaks wasm memory on every enrolment and keeps a
+  deleted member's fingerprints resident.
+- **`matchWithWasm` falls back to `match_templates` when the artifact is old.**
+  `public/nbis/` is committed, and server code can be deployed against a wasm
+  build that has not been refreshed. The fallback is correct and slow; without
+  it, the deploy would crash on `M._set_probe is not a function`.
+- **`tools/nbis-wasm/build.sh` publishes to `public/nbis/` itself.** There is
+  ONE artifact on purpose — the browser fetches it and the Next server loads the
+  same file, so they cannot drift into disagreeing about scores. A rebuild that
+  forgot the copy would leave the deployed matcher stale, and the symptom is
+  nothing at all: the old build works, just slowly.
 - **A member photo can be TAKEN as well as uploaded, and upload never goes
   away.** `navigator.mediaDevices` is undefined outside a secure context, which
   is exactly how a kiosk PC on a church LAN is reached over plain http — so
@@ -316,6 +371,7 @@ NEXT_PUBLIC_APPWRITE_PROJECT_ID
 NEXT_PUBLIC_CHURCH_BRIDGE_URL    # optional, default http://127.0.0.1:7788
 CHURCH_BIOMETRIC_MATCHER_URL     # optional — set on a PC kiosk running the bridge
 CHURCH_BIOMETRIC_THRESHOLD       # optional, default 33
+CHURCH_BIOMETRIC_DECISIVE        # optional, default threshold x2 - see below
 CHURCH_WASM_MATCHER              # optional, "0" disables the in-process matcher
 
 NEXT_PUBLIC_VAPID_PUBLIC_KEY     # optional — without it, push is off and says so
