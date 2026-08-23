@@ -97,13 +97,19 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
         title={group.name}
         subtitle={group.description ?? 'A constituency — where these members live.'}
         actions={
-          isAdmin && (
-            <>
+          <>
+            {/* A head gets this too. Registering somebody into the constituency
+                they run is the second write the read-only rule makes room for,
+                alongside claiming an unassigned member below — see PRD 5.2. */}
+            <Button color="primary" href={`/constituencies/${id}/register`}>
+              Register a member
+            </Button>
+            {isAdmin && (
               <Button plain onClick={handleDelete} disabled={remove.isPending}>
                 Delete
               </Button>
-            </>
-          )
+            )}
+          </>
         }
       />
 
@@ -154,7 +160,12 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
 
       {tab === 'members' ? (
         <Card padded={false}>
-          <GroupRosterTable members={members} linkToMembers={isAdmin} />
+          <GroupRosterTable
+            members={members}
+            memberHref={(mid) =>
+              isAdmin ? `/members/${mid}` : `/my-groups/members/${mid}`
+            }
+          />
         </Card>
       ) : !isAdmin ? (
         <Card>
@@ -206,8 +217,9 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
 
       {!isAdmin && (
         <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
-          You are signed in as a head. You can add unassigned members to this constituency;
-          everything else here is read-only.{' '}
+          You are signed in as a head. You can register new members into this constituency, add
+          unassigned ones to it, and open any member to correct their details. Moving somebody
+          between constituencies, and enrolling fingerprints, is an administrator&rsquo;s.{' '}
           <Link href="/my-groups" className="underline">
             Your other groups
           </Link>

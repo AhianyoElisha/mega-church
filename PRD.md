@@ -514,13 +514,66 @@ and never a 403 that would read as a broken login.
 
 ### 5.2 What a head can and cannot do
 
-**Read-only.** Their members' details, birthdays, and how often each has
-attended. They cannot register members, edit them, create groups, or move
-anyone between groups.
+**Read-only, with three named exceptions, all of them inside their own group.**
+
+They see their members' details, birthdays, and how often each has attended.
+They may also:
+
+1. **claim an unassigned member** into a constituency they head — someone
+   registered before the constituencies existed and filed nowhere since;
+2. **register a new member** into it, collecting every detail in §1.1 except
+   the ones listed below;
+3. **correct an existing member's details** — anyone in a constituency **or** a
+   bacenta they head;
+4. **set a member's photo**, because it is taken at the desk the person is
+   standing at (§2.4).
+
+The reason is the same one behind (1): the head is the person in front of the
+member, and routing every correction through an admin is how a phone number
+stays wrong.
+
+Note that (2) and (3) are scoped DIFFERENTLY, and it is not an oversight.
+Registering demands a constituency the head runs, because a bacenta head has no
+basis for saying where somebody lives. Editing a member who already exists
+reaches anyone their group pages already show them in full.
+
+**A head's bacenta ticks are merged, not substituted.** They are only ever
+shown the bacentas they head, so saving that list as the member's whole answer
+would remove them from every other one. Memberships outside a head's reach pass
+through untouched.
+
+**A head never enrols fingerprints.** `/api/biometrics/enroll` is admin-only
+and is not reachable from the head's flow. A head registers the person; an
+admin enrols them at the machine the scanner is attached to. A member with no
+templates is a normal intermediate state — they can be marked present by hand,
+just not by the kiosk.
+
+Three fields are withheld from a head's registration and forced server-side,
+because a head has no basis for the answer:
+
+| Field | Forced to | Why |
+|---|---|---|
+| `constituency_id` | the group they came from | Offering the full list would offer neighbours' constituencies, which they would then be refused for picking. **Omitting it is refused, never defaulted** — see §2.9's rule for the same reason. |
+| `status` | `active` | `inactive` is what removes somebody from the matcher's gallery. Not a registration-desk decision. |
+| `sms_template_id` | `null` (the standard message) | It picks which text the church pays to send, in the church's voice. `/api/sms/*` refuses a `leader` outright, so they cannot even see the wordings. |
+
+Bacentas may be ticked, but only ones the head themselves heads. A constituency
+head who runs no bacenta is offered none, and the section says so rather than
+disappearing without explanation.
+
+On an edit the same three fields are refused, **by name and with a reason**,
+rather than dropped — a head told nothing assumes the edit saved. The one
+exception is a `constituency_id` resent unchanged, which the shared form always
+sends and which is not a move.
+
+Still admin-only: moving anyone between groups, removing anyone from a group,
+marking anyone inactive, deleting a member, creating or deleting groups, and
+enrolment.
 
 Enforcement is server-side and absolute: `canReadGroup` is consulted on every
-group read, and the group id is never taken from anything the client sent when
-listing. A head putting somebody else's bacenta id in a URL gets a 403.
+group read, `headRegistrationScope` narrows every head registration, and the
+group id is never taken from anything the client sent when listing. A head
+putting somebody else's bacenta id in a URL gets a 403.
 
 ---
 

@@ -107,10 +107,17 @@ export function useAssignConstituency() {
 
 // --- bacentas ---------------------------------------------------------------
 
-export function useBacentas() {
+/**
+ * `enabled` for the same reason `useConstituencies` has it: `/api/bacentas` is
+ * admin data and answers a `leader` with 403. A head opening the registration
+ * form must not fire it — the request fails, caches as an error, and gives the
+ * page a failure to explain that has nothing to do with anything they did.
+ */
+export function useBacentas(options: { enabled?: boolean } = {}) {
   return useQuery<ListBacentasResponse>({
     queryKey: queryKeys.bacentas,
     queryFn: () => apiFetch('/api/bacentas'),
+    enabled: options.enabled ?? true,
   })
 }
 

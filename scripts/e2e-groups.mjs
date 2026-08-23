@@ -24,13 +24,28 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BASE = process.env.BASE_URL ?? 'http://localhost:3111'
 
-const env = Object.fromEntries(
-  fs
-    .readFileSync(path.join(ROOT, '.env.local'), 'utf8')
-    .split(/\r?\n/)
-    .filter((l) => l.includes('=') && !l.trimStart().startsWith('#'))
-    .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
-)
+/**
+ * `.env.local` first, then the real environment ON TOP.
+ *
+ * The override matters when the seeded credentials have drifted from what the
+ * project actually holds — someone changes the admin password in the console,
+ * or the template `leader` account is replaced by the church’s real heads, and
+ * the suite stops being runnable at all. Being able to point it at a throwaway
+ * pair for one run is the difference between running it and shelving it. It is
+ * also what lets CI supply credentials it will never write to a file.
+ */
+const env = {
+  ...Object.fromEntries(
+    fs
+      .readFileSync(path.join(ROOT, '.env.local'), 'utf8')
+      .split(/\r?\n/)
+      .filter((l) => l.includes('=') && !l.trimStart().startsWith('#'))
+      .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
+  ),
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(([k, v]) => k.startsWith('SEED_') && v),
+  ),
+}
 
 let failures = 0
 const ok = (m) => console.log(`  ✓ ${m}`)
@@ -362,13 +377,211 @@ async function main() {
         ? ok('a head cannot create groups (403) — read-only, as specified')
         : bad(`leader creating a bacenta gave ${writeAttempt.status}`)
 
-      const memberWrite = await leader('/api/members', {
+      // --- a head registering a member ------------------------------------
+      //
+      // The one creating write the read-only rule makes room for (PRD 5.2).
+      // Every check below is a boundary that, if it moved, would be invisible
+      // afterwards: the member simply turns up in the wrong roster, or
+      // registered as somebody a scanner will never recognise.
+      const base = { last_name: `Registered ${stamp}`, call_number: '0240000001' }
+
+      const noHome = await leader('/api/members', {
         method: 'POST',
-        body: JSON.stringify({ first_name: 'No', last_name: 'Way', call_number: '0240000000' }),
+        body: JSON.stringify({ ...base, first_name: 'Nowhere' }),
       })
-      memberWrite.status === 403
-        ? ok('a head cannot register members (403)')
-        : bad(`leader creating a member gave ${memberWrite.status}`)
+      noHome.status === 400
+        ? ok('a head who omits the constituency is REFUSED, not defaulted into one')
+        : bad(`leader registering with no constituency gave ${noHome.status}`)
+
+      // A real constituency, headed by nobody — so the refusal is about who
+      // heads it and not about the id being made up.
+      const otherC = await admin('/api/constituencies', {
+        method: 'POST',
+        body: JSON.stringify({ name: `E2E Elsewhere ${stamp}` }),
+      })
+      if (otherC.status === 201) created.constituencies.push(otherC.body.constituency.$id)
+
+      const notTheirs = await leader('/api/members', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...base,
+          first_name: 'Neighbour',
+          constituency_id: otherC.body?.constituency?.$id,
+        }),
+      })
+      notTheirs.status === 403
+        ? ok("a head cannot register into another constituency (403)")
+        : bad(`leader registering into an unheaded constituency gave ${notTheirs.status}`)
+
+      const foreignBacenta = await leader('/api/members', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...base,
+          first_name: 'Wrongchoir',
+          constituency_id: constituencyId,
+          bacenta_ids: [biazo.body.bacenta.$id],
+        }),
+      })
+      foreignBacenta.status === 403
+        ? ok('a head cannot put a new member into a bacenta they do not head (403)')
+        : bad(`leader registering into an unheaded bacenta gave ${foreignBacenta.status}`)
+
+      // The positive case, and the three forced fields with it. `status` and
+      // `sms_template_id` are sent deliberately wrong: the server must ignore
+      // both rather than trust a form it did not draw.
+      const registered = await leader('/api/members', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...base,
+          first_name: 'Properly',
+          other_names: 'Head Registered',
+          birth_month: 3,
+          birth_day: 14,
+          address: '12 Test Street',
+          whatsapp_number: '0240000002',
+          home_service: 'first',
+          constituency_id: constituencyId,
+          bacenta_ids: [tech.body.bacenta.$id],
+          status: 'inactive',
+          sms_template_id: 'some-template-they-cannot-see',
+        }),
+      })
+      if (registered.status !== 201) {
+        bad(`head registering into their own constituency gave ${registered.status}: ${JSON.stringify(registered.body)}`)
+      } else {
+        const m = registered.body.member
+        created.members.push(m.$id)
+        ok('a head registers a member into the constituency they head (201)')
+
+        m.constituency_id === constituencyId
+          ? ok('the new member is filed into that constituency')
+          : bad(`new member filed into ${m.constituency_id}`)
+        m.status === 'active'
+          ? ok('status is FORCED active — a head cannot register somebody invisible to the scanner')
+          : bad(`head-registered member has status ${m.status}`)
+        m.sms_template_id === null
+          ? ok('the birthday template is FORCED null, not taken from the request')
+          : bad(`head-registered member has sms_template_id ${m.sms_template_id}`)
+        // Every other detail is the head's to give, and must survive intact.
+        m.call_number === '+233240000001' && m.whatsapp_number === '+233240000002'
+          ? ok('both numbers normalised to +233 exactly as an admin registration would')
+          : bad(`numbers came back ${m.call_number} / ${m.whatsapp_number}`)
+        m.birth_month === 3 && m.birth_day === 14 && m.home_service === 'first'
+          ? ok('birthday and usual service saved from a head registration')
+          : bad('birthday or usual service lost on a head registration')
+        ;(registered.body.bacenta_ids ?? []).includes(tech.body.bacenta.$id)
+          ? ok('and into the one bacenta they DO head')
+          : bad('the bacenta they head was not applied')
+
+        // --- a head editing their own member --------------------------------
+        const readBack = await leader(`/api/members/${m.$id}`)
+        readBack.status === 200 && readBack.body?.constituency_name
+          ? ok('a head can open one of their members, constituency resolved by NAME')
+          : bad(`head reading their own member gave ${readBack.status}`)
+
+        const fixed = await leader(`/api/members/${m.$id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ call_number: '0249999999', address: '13 Test Street' }),
+        })
+        fixed.status === 200 && fixed.body?.member?.call_number === '+233249999999'
+          ? ok('a head corrects a mistyped number on their own member (200)')
+          : bad(`head editing their member gave ${fixed.status}: ${JSON.stringify(fixed.body)}`)
+
+        // The three refusals, each of which must NAME the field rather than
+        // drop it — a head told nothing assumes the edit landed.
+        const flip = await leader(`/api/members/${m.$id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'inactive' }),
+        })
+        flip.status === 403
+          ? ok('a head cannot mark a member inactive (403) — that hides them from the scanner')
+          : bad(`head setting status gave ${flip.status}`)
+
+        const retemplate = await leader(`/api/members/${m.$id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ sms_template_id: 'anything' }),
+        })
+        retemplate.status === 403
+          ? ok('a head cannot change which birthday message a member is sent (403)')
+          : bad(`head setting sms_template_id gave ${retemplate.status}`)
+
+        const move = await leader(`/api/members/${m.$id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ constituency_id: otherC.body?.constituency?.$id }),
+        })
+        move.status === 403
+          ? ok('a head cannot MOVE a member to another constituency (403)')
+          : bad(`head moving a member gave ${move.status}`)
+
+        const resend = await leader(`/api/members/${m.$id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ constituency_id: constituencyId, address: '14 Test Street' }),
+        })
+        resend.status === 200
+          ? ok('resending the constituency they already have is not a move')
+          : bad(`head resending the same constituency gave ${resend.status}`)
+
+        // The merge, and the reason it exists. An admin puts the member into a
+        // bacenta the head does NOT head; the head then saves a form that only
+        // ever drew their own bacentas. The one they cannot see must survive.
+        await admin(`/api/bacentas/${biazo.body.bacenta.$id}/members`, {
+          method: 'POST',
+          body: JSON.stringify({ member_ids: [m.$id], mode: 'add' }),
+        })
+        const cleared = await leader(`/api/members/${m.$id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ bacenta_ids: [] }),
+        })
+        const after = cleared.body?.bacenta_ids ?? []
+        cleared.status === 200 &&
+        after.includes(biazo.body.bacenta.$id) &&
+        !after.includes(tech.body.bacenta.$id)
+          ? ok('a head unticking their own bacenta does NOT remove the one they cannot see')
+          : bad(`bacenta merge went wrong (${cleared.status}): ${JSON.stringify(after)}`)
+
+        // Enrolment is the line this feature does not cross.
+        const enrolAttempt = await leader('/api/biometrics/enroll', {
+          method: 'POST',
+          body: JSON.stringify({ member_id: m.$id, finger_label: 'right-thumb', variation: 1 }),
+        })
+        enrolAttempt.status === 403
+          ? ok('a head still cannot enrol fingerprints (403) — that stays with an admin')
+          : bad(`leader enrolling gave ${enrolAttempt.status}`)
+
+        const deleteAttempt = await leader(`/api/members/${m.$id}`, { method: 'DELETE' })
+        deleteAttempt.status === 403
+          ? ok('and cannot delete a member (403)')
+          : bad(`leader deleting a member gave ${deleteAttempt.status}`)
+
+        // Somebody outside every group they head, to prove the scope is a
+        // scope and not "any member the head knows the id of".
+        const stranger = await admin('/api/members', {
+          method: 'POST',
+          body: JSON.stringify({
+            first_name: 'Stranger',
+            last_name: `Elsewhere ${stamp}`,
+            call_number: '0240000009',
+            constituency_id: otherC.body?.constituency?.$id,
+            bacenta_ids: [],
+          }),
+        })
+        if (stranger.status === 201) {
+          created.members.push(stranger.body.member.$id)
+          const peek = await leader(`/api/members/${stranger.body.member.$id}`)
+          peek.status === 403
+            ? ok('a head cannot open a member outside every group they head (403)')
+            : bad(`head reading a stranger gave ${peek.status}`)
+          const poke = await leader(`/api/members/${stranger.body.member.$id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ address: 'Nope' }),
+          })
+          poke.status === 403
+            ? ok('and cannot edit them either (403)')
+            : bad(`head editing a stranger gave ${poke.status}`)
+        } else {
+          bad(`could not create the out-of-scope member (${stranger.status})`)
+        }
+      }
     } else {
       bad('leader account unavailable — scoping checks skipped')
     }

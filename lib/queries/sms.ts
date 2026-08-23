@@ -33,11 +33,18 @@ function useSmsMutation<TData, TVars>(fn: (vars: TVars) => Promise<TData>) {
   })
 }
 
-export function useSmsTemplates(category?: SmsCategory) {
+/**
+ * `enabled` is not an optimisation. Every `/api/sms/*` route refuses a `leader`
+ * with 403, so the member form must not fetch templates when a head is filling
+ * it in — the failure would surface on their screen as a broken page rather
+ * than as the field they are simply not offered.
+ */
+export function useSmsTemplates(category?: SmsCategory, options: { enabled?: boolean } = {}) {
   return useQuery<ListTemplatesResponse>({
     queryKey: queryKeys.smsTemplates(category),
     queryFn: () =>
       apiFetch(`/api/sms/templates${category ? `?category=${category}` : ''}`),
+    enabled: options.enabled ?? true,
   })
 }
 

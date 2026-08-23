@@ -117,7 +117,19 @@ export type ListMembersResponse =
   | { ok: false; error: string }
 
 export type MemberResponse =
-  | { ok: true; member: Member; bacenta_ids?: string[] }
+  | {
+      ok: true
+      member: Member
+      bacenta_ids?: string[]
+      /**
+       * The member's constituency by NAME, resolved by the route.
+       *
+       * Here because a group head cannot look it up: `/api/constituencies` is
+       * admin data and answers them 403. Without it their edit form could only
+       * show a raw id where the rest of the app shows "Ahodwo".
+       */
+      constituency_name?: string | null
+    }
   | { ok: false; error: string }
 
 export type MemberStatsResponse = {

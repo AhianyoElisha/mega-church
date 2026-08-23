@@ -85,7 +85,48 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **`leader` is ONE label covering both kinds of head.** The same person often
   heads a constituency and a bacenta, and two labels would mean two logins.
   The label grants nothing; scope comes from `leaderScope()` per request, and
-  every group read goes through `canReadGroup()`. A head is read-only.
+  every group read goes through `canReadGroup()`.
+- **A head writes in exactly FOUR places, and every one is inside their own
+  group.** The exceptions are enumerated rather than described, because "mostly
+  read-only" is not a rule anyone can check code against:
+
+  1. claiming an UNASSIGNED member into their constituency
+     (`POST /api/constituencies/[id]/members`, `onlyUnassigned`)
+  2. registering a NEW member into it (`POST /api/members`)
+  3. correcting an existing member's details (`PATCH /api/members/[id]`)
+  4. setting a member's photo (`POST /api/members/[id]/photo`)
+
+  Everything else — moving anyone between groups, marking anyone inactive,
+  creating or deleting groups, deleting a member, and **all biometric
+  enrolment** — stays admin-only. A head registers and corrects the person; an
+  admin enrols the fingerprints, on the machine the scanner is plugged into.
+- **REGISTERING is constituency-scoped; EDITING is group-scoped.** The two
+  scopes differ on purpose. A bacenta head has no basis for saying where
+  somebody LIVES, so `headRegistrationScope()` demands a constituency they
+  head. Editing a member who already exists is different: `headEditScope()`
+  admits anyone in a constituency **or** a bacenta they head — the same set
+  their group page already shows them in full.
+- **A head's bacenta ticks are MERGED, never written verbatim
+  (`headBacentaMerge`).** A head is only ever shown the bacentas they head, so
+  saving that list as the member's complete answer would remove them from every
+  other one — a constituency head correcting a phone number would silently take
+  somebody out of the choir. It is the `undefined`/`[]` hazard one level deeper,
+  and the same bug wearing a different hat.
+- **A head's refused field is refused BY NAME, never silently dropped.** A
+  `PATCH` carrying `status` or `sms_template_id` is a 403 that says which one
+  and why. Stripping it would return 200 and leave the head believing the edit
+  landed. The one exception is `constituency_id` resent UNCHANGED: the shared
+  form always sends it, and resending what is already stored is not a move.
+- **A head's registration is narrowed by `headRegistrationScope()`, not by the
+  form.** It is pure and unit-tested, and the route forces `status: 'active'`
+  and `sms_template_id: null` afterwards rather than reading them from the
+  request. `inactive` is what hides a member from the matcher, and the template
+  picks which text the church pays to send — neither is a registration-desk
+  decision, and a hidden form field is not what stops one being made.
+- **A head who omits `constituency_id` on a registration is REFUSED, never
+  defaulted to their first group** — the same rule as `/api/reports/export`,
+  for the same reason. A guessed constituency is invisible afterwards: the
+  member just appears in the wrong roster and nobody knows to look.
 - **A leader with no groups is not an error.** Empty lists, with an
   explanation. A 403 there reads as a broken login.
 - **Birthdays are shown the DAY BEFORE** — `BIRTHDAY_LEAD_DAYS`. The dashboard,

@@ -15,6 +15,39 @@ import { useSmsTemplates } from '@/lib/queries/sms'
 import { buildBacentaTree } from '@/lib/groups/tree'
 import type { Member, MemberInput } from '@/lib/members/types'
 
+/**
+ * The form a constituency HEAD fills in, expressed as what they are NOT asked.
+ *
+ * Not a second form and not a read-only copy — the same component, so a field
+ * added for an admin cannot silently go missing for a head. What is withheld is
+ * withheld because the head has no basis for the answer, and every one of these
+ * is ALSO enforced in `POST /api/members`; hiding a control is not security
+ * (PRD §2.5).
+ *
+ *   constituency  shown as a fact rather than a choice. They are registering
+ *                 into the group whose page they came from, and offering the
+ *                 full list would offer neighbours' constituencies they would
+ *                 then be refused for picking.
+ *   bacentas      only the ones they head, and the whole section disappears
+ *                 when they head none — which is the common case, since most
+ *                 constituency heads run no choir.
+ *   status        an `inactive` member is invisible to the scanner. Not a
+ *                 registration-desk decision.
+ *   birthday      picks which text the church sends, in the church's voice and
+ *                 at its cost. `/api/sms/*` refuses a leader outright.
+ */
+export type MemberFormRestriction = {
+  constituency: { id: string; name: string }
+  bacentas: { $id: string; name: string; category_name: string | null }[]
+}
+
+type BacentaSection = {
+  key: string
+  /** Null renders the ticks with no heading above them. */
+  heading: string | null
+  items: { id: string; name: string }[]
+}
+
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -28,6 +61,7 @@ export type MemberFormValues = MemberInput
 export default function MemberForm({
   initial,
   initialBacentaIds,
+  restrict,
   submitLabel,
   submitting,
   error,
@@ -37,6 +71,8 @@ export default function MemberForm({
   initial?: Member
   /** Which bacentas this member already serves in, when editing. */
   initialBacentaIds?: string[]
+  /** Set when a group head is filling this in. Omitted ⇒ the admin form. */
+  restrict?: MemberFormRestriction
   submitLabel: string
   submitting?: boolean
   error?: string | null
@@ -53,27 +89,78 @@ export default function MemberForm({
   const [whatsapp, setWhatsapp] = useState(initial?.whatsapp_number ?? '')
   const [homeService, setHomeService] = useState(initial?.home_service ?? 'second')
   const [status, setStatus] = useState(initial?.status ?? 'active')
-  const [constituency, setConstituency] = useState(initial?.constituency_id ?? '')
+  const [constituency, setConstituency] = useState(
+    restrict?.constituency.id ?? initial?.constituency_id ?? '',
+  )
   const [smsTemplate, setSmsTemplate] = useState(initial?.sms_template_id ?? '')
   const [bacentas, setBacentas] = useState<Set<string>>(new Set(initialBacentaIds ?? []))
   const [localError, setLocalError] = useState<string | null>(null)
 
-  const constituencyQuery = useConstituencies()
-  const birthdayTemplates = useSmsTemplates('birthday')
-  const bacentaQuery = useBacentas()
+  // All three of these are admin-only endpoints. A head must not fire any of
+  // them: the 403 would cache as an error and put a failure on their screen
+  // that has nothing to do with anything they did.
+  const restricted = !!restrict
+  const constituencyQuery = useConstituencies({ enabled: !restricted })
+  const birthdayTemplates = useSmsTemplates('birthday', { enabled: !restricted })
+  const bacentaQuery = useBacentas({ enabled: !restricted })
 
   const constituencies = constituencyQuery.data?.ok
     ? constituencyQuery.data.constituencies
     : []
 
-  // The same tree the bacentas page renders, so the choices here are grouped
-  // exactly as an admin arranged them: choirs under Choir, Technical Team on
-  // its own. Orphans are included rather than hidden — a bacenta with real
-  // members in it must remain pickable even if its category was deleted.
-  const bacentaTree = useMemo(() => {
+  /**
+   * The tick-list, from whichever source this form has.
+   *
+   * For an admin it is the same tree the bacentas page renders, so the choices
+   * are grouped exactly as they arranged them: choirs under Choir, Technical
+   * Team on its own. Orphans are included rather than hidden — a bacenta with
+   * real members in it must remain pickable even if its category was deleted.
+   *
+   * For a head it is just the bacentas they run, grouped by the category name
+   * that came with them. One shape either way, so the markup below does not
+   * fork on who is looking at it.
+   */
+  const bacentaSections = useMemo<BacentaSection[] | null>(() => {
+    if (restrict) {
+      const byHeading = new Map<string, BacentaSection>()
+      for (const b of restrict.bacentas) {
+        const heading = b.category_name ?? 'Other'
+        const section = byHeading.get(heading)
+        const item = { id: b.$id, name: b.name }
+        if (section) section.items.push(item)
+        else byHeading.set(heading, { key: heading, heading, items: [item] })
+      }
+      return [...byHeading.values()]
+    }
+
     if (!bacentaQuery.data?.ok) return null
-    return buildBacentaTree(bacentaQuery.data.categories, bacentaQuery.data.bacentas)
-  }, [bacentaQuery.data])
+    const tree = buildBacentaTree(bacentaQuery.data.categories, bacentaQuery.data.bacentas)
+    const sections: BacentaSection[] = tree.categories
+      // An empty category is worth keeping on the bacentas page (it is about to
+      // be filled) but not here, where it would be a heading with nothing to
+      // tick under it.
+      .filter((group) => group.bacentas.length > 0)
+      .map((group) => ({
+        key: group.category.$id,
+        heading: group.category.name,
+        items: group.bacentas.map((b) => ({ id: b.$id, name: b.name })),
+      }))
+    if (tree.standalone.length > 0) {
+      sections.push({
+        key: 'standalone',
+        heading: 'Other',
+        items: tree.standalone.map((b) => ({ id: b.$id, name: b.name })),
+      })
+    }
+    if (tree.orphans.length > 0) {
+      sections.push({
+        key: 'orphans',
+        heading: null,
+        items: tree.orphans.map((b) => ({ id: b.$id, name: `${b.name} (category missing)` })),
+      })
+    }
+    return sections
+  }, [restrict, bacentaQuery.data])
 
   const toggleBacenta = (id: string) => {
     setBacentas((prev) => {
@@ -116,15 +203,15 @@ export default function MemberForm({
       home_service: homeService,
       // '' is the "—" option, which means "not recorded", not a group id.
       constituency_id: constituency || null,
-      // '' means "use the standard message", which is `null` on the wire. It is
-      // never "send nothing" — a member with no override still gets a birthday
-      // text, just the same one as everybody else.
-      sms_template_id: smsTemplate || null,
       // Always sent, including as `[]`. The route treats an absent key as
       // "leave bacentas alone" and an empty array as "clear them" — and this
       // form always knows the complete answer for this person, so it says so.
       bacenta_ids: [...bacentas],
-      status,
+      // The two fields a head is not asked for are OMITTED rather than sent
+      // with a made-up value. On create the server supplies `active` and the
+      // standard birthday message; sending them from a form that never showed
+      // them would be this component asserting an answer it does not have.
+      ...(restricted ? {} : { sms_template_id: smsTemplate || null, status }),
     })
   }
 
@@ -243,143 +330,144 @@ export default function MemberForm({
                 marked present at either service.
               </Description>
             </Field>
-            <Field>
-              <Label>Status</Label>
-              <Select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as 'active' | 'inactive')}
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </Select>
-              <Description>An inactive member cannot be matched by a scanner.</Description>
-            </Field>
+            {!restricted && (
+              <Field>
+                <Label>Status</Label>
+                <Select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as 'active' | 'inactive')}
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </Select>
+                <Description>An inactive member cannot be matched by a scanner.</Description>
+              </Field>
+            )}
           </div>
         </FieldGroup>
 
         <FieldGroup>
           <Legend>Constituency</Legend>
-          <Field>
-            <Label>Where they live</Label>
-            <Select
-              value={constituency}
-              onChange={(e) => setConstituency(e.target.value)}
-              disabled={constituencyQuery.isLoading}
-            >
-              <option value="">— not recorded —</option>
-              {constituencies.map((c) => (
-                <option key={c.$id} value={c.$id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-            <Description>
-              A member belongs to exactly one constituency. It can be left blank now and filled
-              in later from the constituency page, which assigns many members at once.
-            </Description>
-          </Field>
-          {constituencies.length === 0 && !constituencyQuery.isLoading && (
-            <p className="text-sm text-neutral-500 dark:text-neutral-400">
-              No constituencies have been created yet.
-            </p>
+          {restrict ? (
+            // A statement, not a disabled <Select>. A greyed-out dropdown reads
+            // as "this is broken"; a sentence reads as "this is settled", which
+            // is what it is — they came here from that constituency's own page.
+            <div className="rounded-xl bg-neutral-50 px-4 py-3 ring-1 ring-neutral-900/5 dark:bg-neutral-900/40 dark:ring-white/10">
+              <p className="text-sm text-neutral-500 dark:text-neutral-400">Where they live</p>
+              <p className="font-semibold text-neutral-950 dark:text-white">
+                {restrict.constituency.name}
+              </p>
+              <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                {initial
+                  ? 'Moving a member to a different constituency is an administrator’s job. Everything else on this form you can change yourself.'
+                  : 'You are registering into the constituency you head. To file somebody into a different one, ask an administrator.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              <Field>
+                <Label>Where they live</Label>
+                <Select
+                  value={constituency}
+                  onChange={(e) => setConstituency(e.target.value)}
+                  disabled={constituencyQuery.isLoading}
+                >
+                  <option value="">— not recorded —</option>
+                  {constituencies.map((c) => (
+                    <option key={c.$id} value={c.$id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+                <Description>
+                  A member belongs to exactly one constituency. It can be left blank now and filled
+                  in later from the constituency page, which assigns many members at once.
+                </Description>
+              </Field>
+              {constituencies.length === 0 && !constituencyQuery.isLoading && (
+                <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                  No constituencies have been created yet.
+                </p>
+              )}
+            </>
           )}
         </FieldGroup>
 
-        <FieldGroup>
-          <Legend>Birthday message</Legend>
-          <Field>
-            <Label>What they are sent on their birthday</Label>
-            <Select
-              value={smsTemplate}
-              onChange={(e) => setSmsTemplate(e.target.value)}
-              disabled={birthdayTemplates.isLoading}
-            >
-              <option value="">The standard birthday message</option>
-              {(birthdayTemplates.data?.ok ? birthdayTemplates.data.templates : [])
-                .filter((t) => !t.is_default)
-                .map((t) => (
-                  <option key={t.$id} value={t.$id}>
-                    {t.name}
-                  </option>
-                ))}
-            </Select>
-            <Description>
-              Not everybody is addressed the same way, so a member can be given their own
-              wording. Leave this alone for almost everyone — the standard message is what they
-              will get, and it is never &ldquo;send nothing&rdquo;.
-            </Description>
-          </Field>
-        </FieldGroup>
+        {!restricted && (
+          <FieldGroup>
+            <Legend>Birthday message</Legend>
+            <Field>
+              <Label>What they are sent on their birthday</Label>
+              <Select
+                value={smsTemplate}
+                onChange={(e) => setSmsTemplate(e.target.value)}
+                disabled={birthdayTemplates.isLoading}
+              >
+                <option value="">The standard birthday message</option>
+                {(birthdayTemplates.data?.ok ? birthdayTemplates.data.templates : [])
+                  .filter((t) => !t.is_default)
+                  .map((t) => (
+                    <option key={t.$id} value={t.$id}>
+                      {t.name}
+                    </option>
+                  ))}
+              </Select>
+              <Description>
+                Not everybody is addressed the same way, so a member can be given their own
+                wording. Leave this alone for almost everyone — the standard message is what they
+                will get, and it is never &ldquo;send nothing&rdquo;.
+              </Description>
+            </Field>
+          </FieldGroup>
+        )}
 
         <FieldGroup>
           <Legend>Bacentas</Legend>
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            The work groups this member serves in. Tick as many as apply — someone can sing in
-            two choirs and run the sound desk at the same time.
+            {restrict
+              ? "The bacentas you head. Tick any this member also serves in — somebody can sing in two choirs and run the sound desk at the same time."
+              : "The work groups this member serves in. Tick as many as apply — someone can sing in two choirs and run the sound desk at the same time."}
           </p>
+          {restrict && initial && (
+            // Said plainly, because the alternative reading of an unticked list
+            // is "this member is in no other bacenta", and a head who believes
+            // that will report the choir membership as missing.
+            <p className="text-sm text-neutral-500 dark:text-neutral-400">
+              Only the bacentas you head are shown. If this member also serves in one you do
+              not head, it stays exactly as it is — saving this form cannot remove them
+              from it.
+            </p>
+          )}
 
           {bacentaQuery.isLoading ? (
             <p className="text-sm text-neutral-400">Loading bacentas…</p>
-          ) : !bacentaTree ||
-            (bacentaTree.categories.length === 0 &&
-              bacentaTree.standalone.length === 0 &&
-              bacentaTree.orphans.length === 0) ? (
+          ) : !bacentaSections || bacentaSections.length === 0 ? (
             <p className="text-sm text-neutral-500 dark:text-neutral-400">
-              No bacentas have been created yet.
+              {restrict
+                ? "You do not head a bacenta, so there is none to put this member into. An administrator, or the head of the bacenta, can add them afterwards."
+                : "No bacentas have been created yet."}
             </p>
           ) : (
             <div className="max-h-72 space-y-4 overflow-y-auto rounded-xl bg-neutral-50 p-4 ring-1 ring-neutral-900/5 dark:bg-neutral-900/40 dark:ring-white/10">
-              {bacentaTree.categories
-                // An empty category is worth keeping on the bacentas page (it
-                // is about to be filled) but not here, where it would be a
-                // heading with nothing to tick under it.
-                .filter((group) => group.bacentas.length > 0)
-                .map((group) => (
-                  <div key={group.category.$id}>
+              {bacentaSections.map((section) => (
+                <div key={section.key}>
+                  {section.heading && (
                     <p className="mb-1.5 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
-                      {group.category.name}
+                      {section.heading}
                     </p>
-                    <div className="grid gap-1.5 sm:grid-cols-2">
-                      {group.bacentas.map((b) => (
-                        <BacentaTick
-                          key={b.$id}
-                          id={b.$id}
-                          name={b.name}
-                          checked={bacentas.has(b.$id)}
-                          onToggle={toggleBacenta}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-
-              {bacentaTree.standalone.length > 0 && (
-                <div>
-                  <p className="mb-1.5 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
-                    Other
-                  </p>
+                  )}
                   <div className="grid gap-1.5 sm:grid-cols-2">
-                    {bacentaTree.standalone.map((b) => (
+                    {section.items.map((b) => (
                       <BacentaTick
-                        key={b.$id}
-                        id={b.$id}
+                        key={b.id}
+                        id={b.id}
                         name={b.name}
-                        checked={bacentas.has(b.$id)}
+                        checked={bacentas.has(b.id)}
                         onToggle={toggleBacenta}
                       />
                     ))}
                   </div>
                 </div>
-              )}
-
-              {bacentaTree.orphans.map((b) => (
-                <BacentaTick
-                  key={b.$id}
-                  id={b.$id}
-                  name={`${b.name} (category missing)`}
-                  checked={bacentas.has(b.$id)}
-                  onToggle={toggleBacenta}
-                />
               ))}
             </div>
           )}

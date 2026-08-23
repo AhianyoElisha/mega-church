@@ -198,9 +198,13 @@ Needs people, hardware or a decision — not more code:
    them, but no device has subscribed yet. On iPhone the app must be added to
    the Home Screen first — Safari does not deliver push to an ordinary tab, and
    the birthdays page says so before anyone tries.
-3. **The rest of the head accounts.** `npm run seed:users` creates one template
-   `leader`. The church needs one per head — create them in the Appwrite console
-   with the same `leader` label, then appoint each from its group's page.
+3. ~~**The rest of the head accounts.**~~ ✅ Done — four `leader` accounts
+   (`alos`, `tsalack`, `anagkazo`, `anadeia`) exist as of 2026-08-22, and heads
+   are now created in-app rather than in the console (Plan 3). **`.env.local`
+   was never updated:** `SEED_LEADER_EMAIL` still names the deleted template
+   account `leader@megachurch.local`, and `SEED_ADMIN_PASSWORD` is no longer
+   what `admin@megachurch.local` holds. Both break `npm run e2e:groups` until
+   corrected — see "How it was run" under the head-editing section.
 4. **Real constituency names.** "Ahodwo" was created during verification as a
    placeholder and has three members filed into it. Rename or delete it and
    create the church's actual four.
@@ -417,3 +421,133 @@ passed.
 leave no trace. Closing that means separating the mutex from the audit trail,
 a larger change to a working lock. Its quiet-day path keeps its row, so the
 common case is covered.
+
+## Constituency heads register members — 2026-08-23
+
+A head was read-only. They now have a third write, and it is the one the church
+asked for: **registering a new member into a constituency they head**, with
+every detail in PRD §1.1 except the three the church decides rather than the
+head. **Biometric enrolment is not part of it and is not reachable from it.**
+
+| Layer | Change |
+|---|---|
+| `lib/groups/tree.ts` | `headRegistrationScope()` — pure, the whole boundary in one function |
+| `POST /api/members` | `admin` → `admin \| leader`; a leader is narrowed by the above, then `status` and `sms_template_id` are FORCED |
+| `POST /api/members/[id]/photo` | `admin` → `admin \| leader`, gated on `canReadGroup` over the MEMBER's own constituency |
+| `/constituencies/[id]/register` | the head's front desk — one page, files into one group, photo on the screen after |
+| `components/member-form.tsx` | a `restrict` prop, so it is the same form minus what a head may not decide — not a second form that can drift |
+| `useBacentas` / `useSmsTemplates` | gained `enabled`, because both 403 a leader and a cached failure would put a broken page in front of them |
+
+### Why the constituency is refused rather than defaulted
+
+A head of two constituencies who does not say which one gets a 400, never
+"their first". It is the same rule `/api/reports/export` follows, for the same
+reason: a guessed constituency is invisible afterwards — the member simply
+turns up in the wrong roster and nobody knows to look.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **197 passed**, 4 skipped (was 186). 11 new, all on
+  `headRegistrationScope`: the positive case, both foreign-group refusals, the
+  omitted constituency, and a bacenta-only head, who is refused because they
+  have no basis for saying where anybody LIVES.
+- `npm run build` — 73 routes, including `/constituencies/[id]/register`.
+- Anonymous callers still get 401 from both widened routes, and the new page
+  307s to `/login` — it sits under the `/constituencies` prefix the proxy
+  already covers, so no matcher change was needed.
+
+### Proven against the live project
+
+`npm run e2e:groups` — **72 checks, all passing**, including 13 for this
+strand: an omitted constituency refused, a neighbour's constituency refused, a
+foreign bacenta refused, the positive registration, both forced fields, phone
+normalisation through a head registration, and enrolment still 403.
+
+## Heads edit their own members too — 2026-08-23
+
+The door left shut above, opened in the same session. A head may now correct any
+member in a constituency **or** a bacenta they head.
+
+| Layer | Change |
+|---|---|
+| `lib/groups/tree.ts` | `headEditScope()` and `headBacentaMerge()` |
+| `GET /api/members/[id]` | `admin \| usher` → `+ leader`, scoped; now also returns `constituency_name`, because a head cannot resolve the id themselves (`/api/constituencies` 403s them) |
+| `PATCH /api/members/[id]` | `admin` → `admin \| leader`, narrowed by `headEditScope` |
+| `/my-groups/members/[id]` | the head's member page — details, photo, nothing else |
+| `components/group-roster-table.tsx` | `linkToMembers: boolean` → `memberHref: (id) => string`, because admins and heads go to different pages for the same member |
+
+### Two decisions worth keeping
+
+**Editing is scoped wider than registering.** Registering demands a
+constituency the head runs — a bacenta head cannot say where somebody lives.
+Editing reaches anyone their group pages already show them in full. Different
+scopes, on purpose, in two separate functions.
+
+**Bacenta ticks are MERGED, not substituted.** A head only ever sees the
+bacentas they head, so writing that list as the member's complete answer would
+remove them from every other one — a constituency head correcting a phone
+number would silently take somebody out of the choir. This is the
+`undefined`/`[]` rule from `CLAUDE.md` one level deeper, and it would have
+failed in exactly the same silent way. `headBacentaMerge` carries untouchable
+memberships through, and the form says so on screen rather than showing a head
+an unticked list that reads as "in no other bacenta".
+
+A refused field is refused **by name**: a `PATCH` carrying `status` or
+`sms_template_id` gets a 403 saying which and why. Silently stripping it would
+answer 200 and leave the head believing it saved.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **214 passed**, 4 skipped (was 197). 17 new, on
+  `headEditScope` and `headBacentaMerge`, including the merge case that is the
+  whole reason the second function exists.
+- `npm run build` — 74 routes.
+
+### Proven against the live project
+
+`npm run e2e:groups` — **72 checks, all passing**, 26 of them for these two
+features together. The edit half:
+
+- a head opens one of their members, constituency resolved by NAME
+- corrects a mistyped number (200), and `0249999999` comes back `+233249999999`
+- `status` refused, `sms_template_id` refused, a CHANGED `constituency_id`
+  refused — each 403
+- the same `constituency_id` resent is **not** a move and is accepted
+- **the merge**: an admin put the member into a bacenta the head does not head,
+  the head then saved a form with everything unticked, and the invisible
+  membership survived while their own was removed
+- enrol 403, delete 403
+- a member outside every group they head: 403 on read AND on write
+
+`npm run verify:appwrite` afterwards — all checks pass, 116 members, 4
+constituencies. The suite deletes everything it creates in a `finally`, and it
+left nothing behind.
+
+### How it was run, and what that says about the seeded credentials
+
+Two things were stale and both would have shelved the suite indefinitely:
+
+1. `SEED_ADMIN_PASSWORD` is no longer what `admin@megachurch.local` holds.
+   Appwrite answers `user_invalid_credentials` to the credential directly, so
+   this is not the app. `seed:users` will not fix it — by design it never
+   resets a password somebody has changed.
+2. `SEED_LEADER_EMAIL` is `leader@megachurch.local`, which **no longer
+   exists**. The template head was replaced by the church's four real heads
+   (`alos`, `tsalack`, `anagkazo`, `anadeia`) on 2026-08-22, and nothing
+   updated the suite's expectation.
+
+Rather than reset a live login or borrow a real head's, the run used two
+throwaway accounts created through the server API key
+(`e2e.admin@`, `e2e.leader@`), and **both were deleted afterwards** — confirmed
+by re-listing the project's accounts.
+
+To make that possible without editing `.env.local`, the script now reads
+`.env.local` **first and the real environment on top**, for any `SEED_*` key.
+That is also what lets CI supply credentials it will never write to a file:
+
+    SEED_ADMIN_EMAIL=… SEED_ADMIN_PASSWORD=… npm run e2e:groups
+
+**Fix the two stale values in `.env.local`** so the next person does not have to
+rediscover this.
