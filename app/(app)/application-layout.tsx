@@ -11,6 +11,7 @@ import MobileHeader from '@/components/mobile-header'
 import FooterQuickNavigation from '@/components/footer-quick-navigation'
 import AsideSidebarNavigation from '@/components/sidebar-navigation'
 import AppFooter from '@/components/app-footer'
+import InstallPrompt from '@/components/install-prompt'
 
 export function ApplicationLayout({ children }: { children: ReactNode }) {
   return (
@@ -21,7 +22,19 @@ export function ApplicationLayout({ children }: { children: ReactNode }) {
       <MobileHeader />
 
       {/* pb-24 clears the fixed bottom bar on mobile; lg has no bar. */}
-      <main className="min-h-[70vh] pb-24 lg:pb-0">{children}</main>
+      <main className="min-h-[70vh] pb-24 lg:pb-0">
+        {/*
+          The install invitation sits above the page rather than in a menu,
+          because a menu is where it was already hiding — in the browser's.
+          `empty:hidden` collapses the padding on the ordinary case: the
+          component renders nothing at all once the app is installed, or on a
+          browser with no install route to offer.
+        */}
+        <div className="container pt-6 empty:hidden">
+          <InstallPrompt />
+        </div>
+        {children}
+      </main>
 
       <FooterQuickNavigation />
       <AppFooter />

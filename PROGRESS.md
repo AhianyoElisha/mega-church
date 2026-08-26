@@ -944,3 +944,88 @@ check instead of pausing a service that was actually running.
 - writes at 403: create / edit roster / archive / delete a meeting, activate,
   **pause, resume and end** a session
 - and the running session was confirmed **untouched** afterwards
+
+## Nothing ever invited anyone to install the app — 2026-08-27
+
+Reported as "is this even a PWA?", which is the right question to ask of an app
+that never mentions installation. It has been one since Plan 2 — manifest,
+service worker, maskable icons, iOS meta tags, all of it verified serving 200
+unauthenticated in production. What was missing is that **nothing said so.**
+
+On Android the invitation lives in Chrome's ⋮ menu. On iOS Safari there is no
+prompt at all, ever — Share → Add to Home Screen — and the one place this app
+explained that was the push banner on `/birthdays`, which a person sees only if
+they had already gone looking for notifications. Installability nobody is told
+about is indistinguishable from no installability.
+
+### The race that makes this a two-file change
+
+`beforeinstallprompt` fires **once, early**. On a returning visitor whose
+engagement criteria are already met, it fires during page load — before React
+hydrates. A listener attached in a component effect misses it, and the failure
+is silent in the worst way: no error, no warning, just an Install button that
+never appears.
+
+So the event is caught in `app/layout.tsx` by a `next/script`
+`strategy="beforeInteractive"` shim, parked on `window.__mcInstallEvent`, and
+announced as `mc:installable`. `components/install-prompt.tsx` reads the stash
+on mount **and** subscribes to the announcement, so it cannot lose the race in
+either direction.
+
+This is not theoretical. Loading the production build at `127.0.0.1:3100` and
+reading the stash before touching anything returned a **trusted** event —
+Chrome had already fired it during load. An effect-attached listener on that
+page would have found nothing.
+
+### What renders, and what deliberately does not
+
+| Browser | Offered |
+|---|---|
+| Chromium (Android, desktop) | a banner with a working **Install** button |
+| iOS Safari, ordinary tab | the Share → Add to Home Screen instruction |
+| Anything else (desktop Firefox, in-app webviews) | **nothing** |
+
+The third row is the decision worth keeping. A banner describing a menu item
+the browser does not have is worse than silence.
+
+`preventDefault()` on the captured event suppresses Chrome's own mini-infobar,
+which is the trade being made: the invitation appears inside the app, in the
+app's language, rather than as browser furniture people swipe away unread.
+
+Three more things it declines to do:
+
+- **It never shows once installed.** `display-mode: standalone`, plus
+  `navigator.standalone` because that is still what an iPhone reports. An
+  installed app nagging you to install it teaches people to ignore every banner
+  it will ever show.
+- **A deferred prompt is single-use.** It is dropped after `prompt()` whatever
+  the person chooses — re-offering a spent event is a button that does nothing.
+- **Dismissal is remembered** in `localStorage`, and both the read and the
+  write are wrapped: storage *throws* in a private window on some browsers
+  rather than returning null. A device that cannot remember shows the banner
+  again, which is a much smaller problem than a page that will not render.
+
+iPadOS 13+ reports itself as a Macintosh, so the iOS test also treats a
+touch-capable "Mac" as an iPad. Without that, the only device whose sole
+install route is the Share sheet is told nothing.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npx vitest run` 234 passed, 4 skipped;
+  `npm run build` compiles all routes.
+- The capture shim is present in the **pre-hydration HTML** of `/login`, not
+  merely in a hydrated bundle.
+- In real Chrome against the production build: the genuine event was captured
+  at load, `defaultPrevented` is true, the stash holds it, and `mc:installable`
+  fires.
+
+### Not done
+
+The banner itself has not been **seen** in a browser: it renders inside the
+signed-in app shell, and this machine holds no session against a local server.
+The capture path either side of it is proven; what is unverified is cosmetic —
+whether the banner looks right, not whether it appears.
+
+And no phone has yet installed the app, which is still item 2 of "Not yet
+done". That check is now two taps rather than a hunt through a browser menu,
+which was the point.
