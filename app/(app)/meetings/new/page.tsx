@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/components/auth'
 import { Button } from '@/shared/Button'
 import { Description, Field, FieldGroup, Fieldset, Label, Legend } from '@/shared/fieldset'
 import Input from '@/shared/Input'
@@ -12,6 +13,14 @@ import { useCreateMeeting } from '@/lib/queries/meetings'
 
 export default function NewMeetingPage() {
   const router = useRouter()
+  // The proxy allows a shepherd everything under `/meetings`, which is what
+  // lets them read a meeting and its roster — and `/meetings/new` is under it
+  // too. `POST /api/meetings` already refuses them; this is so they land back
+  // on the list instead of filling in a form that cannot be submitted.
+  const { user, ready } = useAuth()
+  useEffect(() => {
+    if (ready && user && user.label !== 'admin') router.replace('/meetings')
+  }, [ready, user, router])
   const create = useCreateMeeting()
 
   const [name, setName] = useState('')

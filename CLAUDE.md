@@ -335,7 +335,30 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **Centralise config in `lib/appwrite/config.ts`** — collection ids, bucket
   ids, database id as named exports. No magic strings.
 - **RBAC via Appwrite User Labels** (`admin`, `usher`, `kiosk`, `leader`,
-  `celebrations`), exactly one per user. Server-side enforcement is mandatory.
+  `celebrations`, `shepherd`), exactly one per user. Server-side enforcement is
+  mandatory.
+- **`shepherd` is enforced by ABSENCE, never by a deny-list.** It appears on GET
+  handlers only, so every mutating route refuses it without naming it and a new
+  POST is shepherd-proof the moment it is written. Never add `shepherd` to a
+  handler that writes — the whole guarantee is that the default is refusal.
+- **`shepherd` and `leader` are not variants of each other.** A leader sees only
+  the groups naming them as head and may write inside them; a shepherd sees the
+  whole church and writes nothing. Wider read, zero write — neither is a subset
+  of the other, which is why it is a fifth label and not a flag on the fourth.
+- **`!isAdmin` no longer means "a head".** It stopped meaning that the moment a
+  read-only role could open a group page. Pages that offer writes to a head now
+  test `canWrite` (admin OR leader) and keep `isAdmin` for admin-only controls;
+  reusing `!isAdmin` for head-only UI hands a shepherd a button that 403s.
+- **A page a reader can open must gate its CONTROLS, not rely on the API.** The
+  API refusing is the enforcement; the gate is so nobody is offered a button
+  that answers 403. `/services`, `/meetings` and `/meetings/[id]` each carry a
+  `canAct` test for this reason, and `MemberChecklist` takes `readOnly` — a
+  checkbox that still ticks with no Save button is a lie, because it looks like
+  an edit and is discarded on navigation.
+- **`/meetings/new` redirects a non-admin to `/meetings`.** A proxy prefix
+  cannot express "this path but not that child", so the one page that has no
+  read-only meaning bounces in the page itself. `POST /api/meetings` is what
+  actually refuses them.
 - **Cascades are manual.** Deleting a member means deleting their
   `biometric_templates`, `meeting_members`, `bacenta_members` and
   `attendance_records` first. Deleting a constituency means clearing

@@ -174,9 +174,13 @@ export async function GET(request: NextRequest) {
    * head who omits the parameter is refused rather than defaulted to
    * everybody.
    */
-  const auth = await requireRole(['admin', 'leader'])
+  const auth = await requireRole(['admin', 'leader', 'shepherd'])
   if ('error' in auth) return auth.error
-  const isAdmin = auth.user.label === 'admin'
+  // A shepherd downloads the same workbooks an admin does. They are already
+  // entitled to read every row this produces, and a download IS a read — the
+  // per-constituency narrowing below exists to stop a HEAD reaching a
+  // neighbour's members, which is not a constraint a whole-church reader has.
+  const unscoped = auth.user.label === 'admin' || auth.user.label === 'shepherd'
 
   const params = request.nextUrl.searchParams
   const date = params.get('date')?.trim()
@@ -190,7 +194,7 @@ export async function GET(request: NextRequest) {
   // The two refusals below are separate on purpose: "you did not say which"
   // and "not that one" are different mistakes with different fixes, and
   // collapsing them into a single 403 makes the first look like the second.
-  if (!isAdmin) {
+  if (!unscoped) {
     if (occurrenceId || byConstituency || !constituencyId) {
       return Response.json(
         {

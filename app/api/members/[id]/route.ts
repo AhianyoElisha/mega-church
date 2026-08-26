@@ -32,7 +32,7 @@ type Ctx = { params: Promise<{ id: string }> }
  * visibility, it only makes the details reachable one row at a time.
  */
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole(['admin', 'usher', 'leader'])
+  const auth = await requireRole(['admin', 'usher', 'leader', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const { id } = await params

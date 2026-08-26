@@ -6,6 +6,7 @@
 // already ticked when a meeting is edited, which is what makes a meeting
 // reusable without re-choosing everybody (PRD §1.4).
 
+import clsx from 'clsx'
 import { useMemo, useState } from 'react'
 import { Button } from '@/shared/Button'
 import { Checkbox } from '@/shared/Checkbox'
@@ -19,9 +20,18 @@ import { fullName, initials } from '@/lib/members/types'
 export default function MemberChecklist({
   selected,
   onChange,
+  readOnly = false,
 }: {
   selected: Set<string>
   onChange: (next: Set<string>) => void
+  /**
+   * Show the roster without letting it be changed.
+   *
+   * For a reader with no Save button, a checkbox that still ticks is a lie: it
+   * looks like an edit and is discarded on navigation. Disabling the input is
+   * the honest rendering, and the bulk controls go with it.
+   */
+  readOnly?: boolean
 }) {
   const [search, setSearch] = useState('')
   const [onlySelected, setOnlySelected] = useState(false)
@@ -67,9 +77,11 @@ export default function MemberChecklist({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <Button plain onClick={toggleVisible} disabled={visible.length === 0}>
-          {allVisibleSelected ? 'Unselect' : 'Select'} {search ? 'these' : 'all'} ({visible.length})
-        </Button>
+        {!readOnly && (
+          <Button plain onClick={toggleVisible} disabled={visible.length === 0}>
+            {allVisibleSelected ? 'Unselect' : 'Select'} {search ? 'these' : 'all'} ({visible.length})
+          </Button>
+        )}
         <Button plain onClick={() => setOnlySelected((v) => !v)}>
           {onlySelected ? 'Show everyone' : `Show selected (${selected.size})`}
         </Button>
@@ -92,8 +104,20 @@ export default function MemberChecklist({
               const isOn = selected.has(m.$id)
               return (
                 <li key={m.$id}>
-                  <label className="flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-neutral-50 dark:hover:bg-neutral-800">
-                    <Checkbox checked={isOn} onChange={() => toggle(m.$id)} color="amber" />
+                  <label
+                    className={clsx(
+                      'flex items-center gap-3 px-4 py-2.5',
+                      readOnly
+                        ? 'cursor-default'
+                        : 'cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800',
+                    )}
+                  >
+                    <Checkbox
+                      checked={isOn}
+                      onChange={() => toggle(m.$id)}
+                      color="amber"
+                      disabled={readOnly}
+                    />
                     <Avatar
                       src={photo}
                       initials={photo ? undefined : initials(m)}

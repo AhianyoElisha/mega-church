@@ -16,6 +16,7 @@
 
 import { useState } from 'react'
 import { Banner } from '@/components/ui'
+import { useAuth } from '@/components/auth'
 import { useDialog } from '@/components/dialog'
 import { Button } from '@/shared/Button'
 import {
@@ -40,6 +41,11 @@ function formatTime(iso: string): string {
 }
 
 export default function OpenSessionBar({ className }: { className?: string }) {
+  // Only an admin acts on a session. Everyone else who can see this bar — a
+  // shepherd reading /meetings — gets the same information and no buttons; a
+  // control that 403s is worse than no control.
+  const { user } = useAuth()
+  const canAct = user?.label === 'admin'
   const dialog = useDialog()
   const active = useActiveSession()
   const close = useCloseOccurrence()
@@ -135,12 +141,16 @@ export default function OpenSessionBar({ className }: { className?: string }) {
             <Button outline href="/monitor">
               Live view
             </Button>
-            <Button outline onClick={() => handlePause(session)} disabled={busy}>
-              {pause.isPending ? 'Pausing…' : 'Pause'}
-            </Button>
-            <Button color="red" onClick={() => handleClose(session)} disabled={busy}>
-              {close.isPending ? 'Ending…' : 'End session'}
-            </Button>
+            {canAct && (
+              <>
+                <Button outline onClick={() => handlePause(session)} disabled={busy}>
+                  {pause.isPending ? 'Pausing…' : 'Pause'}
+                </Button>
+                <Button color="red" onClick={() => handleClose(session)} disabled={busy}>
+                  {close.isPending ? 'Ending…' : 'End session'}
+                </Button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -166,14 +176,16 @@ export default function OpenSessionBar({ className }: { className?: string }) {
               </span>
             </p>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-3">
-            <Button color="primary" onClick={() => handleResume(p)} disabled={busy}>
-              {resume.isPending ? 'Resuming…' : 'Resume'}
-            </Button>
-            <Button plain onClick={() => handleClose(p)} disabled={busy}>
-              End session
-            </Button>
-          </div>
+          {canAct && (
+            <div className="flex shrink-0 flex-wrap gap-3">
+              <Button color="primary" onClick={() => handleResume(p)} disabled={busy}>
+                {resume.isPending ? 'Resuming…' : 'Resume'}
+              </Button>
+              <Button plain onClick={() => handleClose(p)} disabled={busy}>
+                End session
+              </Button>
+            </div>
+          )}
         </div>
       ))}
 

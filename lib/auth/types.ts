@@ -7,7 +7,7 @@
  * resolved per-request from which groups name them as head — see
  * `lib/groups/server.ts::leaderScope`.
  */
-export type UserLabel = 'admin' | 'usher' | 'kiosk' | 'leader' | 'celebrations'
+export type UserLabel = 'admin' | 'usher' | 'kiosk' | 'leader' | 'celebrations' | 'shepherd'
 
 export type AuthUser = {
   id: string

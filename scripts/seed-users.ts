@@ -73,6 +73,12 @@ const SEEDS: Seed[] = [
     password: process.env.SEED_CELEBRATIONS_PASSWORD,
     name: 'Birthday Team',
   },
+  {
+    label: USER_LABELS.shepherd,
+    email: process.env.SEED_SHEPHERD_EMAIL,
+    password: process.env.SEED_SHEPHERD_PASSWORD,
+    name: 'Shepherd',
+  },
 ]
 
 async function findByEmail(email: string) {

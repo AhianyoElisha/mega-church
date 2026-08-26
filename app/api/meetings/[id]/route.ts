@@ -18,7 +18,7 @@ type Ctx = { params: Promise<{ id: string }> }
 // right boxes already ticked. This is what makes a meeting reusable without
 // re-selecting anybody (PRD §1.4).
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole('admin')
+  const auth = await requireRole(['admin', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const { id } = await params

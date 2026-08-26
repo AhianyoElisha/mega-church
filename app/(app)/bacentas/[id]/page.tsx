@@ -31,6 +31,7 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
   const [tab, setTab] = useState<'members' | 'assign'>('members')
 
   const isAdmin = user?.label === 'admin'
+  const isShepherd = user?.label === 'shepherd'
 
   if (isLoading) {
     return (
@@ -145,7 +146,7 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
           <GroupRosterTable
             members={members}
             memberHref={(mid) =>
-              isAdmin ? `/members/${mid}` : `/my-groups/members/${mid}`
+              isAdmin || isShepherd ? `/members/${mid}` : `/my-groups/members/${mid}`
             }
           />
         </Card>
@@ -175,7 +176,13 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
         </Card>
       )}
 
-      {!isAdmin && (
+      {isShepherd && (
+        <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
+          You are signed in as a shepherd, so everything here is read-only.
+        </p>
+      )}
+
+      {!isAdmin && !isShepherd && (
         <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
           You are signed in as a head. Open any member to correct their details; the group
           itself, and who is in it, is an administrator&rsquo;s to change.{' '}

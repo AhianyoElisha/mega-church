@@ -44,10 +44,51 @@ import { useMembers } from '@/lib/queries/members'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { fullName, initials } from '@/lib/members/types'
 import { countParts, render } from '@/lib/sms/render'
-import { SMS_CATEGORIES, SMS_CATEGORY_LABEL, type SmsCategory } from '@/lib/appwrite/config'
+import {
+  CHURCH_TIMEZONE,
+  SMS_CATEGORIES,
+  SMS_CATEGORY_LABEL,
+  type SmsCategory,
+} from '@/lib/appwrite/config'
 import type { SmsTemplate } from '@/lib/sms/types'
 
 type Tab = 'send' | 'templates' | 'log'
+
+/**
+ * "25 Aug 2026, 08:00" on the church's clock, from the stored ISO instant.
+ *
+ * `sent_at` is written as `new Date().toISOString()`, and this line used to
+ * render that string verbatim: `2026-08-25T08:00:12.345Z`. That is a format for
+ * a parser, on a screen an admin reads to answer "did this morning's birthday
+ * texts actually go out?" — the milliseconds and the `Z` are noise they have to
+ * read past to reach the one field that matters.
+ *
+ * The zone is pinned to `CHURCH_TIMEZONE` rather than left to the browser, for
+ * the same reason every other timestamp in the app pins it: the answer must be
+ * the church's wall clock whatever the machine reading it is set to. Accra is
+ * GMT+0 all year, so today this agrees with the raw value — which is exactly
+ * why leaving the zone implicit would go unnoticed until somebody opened the
+ * log on a laptop still set to another country.
+ *
+ * Falls back to the raw string rather than a dash: an unreadable timestamp on a
+ * log line still beats no timestamp.
+ */
+function sentAtLabel(iso: string): string {
+  if (!iso) return 'unknown time'
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: CHURCH_TIMEZONE,
+    }).format(new Date(iso))
+  } catch {
+    return iso
+  }
+}
 
 export default function SmsPage() {
   const [tab, setTab] = useState<Tab>('send')
@@ -617,7 +658,7 @@ function LogTab() {
                   {m.body}
                 </p>
                 <p className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
-                  {m.sent_at} · {m.sent_by ?? 'unknown'}
+                  {sentAtLabel(m.sent_at)} · {m.sent_by ?? 'unknown'}
                   {/* mNotify's own words, kept verbatim — a paraphrase is what
                       makes a support conversation with the provider impossible. */}
                   {m.status === 'failed' && m.provider_message && ` · ${m.provider_message}`}

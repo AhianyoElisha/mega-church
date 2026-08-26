@@ -16,7 +16,7 @@ import type { ActiveSessionResponse } from '@/lib/meetings/types'
  * session open" all day — on every page, while a service was running.
  */
 export async function GET() {
-  const auth = await requireRole(['admin', 'usher', 'kiosk', 'leader', 'celebrations'])
+  const auth = await requireRole(['admin', 'usher', 'kiosk', 'leader', 'celebrations', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

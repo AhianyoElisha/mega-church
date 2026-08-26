@@ -24,14 +24,18 @@ export default function ConstituenciesPage() {
   const router = useRouter()
   const { user, ready } = useAuth()
   const isAdmin = user?.label === 'admin'
+  const isShepherd = user?.label === 'shepherd'
 
   // The proxy lets a head reach `/constituencies/*` so they can open the group
   // they head. This list is not theirs to browse — `/api/constituencies`
   // already refuses them a 403, so this is only about landing them somewhere
   // useful instead of on an error.
   useEffect(() => {
-    if (ready && user && !isAdmin) router.replace('/my-groups')
-  }, [ready, user, isAdmin, router])
+    // A shepherd belongs here: these lists ARE the people's groups tab, and
+    // reading them is the role. Only a leader is redirected, because for them
+    // the full list is admin data their API refuses.
+    if (ready && user && !isAdmin && !isShepherd) router.replace('/my-groups')
+  }, [ready, user, isAdmin, isShepherd, router])
 
   const { data, isLoading } = useConstituencies()
   const create = useCreateConstituency()

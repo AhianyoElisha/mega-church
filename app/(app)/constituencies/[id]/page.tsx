@@ -34,6 +34,10 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
   const [tab, setTab] = useState<'members' | 'assign'>('members')
 
   const isAdmin = user?.label === 'admin'
+  // A head may write here (register, claim); a shepherd may not write anywhere.
+  // `!isAdmin` used to be a synonym for "head", and it stopped being one the
+  // moment a read-only role could open this page.
+  const canWrite = isAdmin || user?.label === 'leader'
 
   if (isLoading) {
     return (
@@ -101,9 +105,11 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
             {/* A head gets this too. Registering somebody into the constituency
                 they run is the second write the read-only rule makes room for,
                 alongside claiming an unassigned member below — see PRD 5.2. */}
-            <Button color="primary" href={`/constituencies/${id}/register`}>
-              Register a member
-            </Button>
+            {canWrite && (
+              <Button color="primary" href={`/constituencies/${id}/register`}>
+                Register a member
+              </Button>
+            )}
             {isAdmin && (
               <Button plain onClick={handleDelete} disabled={remove.isPending}>
                 Delete
@@ -148,22 +154,27 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
           much narrower screen — see HeadMemberClaim — but the navigation is
           the same shape, so the page does not become two different pages
           depending on who opens it. */}
-      <TabBar
-        className="mb-6"
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { value: 'members', label: `Members (${members.length})` },
-          { value: 'assign', label: isAdmin ? 'Assign members' : 'Add members' },
-        ]}
-      />
+      {/* No Assign tab for a reader — every control on it is a write. */}
+      {canWrite && (
+        <TabBar
+          className="mb-6"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { value: 'members', label: `Members (${members.length})` },
+            { value: 'assign', label: isAdmin ? 'Assign members' : 'Add members' },
+          ]}
+        />
+      )}
 
-      {tab === 'members' ? (
+      {tab === 'members' || !canWrite ? (
         <Card padded={false}>
           <GroupRosterTable
             members={members}
             memberHref={(mid) =>
-              isAdmin ? `/members/${mid}` : `/my-groups/members/${mid}`
+              isAdmin || user?.label === 'shepherd'
+                ? `/members/${mid}`
+                : `/my-groups/members/${mid}`
             }
           />
         </Card>
@@ -215,7 +226,13 @@ export default function ConstituencyPage({ params }: { params: Promise<{ id: str
         </Card>
       )}
 
-      {!isAdmin && (
+      {!canWrite && (
+        <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
+          You are signed in as a shepherd, so everything here is read-only.
+        </p>
+      )}
+
+      {!isAdmin && canWrite && (
         <p className="mt-6 text-sm text-neutral-400 dark:text-neutral-500">
           You are signed in as a head. You can register new members into this constituency, add
           unassigned ones to it, and open any member to correct their details. Moving somebody

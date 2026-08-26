@@ -12,6 +12,7 @@ import { CalendarDaysIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/shared/Button'
 import { Badge } from '@/shared/Badge'
 import { Banner, Card, EmptyState, LoadingRow, PageHeader, PageWrap, StatCard } from '@/components/ui'
+import { useAuth } from '@/components/auth'
 import { useDialog } from '@/components/dialog'
 import { useMeetings } from '@/lib/queries/meetings'
 import {
@@ -39,6 +40,11 @@ function formatTime(iso: string): string {
 }
 
 export default function ServicesPage() {
+  // A shepherd reads this page: which session is open, which is paused, how
+  // many are present. Every CONTROL on it is an admin's — activate, pause,
+  // resume, end — so they are gated here rather than left to 403.
+  const { user } = useAuth()
+  const canAct = user?.label === 'admin'
   const dialog = useDialog()
   const meetings = useMeetings()
   const active = useActiveSession(15_000)
@@ -164,12 +170,16 @@ export default function ServicesPage() {
               <Button outline href="/monitor">
                 Live view
               </Button>
-              <Button outline onClick={() => handlePause(session)} disabled={pause.isPending}>
-                {pause.isPending ? 'Pausing…' : 'Pause'}
-              </Button>
-              <Button color="red" onClick={() => handleClose(session)} disabled={close.isPending}>
-                {close.isPending ? 'Ending…' : 'End session'}
-              </Button>
+              {canAct && (
+                <>
+                  <Button outline onClick={() => handlePause(session)} disabled={pause.isPending}>
+                    {pause.isPending ? 'Pausing…' : 'Pause'}
+                  </Button>
+                  <Button color="red" onClick={() => handleClose(session)} disabled={close.isPending}>
+                    {close.isPending ? 'Ending…' : 'End session'}
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -225,14 +235,16 @@ export default function ServicesPage() {
                 still counting, not scanning
               </p>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <Button color="primary" onClick={() => handleResume(p)} disabled={resume.isPending}>
-                {resume.isPending ? 'Resuming…' : 'Resume'}
-              </Button>
-              <Button plain onClick={() => handleClose(p)} disabled={close.isPending}>
-                End session
-              </Button>
-            </div>
+            {canAct && (
+              <div className="flex flex-wrap gap-3">
+                <Button color="primary" onClick={() => handleResume(p)} disabled={resume.isPending}>
+                  {resume.isPending ? 'Resuming…' : 'Resume'}
+                </Button>
+                <Button plain onClick={() => handleClose(p)} disabled={close.isPending}>
+                  End session
+                </Button>
+              </div>
+            )}
           </div>
         </Card>
       ))}
@@ -273,7 +285,7 @@ export default function ServicesPage() {
                   </p>
 
                   <div className="mt-auto">
-                    {isOpen ? (
+                    {!canAct ? null : isOpen ? (
                       <Button
                         color="red"
                         onClick={() => handleClose(session)}
@@ -334,9 +346,11 @@ export default function ServicesPage() {
           title="No meetings yet"
           message="Create a meeting and choose who is allowed to attend it."
           action={
-            <Button color="primary" href="/meetings/new">
-              Create a meeting
-            </Button>
+            canAct ? (
+              <Button color="primary" href="/meetings/new">
+                Create a meeting
+              </Button>
+            ) : undefined
           }
         />
       ) : (
@@ -355,7 +369,7 @@ export default function ServicesPage() {
                 <p className="mb-4 text-xs text-neutral-500 dark:text-neutral-400">
                   {m.roster_size} authorised · last held {m.last_held ?? 'never'}
                 </p>
-                {isOpen ? (
+                {!canAct ? null : isOpen ? (
                   <Button color="red" onClick={() => handleClose(session)} disabled={close.isPending}>
                     End
                   </Button>
@@ -376,13 +390,13 @@ export default function ServicesPage() {
                     Activate
                   </Button>
                 )}
-                {!isOpen && !pausedHere && m.roster_size === 0 && (
+                {canAct && !isOpen && !pausedHere && m.roster_size === 0 && (
                   // An empty roster would refuse everybody at the door.
                   <p className="mt-2 text-xs text-red-600 dark:text-red-400">
                     Nobody is authorised yet — add members first.
                   </p>
                 )}
-                {!isOpen && !pausedHere && disabled && m.roster_size > 0 && (
+                {canAct && !isOpen && !pausedHere && disabled && m.roster_size > 0 && (
                   <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                     End {blockedBy} first.
                   </p>

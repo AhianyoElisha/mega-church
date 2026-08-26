@@ -27,6 +27,7 @@ const RECOGNISED_LABELS: readonly UserLabel[] = [
   'kiosk',
   'leader',
   'celebrations',
+  'shepherd',
 ]
 
 const LABEL_HOMES: Record<UserLabel, string> = {
@@ -37,6 +38,10 @@ const LABEL_HOMES: Record<UserLabel, string> = {
   // the database per request — the route is the same for every leader.
   leader: '/my-groups',
   celebrations: '/birthdays',
+  // A shepherd is here to look at the congregation, so they land where the
+  // congregation is rather than on an admin dashboard of controls they cannot
+  // press.
+  shepherd: '/members',
 }
 
 /** Paths each non-admin label is allowed to reach. Admin reaches everything. */
@@ -63,6 +68,34 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
   // The birthday team. Deliberately narrow: they prepare flyers and shoutouts,
   // so they need the celebrant list and nothing else in the registry.
   celebrations: ['/birthdays'],
+  // A shepherd reads the whole church. This is the WIDEST non-admin list in
+  // here, and that is the point of the role — but it is only where they may
+  // NAVIGATE. What stops them changing anything is not this list: `shepherd`
+  // appears on GET handlers only, so every mutating route refuses it without
+  // naming it. The pages themselves also render read-only, because a button
+  // that 403s is worse than no button.
+  //
+  // `/services` and `/meetings` are here so a shepherd can see what is running
+  // and who is authorised for what — but EVERY control on those two pages is
+  // gated on the admin label, and `/meetings/new` bounces a non-admin back to
+  // the list. A prefix cannot express "this path but not that child", so that
+  // one redirect lives in the page.
+  //
+  // Still absent, and for a reason a gate cannot fix:
+  //
+  //   /sms      a send console that spends the church's money
+  //   /kiosk    an appliance that writes attendance
+  shepherd: [
+    '/members',
+    '/constituencies',
+    '/bacentas',
+    '/my-groups',
+    '/birthdays',
+    '/meetings',
+    '/services',
+    '/monitor',
+    '/reports',
+  ],
 }
 
 function isPublic(pathname: string) {
