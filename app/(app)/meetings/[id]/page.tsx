@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/components/auth'
 import { Button } from '@/shared/Button'
 import { Badge } from '@/shared/Badge'
 import { Field, FieldGroup, Fieldset, Label, Legend } from '@/shared/fieldset'
@@ -23,6 +24,10 @@ import { apiFetch } from '@/lib/queries/fetcher'
 export default function MeetingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
+  // A shepherd reads this page — the roster IS data worth reading, "who is
+  // authorised for this meeting". Every control on it belongs to an admin.
+  const { user } = useAuth()
+  const canAct = user?.label === 'admin'
   const dialog = useDialog()
 
   const { data, isLoading } = useMeeting(id)
@@ -150,7 +155,7 @@ export default function MeetingDetailPage({ params }: { params: Promise<{ id: st
         }
         actions={
           <>
-            {isOpen ? (
+            {!canAct ? null : isOpen ? (
               <Button color="red" onClick={handleClose} disabled={close.isPending}>
                 End session
               </Button>
@@ -223,6 +228,7 @@ export default function MeetingDetailPage({ params }: { params: Promise<{ id: st
           </p>
           <MemberChecklist
             selected={selected}
+            readOnly={!canAct}
             onChange={(next) => {
               setSelected(next)
               setDirty(true)
@@ -232,9 +238,11 @@ export default function MeetingDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       <div className="mb-10 flex gap-3">
-        <Button color="primary" onClick={save} disabled={!dirty || update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save changes'}
-        </Button>
+        {canAct && (
+          <Button color="primary" onClick={save} disabled={!dirty || update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save changes'}
+          </Button>
+        )}
         {dirty && (
           <span className="self-center text-sm text-neutral-500 dark:text-neutral-400">
             Unsaved changes
@@ -276,7 +284,7 @@ export default function MeetingDetailPage({ params }: { params: Promise<{ id: st
         </Table>
       )}
 
-      {!isService && (
+      {!isService && canAct && (
         <Card className="mt-10">
           <h2 className="text-base font-semibold text-neutral-950 dark:text-white">Danger zone</h2>
           <p className="mt-1 mb-4 text-sm text-neutral-500 dark:text-neutral-400">

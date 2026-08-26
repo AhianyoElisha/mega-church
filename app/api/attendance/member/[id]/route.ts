@@ -19,7 +19,7 @@ const LOOKBACK = 60
  * in a list of present-only rows.
  */
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole(['admin', 'usher'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const { id } = await params

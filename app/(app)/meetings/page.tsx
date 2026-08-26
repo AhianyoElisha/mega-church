@@ -6,10 +6,15 @@ import { Badge } from '@/shared/Badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/table'
 import { Card, EmptyState, LoadingRow, PageHeader, PageWrap } from '@/components/ui'
 import OpenSessionBar from '@/components/open-session-bar'
+import { useAuth } from '@/components/auth'
 import { useMeetings } from '@/lib/queries/meetings'
 import { useActiveSession } from '@/lib/queries/occurrences'
 
 export default function MeetingsPage() {
+  // A shepherd reads this page. Creating a meeting is an admin's, and a Create
+  // button that answers 403 is worse than no button.
+  const { user } = useAuth()
+  const canAct = user?.label === 'admin'
   const { data, isLoading } = useMeetings()
   const active = useActiveSession()
   const openId = active.data?.ok ? active.data.session?.meeting.$id : undefined
@@ -24,9 +29,11 @@ export default function MeetingsPage() {
         title="Meetings"
         subtitle="Beyond the two services. Each one has its own list of authorised members."
         actions={
-          <Button color="primary" href="/meetings/new">
-            Create a meeting
-          </Button>
+          canAct && (
+            <Button color="primary" href="/meetings/new">
+              Create a meeting
+            </Button>
+          )
         }
       />
 
@@ -47,9 +54,11 @@ export default function MeetingsPage() {
               title="No meetings yet"
               message="Create one, tick the members who are allowed to attend, and it is ready to reopen any time."
               action={
-                <Button color="primary" href="/meetings/new">
-                  Create a meeting
-                </Button>
+                canAct ? (
+                  <Button color="primary" href="/meetings/new">
+                    Create a meeting
+                  </Button>
+                ) : undefined
               }
             />
           ) : (

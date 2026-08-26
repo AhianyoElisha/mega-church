@@ -44,7 +44,7 @@ export type DashboardResponse = {
 }
 
 export async function GET() {
-  const auth = await requireRole('admin')
+  const auth = await requireRole(['admin', 'shepherd'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

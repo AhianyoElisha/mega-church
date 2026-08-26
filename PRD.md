@@ -531,6 +531,39 @@ Appwrite User Labels, exactly one per user.
 | `kiosk` | `/kiosk` only — POST scans, read the active occurrence |
 | `leader` | a constituency head, a bacenta head, or **both**. Read-only, and only the groups that name them as head |
 | `celebrations` | the birthday team: the celebrant list and push notifications, nothing else |
+| `shepherd` | reads the whole church, writes nothing at all |
+
+### 5.0 Why `shepherd` is not a variant of `leader`
+
+The two differ in **both** directions, which is why a fifth label beats a flag
+on the fourth:
+
+| | sees | may change |
+|---|---|---|
+| `leader` | only the groups naming them as head | members inside those groups |
+| `shepherd` | the whole church | nothing |
+
+A shepherd is wider on read and empty on write. Neither is a subset of the
+other, so no single "scope" field expresses both.
+
+**Enforced by absence.** `shepherd` appears on GET handlers only, so every
+mutating route refuses it without naming it. There is no list of forbidden
+actions that could fall out of date as routes are added — a new POST is
+shepherd-proof the moment it is written, because the default is refusal.
+
+Three reads are deliberately withheld, because they are not congregation data:
+raw fingerprint templates (`/api/biometrics/templates`), the SMS log and
+balance, and the kiosk provisioning pack.
+
+A shepherd DOES see `/services` and `/meetings` — what is running, and who is
+authorised for which meeting, is data. Every control on those two pages is
+gated on the admin label, and the roster checklist renders disabled rather than
+letting a reader tick boxes that will never save. `/meetings/new` redirects a
+non-admin back to the list, because a path prefix cannot express "this page but
+not that child".
+
+Only `/sms` and `/kiosk` remain closed, for a reason no gate fixes: one spends
+the church's money and the other is an appliance that writes attendance.
 
 ### 5.1 Why `leader` is one label and not two
 

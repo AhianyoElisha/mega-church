@@ -840,3 +840,107 @@ to say "a prerequisite script has not run".
 And `build.sh` now copies the result to `public/nbis/`. There is one artifact on
 purpose; a rebuild that forgot the copy would leave the deployed matcher stale,
 and the symptom is nothing at all — the old build works, just slowly.
+
+## `shepherd` — a read-everything, write-nothing account — 2026-08-23
+
+A fifth label. Sees the whole church, especially the people's group tabs;
+changes nothing anywhere.
+
+### Why not a flag on `leader`
+
+They differ in **both** directions, so neither is a subset of the other:
+
+| | sees | may change |
+|---|---|---|
+| `leader` | only the groups naming them as head | members inside those groups |
+| `shepherd` | the whole church | nothing |
+
+### Enforced by absence, not by a deny-list
+
+`shepherd` was added to **GET handlers only** — 20 of them. Every mutating route
+refuses it without naming it, and a POST written next year is shepherd-proof the
+moment it exists, because the default is refusal. There is no list of forbidden
+actions to fall out of date.
+
+Withheld on purpose, because they are not congregation data: raw fingerprint
+templates, the SMS log and balance, the kiosk provisioning pack, and the leader
+account list.
+
+Only `/sms` and `/kiosk` are closed as PAGES, for a reason no gate fixes: one
+spends the church's money and the other is an appliance that writes attendance.
+
+### One real trap this surfaced
+
+**`!isAdmin` had quietly come to mean "a head".** Three group pages used it to
+render leader-only write UI — the Assign tab, the "Register a member" button,
+the claim form — so a read-only account would have been handed controls that
+403. Those now test `canWrite` (admin OR leader), and `isAdmin` is kept for
+admin-only controls. `OpenSessionBar` had no role test at all and offered
+Pause / End / Resume to anyone who could see it.
+
+### Verified — 43 checks against the live project
+
+`shepherd@megachurch.local` created via `npm run seed:users`.
+
+- **18 reads at 200**, including a constituency roster in full (28 members), a
+  bacenta roster (8), one member in detail, that member's attendance history,
+  and an unscoped whole-church `.xlsx` export.
+- `my-groups` returns **4 constituencies and 12 bacentas** — the whole church,
+  where a leader gets only what they head. That contrast is the role.
+- **16 writes at 403**: register / edit / delete a member, upload a photo,
+  create / rename / delete a constituency, assign members, create a bacenta, a
+  category, a meeting, activate a session, mark somebody present, enrol a
+  fingerprint, send an SMS, create a leader account.
+- **5 out-of-scope reads at 403**: fingerprint templates, SMS log, SMS balance,
+  kiosk pack, leader list.
+
+### Not done: the browser pass
+
+A real service (Second Service) was live, and the browser on this machine held a
+working admin session on the dev server. Signing it out to check the read-only
+screens is exactly the interference to avoid mid-service, so the UI was left
+untested in a browser. The API boundary is proven; what is unverified is purely
+cosmetic — whether the gated buttons are absent rather than merely refusing.
+Worth ten minutes with the shepherd login once nothing is running.
+
+### Side effect worth knowing
+
+`npm run seed:users` also recreated `leader@megachurch.local`, which had been
+deleted during earlier verification. That is the account `SEED_LEADER_EMAIL`
+names, so `npm run e2e:groups` can now find its leader again — one of the two
+stale credentials flagged above is fixed. `SEED_ADMIN_PASSWORD` is still wrong.
+
+### `/services` and `/meetings` opened to shepherds — same day
+
+Initially scoped out because they are action consoles and half-gating a dozen
+buttons is how one gets missed. The church asked for them, so they were gated
+properly instead:
+
+| Page | What a shepherd sees | What is hidden |
+|---|---|---|
+| `/services` | which session is open or paused, present/expected counts, every service and meeting card | Activate, Pause, Resume, End, and the "end X first" hints, which only mean something to somebody who has buttons |
+| `/meetings` | the list, the open-session bar | Create a meeting |
+| `/meetings/[id]` | the meeting, its authorised roster, its past sessions | Activate/End, Save changes, Archive, Delete |
+| `/meetings/new` | — | redirects to `/meetings` |
+
+`MemberChecklist` gained a `readOnly` mode. A checkbox that still ticks with no
+Save button is a lie: it looks like an edit and is silently discarded on
+navigation. Read-only disables the inputs and drops the bulk select control.
+
+`/meetings/new` redirects rather than being excluded by the proxy, because a
+path prefix cannot express "this path but not that child". `POST /api/meetings`
+is what actually refuses them; the redirect is so nobody fills in a form that
+cannot be submitted.
+
+### Verified — 17 more checks, against a LIVE service
+
+Second Service was open at the time, which made the write checks worth more
+than usual. The session-mutating probes were aimed at a **closed** occurrence on
+purpose: if the role gate had been broken they would have failed on the state
+check instead of pausing a service that was actually running.
+
+- reads at 200: the meetings list, a meeting in detail with its roster, that
+  meeting's past sessions, live attendance stats, and the open session
+- writes at 403: create / edit roster / archive / delete a meeting, activate,
+  **pause, resume and end** a session
+- and the running session was confirmed **untouched** afterwards

@@ -81,6 +81,7 @@ const RECOGNISED_LABELS: readonly UserLabel[] = [
   'kiosk',
   'leader',
   'celebrations',
+  'shepherd',
 ]
 
 export function toAuthUser(raw: RawAuthUser): AuthUser | null {

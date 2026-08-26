@@ -23,6 +23,7 @@ const HOME_FOR: Record<UserLabel, string> = {
   kiosk: '/kiosk',
   leader: '/my-groups',
   celebrations: '/birthdays',
+  shepherd: '/members',
 }
 
 function LoginContent() {

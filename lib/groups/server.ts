@@ -693,6 +693,11 @@ export async function canReadGroup(
   groupId: string,
 ): Promise<boolean> {
   if (user.label === 'admin') return true
+  // A shepherd reads every group. That is the whole role, and it is safe here
+  // because this function only ever gates READS — the write paths that consult
+  // it (`/api/constituencies/[id]/members`) also require a label that a
+  // shepherd does not have.
+  if (user.label === 'shepherd') return true
   if (user.label !== 'leader') return false
   const scope = await leaderScope(databases, user.id)
   return kind === 'constituency'
