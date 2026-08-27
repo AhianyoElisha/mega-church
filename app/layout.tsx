@@ -77,9 +77,6 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${poppins.className} ${poppins.variable}`}>
-      <Script id="install-capture" strategy="beforeInteractive">
-        {INSTALL_CAPTURE}
-      </Script>
       <body className="bg-white text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
         <ThemeProvider>
           <QueryProvider>
@@ -91,6 +88,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Renders nothing. Registers the service worker once, app-wide —
             push delivery depends on the registration, not on any tab. */}
         <PwaRegister />
+        {/*
+          Inside <body>, not beside it.
+
+          A <script> is not a legal child of <html>, so the parser hoisted this
+          one into <head> and React then found a DOM that did not match the tree
+          it rendered: "In HTML, <script> cannot be a child of <html>. This will
+          cause a hydration error." It fired on EVERY page of the app.
+
+          Position in the tree is not what makes it early — `beforeInteractive`
+          is. Next injects such a script into the initial HTML from the server
+          and runs it before any Next module, wherever it is written, and the
+          framework's own example puts it exactly here, last inside <body>.
+          So the capture still beats `beforeinstallprompt`, which is the whole
+          reason it is not an effect in `install-prompt.tsx`.
+        */}
+        <Script id="install-capture" strategy="beforeInteractive">
+          {INSTALL_CAPTURE}
+        </Script>
       </body>
     </html>
   )

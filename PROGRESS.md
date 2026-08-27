@@ -1090,3 +1090,109 @@ Four bare `grid gap-*` wrappers remain elsewhere (`/bacentas`,
 `/constituencies`, `template-editor`). All four are forms of fields rather than
 lists of member-shaped rows, so none of them has a 407px item today. They are
 the same hazard waiting for a long enough constituency name.
+
+## Filtering the registry by service — 2026-08-27
+
+`/members` could be narrowed by status, enrolment and constituency, but not by
+which service somebody actually comes to — so "everyone at First Service"
+meant reading 158 rows and picking out the 63. The filter is now a fifth
+control beside the others.
+
+It goes to the SERVER, like `constituency` and unlike the "no constituency
+yet" case: `home_service` is a required enum with no null, so there is nothing
+to fix up in memory afterwards.
+
+**It filters the REGISTRY and nothing else.** `home_service` is where a member
+usually sits; attendance is never gated by it, and anyone active may be marked
+present at either service (PRD §2.1). Nothing on the attendance path reads
+this parameter.
+
+An unrecognised value is dropped and the caller gets the whole registry, the
+same way `status` already behaves — measured, not assumed: `service=third`,
+`service=` and `service=FIRST` each return all 158. A filter nobody can spell
+should not be able to empty the page.
+
+### Two things fixed on the way past
+
+- The empty state tested `search || status || enrolment` and had never been
+  told about `constituency`. Filtering to a constituency nobody is in yet
+  therefore said **"No members yet"** and offered "Register a member", which is
+  the opposite of what is wrong. It is one `filtered` flag now, so the next
+  filter added cannot be forgotten in the same place.
+- The filter row was a bare `grid` — one of the four wrappers the `/sms` fix
+  listed under "Left alone". It is `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3`
+  now, five controls at three across.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npx vitest run` 234 passed, 4 skipped.
+- Real Chrome against `npm run dev` and the live project: picking **First
+  Service** fires exactly one request carrying `service=first`, returns **63
+  members**, and every row on screen reads "First Service". Second Service
+  returns 95. 63 + 95 = 158, the whole registry.
+- Read back through `listMembers` directly against Cloud: the same 63/95/158,
+  and every returned row really carries the service asked for.
+- **First Service + Inactive only** is empty, and the page says "No members
+  match those filters" rather than "No members yet".
+- Every control in the filter row measures a min-content of 47px or less
+  (the search box, 33px), against the ~343px a phone card leaves — so no
+  item can put a floor under the track the way the `/sms` picker did. This
+  window would not resize below 1280 to check it the way `/sms` was checked, so
+  it is the intrinsic width that was measured, not a rendered 390px frame.
+
+### Applied to the live project
+
+`npm run setup:appwrite` created `by_home_service` and reported **indexes
+created 1, existing 42**. A second run reported **created 0, existing 43** —
+idempotency confirmed, not assumed. The index reads back `available`, and
+`npm run verify:appwrite` passes every check afterwards, including all eight
+unique indexes, both buckets and the 158-member registry.
+
+The index is a speed matter and not a correctness one: Appwrite Cloud 1.9.6
+answered the query without it, which was checked against the live project
+before relying on it. What it buys is that a registry of three thousand is not
+a table scan on every change of the filter. Filtered read after the index:
+63 members in 286 ms.
+
+## A hydration error on every page — 2026-08-27
+
+The install capture added with the install-invitation work was written as a
+direct child of `<html>`:
+
+    <html>
+      <Script id="install-capture" strategy="beforeInteractive">
+      <body>
+
+A `<script>` is not a legal child of `<html>`. The parser hoisted it into
+`<head>`, React then compared the DOM against the tree it had rendered, and
+every page of the app logged:
+
+    In HTML, <script> cannot be a child of <html>.
+    This will cause a hydration error.
+
+It has been there since the feature shipped, on every route, and was found by
+reading the console on an unrelated browser pass.
+
+### The fix is where it is written, not how it loads
+
+The script now sits last inside `<body>`, which is where Next's own
+`beforeInteractive` example puts it. **Position in the tree was never what made
+it early** — the strategy is. Next emits such a script into the initial HTML
+and runs it before any Next module regardless of where it is written.
+
+That was checked rather than assumed, because getting it wrong would silently
+put the listener back after `beforeinstallprompt` had already fired — the
+exact bug the capture exists to prevent. The served HTML was diffed either side
+of the change: **both** emit it through the same `(self.__next_s=...).push(...)`
+queue inside `<body>`, so the delivery mechanism is untouched and only the
+offset within the body moved. At runtime the script is in `<head>` and
+`'__mcInstallEvent' in window` is true before anything else runs.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npx vitest run` 234 passed, 4 skipped;
+  `npm run build` compiled.
+- Real Chrome, fresh navigation with console capture running: **no console
+  messages at all** on `/` and `/members`. The dev overlay badge, which read
+  **3 Issues**, is now clean.
+- The install invitation still renders and the capture still executes.

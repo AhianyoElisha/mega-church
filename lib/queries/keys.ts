@@ -4,12 +4,23 @@
 // queryKey: ['members'] })` clears every member query at once.
 
 export const queryKeys = {
-  members: (filters: { search?: string; status?: string; constituency?: string } = {}) =>
+  members: (
+    filters: {
+      search?: string
+      status?: string
+      constituency?: string
+      service?: string
+    } = {},
+  ) =>
     [
       'members',
       filters.search ?? '',
       filters.status ?? '',
       filters.constituency ?? '',
+      // Part of the key, not just the URL: two filters that fetch different
+      // rows must not share a cache entry, or switching service shows the
+      // previous service's members until the refetch lands.
+      filters.service ?? '',
     ] as const,
   member: (id: string) => ['members', 'one', id] as const,
   memberStats: ['members', 'stats'] as const,
