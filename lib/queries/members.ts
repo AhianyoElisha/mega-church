@@ -11,12 +11,20 @@ import type {
 } from '@/lib/members/types'
 
 export function useMembers(
-  filters: { search?: string; status?: string; constituency?: string } = {},
+  filters: {
+    search?: string
+    status?: string
+    constituency?: string
+    /** `first` | `second` — the member's usual service, never a gate on
+     *  attendance (PRD §2.1). */
+    service?: string
+  } = {},
 ) {
   const params = new URLSearchParams()
   if (filters.search) params.set('search', filters.search)
   if (filters.status) params.set('status', filters.status)
   if (filters.constituency) params.set('constituency', filters.constituency)
+  if (filters.service) params.set('service', filters.service)
   const qs = params.toString()
   return useQuery<ListMembersResponse>({
     queryKey: queryKeys.members(filters),

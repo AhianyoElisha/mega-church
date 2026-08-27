@@ -32,13 +32,14 @@ export async function GET(request: NextRequest) {
   const search = request.nextUrl.searchParams.get('search') ?? undefined
   const status = request.nextUrl.searchParams.get('status') ?? undefined
   const constituencyId = request.nextUrl.searchParams.get('constituency') ?? undefined
+  const homeService = request.nextUrl.searchParams.get('service') ?? undefined
 
   // Appwrite has no joins; fetch every side in parallel and merge in memory.
   // The bacenta index is ONE pass over the join collection rather than a query
   // per member — a registry of three thousand people would otherwise be three
   // thousand round trips to fill in a column.
   const [members, enrolment, bacentaIndex] = await Promise.all([
-    listMembers(databases, { search, status, constituencyId }),
+    listMembers(databases, { search, status, constituencyId, homeService }),
     enrolmentByMember(databases),
     bacentaMembershipIndex(databases),
   ])

@@ -23,6 +23,7 @@ export default function MembersPage() {
   const [status, setStatus] = useState('')
   const [enrolment, setEnrolment] = useState('')
   const [constituency, setConstituency] = useState('')
+  const [service, setService] = useState('')
 
   const constituencies = useConstituencies()
 
@@ -32,11 +33,21 @@ export default function MembersPage() {
   // Constituency goes to the SERVER (it is an indexed field) while the
   // "unassigned" case is filtered here — Appwrite cannot express "is null" as
   // a query, so asking for it server-side would return everybody.
+  //
+  // Service is server-side for the same reason as constituency: it is an
+  // indexed enum with no null case, so there is nothing to fix up afterwards.
   const { data, isLoading } = useMembers({
     search: search.trim().length >= 2 ? search.trim() : undefined,
     status: status || undefined,
     constituency: constituency && constituency !== '__none__' ? constituency : undefined,
+    service: service || undefined,
   })
+
+  // Every filter, so the empty state can tell "nothing matches" from "nobody is
+  // registered". Listing them individually is how `constituency` came to be
+  // left out of that test, which offered "Register a member" to an admin whose
+  // only problem was a filter set to a constituency nobody is in yet.
+  const filtered = Boolean(search || status || enrolment || constituency || service)
 
   const rows = useMemo(() => {
     let list = data?.ok ? data.members : []
@@ -68,7 +79,11 @@ export default function MembersPage() {
       />
 
       <Card className="mb-6" padded={false}>
-        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* `grid-cols-1`, not a bare `grid`: an implicit column takes a floor
+            from its widest item and refuses to shrink below it, which is what
+            put /sms into a horizontal scroll on a phone. Five controls at
+            three across, so the last row is the two narrowest. */}
+        <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           <Input
             placeholder="Search by name…"
             value={search}
@@ -83,6 +98,14 @@ export default function MembersPage() {
             <option value="">Any enrolment</option>
             <option value="complete">Fully enrolled</option>
             <option value="incomplete">Needs enrolment</option>
+          </Select>
+          {/* Which service the member usually attends. A filter on the
+              REGISTRY only: attendance is never gated by `home_service`, and
+              anyone here may be marked present at either service (PRD §2.1). */}
+          <Select value={service} onChange={(e) => setService(e.target.value)}>
+            <option value="">Any service</option>
+            <option value="first">First Service</option>
+            <option value="second">Second Service</option>
           </Select>
           <Select value={constituency} onChange={(e) => setConstituency(e.target.value)}>
             <option value="">Any constituency</option>
@@ -103,14 +126,14 @@ export default function MembersPage() {
       ) : rows.length === 0 ? (
         <EmptyState
           icon={UsersIcon}
-          title={search || status || enrolment ? 'No members match those filters' : 'No members yet'}
+          title={filtered ? 'No members match those filters' : 'No members yet'}
           message={
-            search || status || enrolment
+            filtered
               ? 'Try widening the search.'
               : 'Register the first member to start taking attendance.'
           }
           action={
-            isAdmin && !search && !status && !enrolment ? (
+            isAdmin && !filtered ? (
               <Button color="primary" href="/members/new">
                 Register a member
               </Button>
