@@ -1153,3 +1153,46 @@ answered the query without it, which was checked against the live project
 before relying on it. What it buys is that a registry of three thousand is not
 a table scan on every change of the filter. Filtered read after the index:
 63 members in 286 ms.
+
+## A hydration error on every page — 2026-08-27
+
+The install capture added with the install-invitation work was written as a
+direct child of `<html>`:
+
+    <html>
+      <Script id="install-capture" strategy="beforeInteractive">
+      <body>
+
+A `<script>` is not a legal child of `<html>`. The parser hoisted it into
+`<head>`, React then compared the DOM against the tree it had rendered, and
+every page of the app logged:
+
+    In HTML, <script> cannot be a child of <html>.
+    This will cause a hydration error.
+
+It has been there since the feature shipped, on every route, and was found by
+reading the console on an unrelated browser pass.
+
+### The fix is where it is written, not how it loads
+
+The script now sits last inside `<body>`, which is where Next's own
+`beforeInteractive` example puts it. **Position in the tree was never what made
+it early** — the strategy is. Next emits such a script into the initial HTML
+and runs it before any Next module regardless of where it is written.
+
+That was checked rather than assumed, because getting it wrong would silently
+put the listener back after `beforeinstallprompt` had already fired — the
+exact bug the capture exists to prevent. The served HTML was diffed either side
+of the change: **both** emit it through the same `(self.__next_s=...).push(...)`
+queue inside `<body>`, so the delivery mechanism is untouched and only the
+offset within the body moved. At runtime the script is in `<head>` and
+`'__mcInstallEvent' in window` is true before anything else runs.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npx vitest run` 234 passed, 4 skipped;
+  `npm run build` compiled.
+- Real Chrome, fresh navigation with console capture running: **no console
+  messages at all** on `/` and `/members`. The dev overlay badge, which read
+  **3 Issues**, is now clean.
+- The install invitation still renders and the capture still executes.
