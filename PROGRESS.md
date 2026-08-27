@@ -191,13 +191,15 @@ Needs people, hardware or a decision — not more code:
 
 1. ~~**Wire the scheduler.**~~ ✅ Done in Plan 3 — declared as a Vercel Cron Job
    in `vercel.json`, alongside the new birthday-SMS run. See "The two daily
-   jobs" in `README.md`. **`CRON_SECRET` must be set in the Vercel project's
-   environment variables**, because that is the exact variable Vercel reads to
-   build the `Authorization: Bearer` header it sends.
-2. **Push on real phones.** The VAPID keys are generated and the server serves
-   them, but no device has subscribed yet. On iPhone the app must be added to
-   the Home Screen first — Safari does not deliver push to an ordinary tab, and
-   the birthdays page says so before anyone tries.
+   jobs" in `README.md`. `CRON_SECRET` is **set in the Vercel project and
+   confirmed working** — five consecutive days of scheduled runs authenticated
+   with it. See "`CRON_SECRET` is set — confirmed from the outside" below.
+2. **Push on real phones.** ⚠️ Half done, and the half that is missing is the
+   iPhone. Two devices are subscribed and an **Android phone is receiving real
+   pushes from the scheduled run** — `last_success_at` stamped by the cron
+   itself. The **iPhone has never had a successful delivery**: it errors with
+   something other than a 404/410, so it is counted as `failed` and the
+   subscription is deliberately kept rather than pruned. See below.
 3. ~~**The rest of the head accounts.**~~ ✅ Done — four `leader` accounts
    (`alos`, `tsalack`, `anagkazo`, `anadeia`) exist as of 2026-08-22, and heads
    are now created in-app rather than in the console (Plan 3). **`.env.local`
@@ -1271,3 +1273,96 @@ services card — so a grid-track fix could not have covered them at all.
   1043 → 375. Every one fits.
 - At 1280px `/bacentas` is unchanged: three cards across, each name on one
   line, nothing broken mid-word.
+
+## `CRON_SECRET` is set — confirmed from the outside — 2026-08-27
+
+The open item said it "must be set" and nothing in the repo could say whether it
+had been. It has been. Confirmed without the Vercel CLI or a dashboard login, by
+two checks that do not depend on each other.
+
+### 1. The route tells you whether a secret exists, without revealing it
+
+`authoriseCronRun` answers a Bearer token in two distinguishable ways, and the
+difference is exactly the question being asked:
+
+| Response | Means |
+|---|---|
+| `403 No scheduler secret is configured…` | neither `CRON_SECRET` nor `NOTIFICATIONS_CRON_SECRET` is set |
+| `401 Invalid scheduler token.` | one of them **is** set, and this was not it |
+
+Against production, `GET` with a deliberately wrong token, as `vercel-cron/1.0`:
+
+    GET /api/notifications/birthday-run  -> 401 {"ok":false,"error":"Invalid scheduler token."}
+    GET /api/notifications/birthday-sms  -> 401 {"ok":false,"error":"Invalid scheduler token."}
+
+A secret is configured. A wrong token cannot send anything — auth fails long
+before a celebrant is looked up — so this probe is safe to repeat.
+
+What it cannot tell you is **which** of the two variables holds it, and that
+distinction is the whole point of the item: only `CRON_SECRET` is the one Vercel
+itself sends.
+
+### 2. The audit trail says which one
+
+`triggered_by=scheduler` is written only after a bearer token has already
+matched. `notification_runs`, read straight from Cloud:
+
+| `run_date` | kind | `ran_at` (UTC) | status |
+|---|---|---|---|
+| 2026-08-27 | `birthday` | 06:21:06 | `sent` — 1 celebrant, 1 device, 1 failed |
+| 2026-08-26 | `birthday-sms` | 08:19:32 | `sent` — 1 celebrant |
+| 2026-08-25 | `birthday-sms` | 08:19:31 | `nobody_celebrating` |
+| 2026-08-24 | `birthday` / `birthday-sms` | 06:29:37 / 08:19:31 | `nobody_celebrating` |
+| 2026-08-23 | `birthday` / `birthday-sms` | 06:25:49 / 08:17:40 | `nobody_celebrating` |
+
+Every row is `triggered_by=scheduler`, and every `ran_at` falls inside the
+declared slot plus the Hobby plan's one-hour flexible window — `0 6 * * *`
+landing at 06:21–06:29, `0 8 * * *` at 08:17–08:19. Vercel Cron attaches
+`Authorization: Bearer <CRON_SECRET>` and reads no other variable name, so a
+scheduled invocation that authenticated is `CRON_SECRET` being set and correct.
+
+The residual, stated so nobody has to re-derive it: an *external* scheduler
+carrying `NOTIFICATIONS_CRON_SECRET` on the same daily rhythm would look
+identical from here. None is configured, in the repo or in the docs.
+
+This also re-proves the 2026-08-22 fix from the other direction. Those runs are
+`GET`s from `vercel-cron/1.0` reaching the handler — the verb bug is gone in the
+only way that counts, which is unattended.
+
+### The gap in the trail is the known one, not a new one
+
+`birthday` has no row on 2026-08-25 or 2026-08-26, and 08-26 must have had a
+celebrant, because 08-27's SMS run found one. That is `releaseRun` doing what
+"Left as it was" already recorded: `birthday-run`'s `no_subscribers` and
+send-failure exits delete the row so a retry can send, and therefore leave no
+trace. The lock and the audit trail are the same row; separating them is the
+change that would close this.
+
+### What the same read turned up about push
+
+Item 2 of "Not yet done" said no device had subscribed. Two have, both under the
+admin account:
+
+| device | `last_success_at` |
+|---|---|
+| Android phone | **2026-08-27T06:21:07Z** — stamped by the cron, not by hand |
+| iPhone | **null** — never once delivered |
+
+So push on Android is proven end to end by the scheduler itself, and the
+`failed=1` on today's run is the iPhone.
+
+`failed` is a count of **devices, not celebrants**, and it is specifically the
+non-`404`/`410` bucket: a `410 Gone` is a dead subscription, gets pruned, and is
+reported as `pruned`. The iPhone row survived, so Apple is refusing a
+subscription it still considers live — which points at the VAPID credentials or
+`VAPID_SUBJECT` rather than at an uninstalled app. Worth chasing separately;
+it is the last thing standing between item 2 and done.
+
+### How to re-check any of this
+
+    curl -A "vercel-cron/1.0" -H "Authorization: Bearer wrong" \
+      https://mega-church.vercel.app/api/notifications/birthday-run
+
+401 means a secret is set; 403 means it has been removed. The runs themselves
+read out of `notification_runs`, newest first — and a morning with no row is
+only evidence after 09:00 UTC, because of the flexible window.
