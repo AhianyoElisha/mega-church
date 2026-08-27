@@ -158,6 +158,19 @@ large type; body text is black. Never yellow text on white below 18pt.
   unapproved sender ID is *accepted* by mNotify and then never delivered.
   Filling in a plausible default would turn a loud misconfiguration into
   messages that report success and never arrive.
+- **`VAPID_SUBJECT` has NO default, and an unreachable one is refused by name.**
+  The same rule as `MNOTIFY_SENDER_ID`, learned the same way. **Apple validates
+  the `sub` claim; FCM ignores it** — so the old
+  `|| 'mailto:admin@megachurch.local'` fallback gave every Android device
+  working push and every iPhone a `403 BadJwtToken`, for months, with nothing
+  anywhere reporting it. A 403 is not a 404/410, so the subscription is not
+  even pruned: the iPhone sits on the list looking live and hears nothing.
+  `vapidSubjectProblem()` in `lib/notifications/vapid.ts` refuses a reserved
+  domain (`.local`, `.test`, `.internal`, `example.com`) and anything that is
+  not a `mailto:`/`https:` URI. Never reintroduce a fallback: a default that
+  half the devices reject is not safer than none, it is the same silent failure
+  with nothing to report it. **Verify push on BOTH an Android and an iPhone** —
+  one of the two providers checks things the other does not.
 - **An unknown `{{placeholder}}` REFUSES the send and names the token.**
   Substituting an empty string mails "Happy birthday !" to the congregation, at
   cost, with no recall. The placeholder set is closed (`PLACEHOLDERS` in
@@ -399,7 +412,7 @@ CHURCH_WASM_MATCHER              # optional, "0" disables the in-process matcher
 
 NEXT_PUBLIC_VAPID_PUBLIC_KEY     # optional — without it, push is off and says so
 VAPID_PRIVATE_KEY                # server only, never NEXT_PUBLIC_
-VAPID_SUBJECT                    # optional, mailto: the push service can contact
+VAPID_SUBJECT                    # required FOR PUSH — no default; see the rule below
 NOTIFICATIONS_CRON_SECRET        # optional — without it only an admin can run it
 
 MNOTIFY_API_KEY                  # server only, never NEXT_PUBLIC_

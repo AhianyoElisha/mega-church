@@ -11,6 +11,7 @@ import { ID, Query, type Databases, type Models } from 'node-appwrite'
 import webpush from 'web-push'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 import type { PushPayload, PushSubscriptionInput, StoredSubscription } from './types'
+import { vapidSubjectProblem } from './vapid'
 
 type Doc = Models.Document & Record<string, unknown>
 
@@ -28,7 +29,19 @@ export function hashEndpoint(endpoint: string): string {
   return createHash('sha256').update(endpoint).digest('hex')
 }
 
+/**
+ * The key a browser subscribes with — or `null` when this server could not
+ * deliver to the subscription it would create.
+ *
+ * The subject is checked here too, and not only at send time, because
+ * `/api/push` uses `null` to mean "not configured on the server" and that is
+ * exactly what an unusable VAPID_SUBJECT is. Handing out the key anyway would
+ * let somebody tap Enable, see it succeed, and join a list nothing is ever
+ * delivered from — which is the failure this whole change exists to stop being
+ * silent.
+ */
 export function vapidPublicKey(): string | null {
+  if (vapidSubjectProblem(process.env.VAPID_SUBJECT)) return null
   return process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || null
 }
 
@@ -51,10 +64,20 @@ function configureWebPush(): { ok: true } | { ok: false; error: string } {
         'and VAPID_PRIVATE_KEY.',
     }
   }
-  // The subject must be a mailto: or https: URL the push service can contact
-  // about a misbehaving sender. A placeholder is better than nothing, but the
-  // church's real address belongs here.
-  const subject = process.env.VAPID_SUBJECT || 'mailto:admin@megachurch.local'
+  // The subject is the address a push service contacts about a misbehaving
+  // sender, and it is REFUSED rather than defaulted — the same rule as
+  // MNOTIFY_SENDER_ID, for the same reason.
+  //
+  // There used to be a `|| 'mailto:admin@megachurch.local'` here. It read as
+  // harmless because FCM accepts anything, so Android worked and nobody looked
+  // further; Apple validates the claim and answered 403 BadJwtToken to every
+  // send for as long as it stood. A default that half the devices reject is
+  // not a safer default than none, it is the same silent failure with nothing
+  // to report it. See `lib/notifications/vapid.ts`.
+  const subject = process.env.VAPID_SUBJECT?.trim() ?? ''
+  const problem = vapidSubjectProblem(subject)
+  if (problem) return { ok: false, error: problem }
+
   webpush.setVapidDetails(subject, publicKey, privateKey)
   return { ok: true }
 }
