@@ -1140,11 +1140,16 @@ should not be able to empty the page.
   window would not resize below 1280 to check it the way `/sms` was checked, so
   it is the intrinsic width that was measured, not a rendered 390px frame.
 
-### Not applied to the live project
+### Applied to the live project
 
-The matching `by_home_service` index is in `scripts/setup-appwrite.ts` but has
-NOT been created — `npm run setup:appwrite` is what applies it. Nothing is
-broken until it is: Appwrite Cloud 1.9.6 answers the query without an index,
-which was checked against the live project before relying on it. The index is
-there so that a registry of three thousand is not a table scan per filter
-change.
+`npm run setup:appwrite` created `by_home_service` and reported **indexes
+created 1, existing 42**. A second run reported **created 0, existing 43** —
+idempotency confirmed, not assumed. The index reads back `available`, and
+`npm run verify:appwrite` passes every check afterwards, including all eight
+unique indexes, both buckets and the 158-member registry.
+
+The index is a speed matter and not a correctness one: Appwrite Cloud 1.9.6
+answered the query without it, which was checked against the live project
+before relying on it. What it buys is that a registry of three thousand is not
+a table scan on every change of the filter. Filtered read after the index:
+63 members in 286 ms.
