@@ -275,7 +275,7 @@ export default function BacentasPage() {
                 </span>
               </div>
               {category.description && (
-                <p className="mb-3 text-sm text-neutral-500 dark:text-neutral-400">
+                <p className="mb-3 wrap-anywhere text-sm text-neutral-500 dark:text-neutral-400">
                   {category.description}
                 </p>
               )}
@@ -331,9 +331,15 @@ function BacentaGrid({ bacentas }: { bacentas: BacentaWithCount[] }) {
           href={`/bacentas/${b.$id}`}
           className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-neutral-900/5 transition hover:ring-primary-500/50 dark:bg-neutral-800 dark:ring-white/10"
         >
-          <p className="font-semibold text-neutral-950 dark:text-white">{b.name}</p>
+          {/* `wrap-anywhere` on both: a bacenta name is free text up to 96
+              characters and a description is free text with URLs in it. Either
+              one, unbroken, was taking the whole page sideways on a phone
+              rather than wrapping inside the card — measured 1043px in a 390px
+              viewport. `line-clamp` does not help: it caps the HEIGHT, and the
+              width floor is set before it applies. */}
+          <p className="wrap-anywhere font-semibold text-neutral-950 dark:text-white">{b.name}</p>
           {b.description && (
-            <p className="mt-1 line-clamp-2 text-sm text-neutral-500 dark:text-neutral-400">
+            <p className="mt-1 line-clamp-2 wrap-anywhere text-sm text-neutral-500 dark:text-neutral-400">
               {b.description}
             </p>
           )}

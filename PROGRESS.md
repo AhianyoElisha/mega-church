@@ -1196,3 +1196,78 @@ offset within the body moved. At runtime the script is in `<head>` and
   messages at all** on `/` and `/members`. The dev overlay badge, which read
   **3 Issues**, is now clean.
 - The install invitation still renders and the capture still executes.
+
+## A long name took the page sideways, and `grid-cols-1` was not the fix — 2026-08-27
+
+The /sms entry above left four bare `grid gap-*` wrappers alone and called them
+"the same hazard waiting for a long enough constituency name". That was half
+right. The hazard is real. The predicted fix was wrong, and it took measuring
+to find out.
+
+### Getting a real 390px viewport
+
+The window on this machine would not resize below 1280 — Chrome ignores bounds
+changes while a window is maximized, which is why the earlier registry work
+fell back to measuring intrinsic widths. An **iframe** solves it properly: CSS
+media queries inside one respond to the iframe's width, so a 390px iframe
+pointed at a route is a genuine phone viewport, on the same origin and
+therefore already signed in.
+
+Swept that way, every page passes as it stands today: `/`, `/members`,
+`/constituencies`, `/bacentas`, `/birthdays`, `/monitor`, `/reports`,
+`/services`, `/meetings`, `/sms`, `/my-groups`, `/setup`, `/members/new`, and
+the four detail pages — including the member with the longest name in the
+church — all report a document no wider than the viewport.
+
+### What breaks it
+
+Free text from the database with no space in it. A 96-character name is what
+the schema allows (`ensureStringAttribute(..., 'name', 96, ...)`), and at
+390px:
+
+| surface | document width |
+|---|---|
+| `PageHeader` `<h1>` (every detail page) | **1497px** |
+| `/services` meeting card | **1175px** |
+| `/my-groups` group tile | **1075px** |
+| `/bacentas` bacenta card | **1043px** |
+
+The bacenta card starts scrolling the page at **34** unbroken characters.
+Hyphens do not count — they are break opportunities, so
+"Living-Waters-Bacenta-Northern-Extension" is safe at 39 characters while 34
+`B`s are not. A URL in a description is the realistic vector: one took
+`/bacentas` to 535px.
+
+### Four candidates, measured on the same card
+
+| | result |
+|---|---|
+| as shipped | 1043px |
+| `grid-cols-1` | 1023px — **no** |
+| `break-words` (`overflow-wrap: break-word`) | 1043px — **no** |
+| `truncate` on the paragraph | 1043px — **no** |
+| `break-all` | 375px, but breaks ordinary words mid-letter |
+| **`wrap-anywhere` (`overflow-wrap: anywhere`)** | **375px** |
+
+`grid-cols-1` lets the TRACK shrink; nothing was making the card's own text
+shrink with it, so the item overflowed its track instead of the track
+overflowing the screen. 20px better, and still a page that scrolls sideways.
+`break-words` permits a break but does not reduce min-content, which is the
+same trap the /sms entry recorded one level up. `truncate` needs a parent that
+has already been given a definite width, and here nothing had.
+
+`overflow-wrap: anywhere` is the one that reduces min-content, and unlike
+`break-all` it only breaks a word when there is no other option, so an ordinary
+name is untouched.
+
+Two of the four surfaces are **flex**, not grid — the page header and the
+services card — so a grid-track fix could not have covered them at all.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npx vitest run` 234 passed, 4 skipped;
+  `npm run build` compiled, 57 pages.
+- Same stress, after: 1497 → 375, 1175 → 375, 1075 → 375,
+  1043 → 375. Every one fits.
+- At 1280px `/bacentas` is unchanged: three cards across, each name on one
+  line, nothing broken mid-word.

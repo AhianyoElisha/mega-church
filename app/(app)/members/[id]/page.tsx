@@ -166,7 +166,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 {memberBacentas.length === 0 ? (
                   <span className="text-neutral-400">None</span>
                 ) : (
-                  <span className="flex flex-wrap gap-1.5">
+                  <span className="flex flex-wrap gap-1.5 wrap-anywhere">
                     {memberBacentas.map((b) => (
                       <Badge key={b.$id} color="yellow">
                         {b.category_name ? `${b.category_name} · ${b.name}` : b.name}
