@@ -312,9 +312,25 @@ function SendTab({ canSend }: { canSend: boolean }) {
   }
 
   return (
-    <div className="grid gap-6">
+    /*
+      `grid-cols-1` rather than a bare `grid`, on every wrapper on this page.
+
+      An implicit column is sized `minmax(min-content, auto)`, so the widest
+      card sets a floor the column cannot go below. On a phone that floor was a
+      member row — a full name beside a `+233…` number — 407px of min-content
+      inside a 343px container. The card could not shrink to fit, so the whole
+      PAGE scrolled sideways by 33px, on the one tab an admin uses to choose
+      who gets texted.
+
+      Tailwind's `grid-cols-1` is `repeat(1, minmax(0, 1fr))`, and the `0` is
+      the entire fix: the track is allowed to be narrower than its content,
+      which is what lets the `truncate` already on those rows do its job. Above
+      `sm` nothing changes, because there was room all along — which is exactly
+      why this was invisible on the screen it was built on.
+    */
+    <div className="grid grid-cols-1 gap-6">
       <Card>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
               Kind of message
@@ -362,7 +378,7 @@ function SendTab({ canSend }: { canSend: boolean }) {
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               {cost ? 'What the first person you ticked receives' : 'Preview'}
             </p>
-            <p className="whitespace-pre-wrap text-sm text-neutral-950 dark:text-white">
+            <p className="whitespace-pre-wrap break-words text-sm text-neutral-950 dark:text-white">
               {cost?.preview ?? render(template.body, { first_name: 'Ama', last_name: 'Serwaa' }).ok
                 ? cost?.preview ??
                   (render(template.body, { first_name: 'Ama', last_name: 'Serwaa' }) as { text: string })
@@ -374,13 +390,27 @@ function SendTab({ canSend }: { canSend: boolean }) {
       </Card>
 
       <Card padded={false}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 p-4 dark:border-neutral-800">
-          <div className="flex items-center gap-3">
+        {/*
+          Stacks on a phone.
+
+          The search box was a fixed `w-64` inside a row with no `flex-wrap`,
+          next to two buttons. 256px of input plus "Select these (99)" plus
+          "Clear" does not fit in the ~296px a 360px screen leaves after the
+          page and card padding, and an unwrappable flex row does not fold —
+          it overflows, taking the whole page into a horizontal scroll. The
+          outer row wrapped, which is why this looked fine on the tab that was
+          being tested and not on the one that mattered.
+
+          It was one of two causes, and fixing it alone left the page still
+          scrolling: the other is the grid track above.
+        */}
+        <div className="flex flex-col gap-3 border-b border-neutral-200 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between dark:border-neutral-800">
+          <div className="flex flex-wrap items-center gap-3">
             <Input
               placeholder="Search by name or number"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-64"
+              className="w-full sm:w-64"
             />
             <Button plain onClick={() => setPicked(new Set(visible.map((m) => m.$id)))}>
               Select these ({visible.length})
@@ -393,6 +423,7 @@ function SendTab({ canSend }: { canSend: boolean }) {
           </div>
           <Button
             color="primary"
+            className="w-full sm:w-auto"
             onClick={submit}
             disabled={!canSend || !template || picked.size === 0 || send.isPending}
           >
@@ -490,7 +521,8 @@ function TemplatesTab() {
   }
 
   return (
-    <div className="grid gap-6">
+    // `grid-cols-1`, not `grid` — see the note in SendTab.
+    <div className="grid grid-cols-1 gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <TabBar
           value={category}
@@ -556,7 +588,7 @@ function TemplatesTab() {
           message="Write one so the same message does not have to be typed out every time."
         />
       ) : (
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 gap-4">
           {list.map((t) => {
             const preview = render(t.body, { first_name: 'Ama', last_name: 'Serwaa' })
             const parts = countParts(preview.ok ? preview.text : t.body)
@@ -564,18 +596,23 @@ function TemplatesTab() {
               <Card key={t.$id}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="flex items-center gap-2 text-sm font-semibold text-neutral-950 dark:text-white">
+                    {/* Wraps: the name is free text, and "Standard" and the
+                        part count sit beside it. A long name pushed both
+                        badges off the card on a phone. */}
+                    <h3 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-neutral-950 dark:text-white">
                       {t.name}
                       {t.is_default && <Badge color="lime">Standard</Badge>}
                       <Badge color={parts.parts > 1 ? 'amber' : 'zinc'}>
                         {parts.parts} part{parts.parts === 1 ? '' : 's'}
                       </Badge>
                     </h3>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
+                    <p className="mt-2 whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400">
                       {preview.ok ? preview.text : t.body}
                     </p>
                   </div>
-                  <div className="flex shrink-0 gap-2">
+                  {/* `shrink-0` with no wrap meant three buttons that would
+                      not fold and would not shrink. They wrap now. */}
+                  <div className="flex flex-wrap gap-2">
                     {!t.is_default && (
                       <Button
                         plain
@@ -610,7 +647,8 @@ function LogTab() {
   const messages = log.data?.ok ? log.data.messages : []
 
   return (
-    <div className="grid gap-6">
+    // `grid-cols-1`, not `grid` — see the note in SendTab.
+    <div className="grid grid-cols-1 gap-6">
       <div className="max-w-xs">
         <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
           Show
@@ -654,7 +692,7 @@ function LogTab() {
                     </Badge>
                   </span>
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400">
                   {m.body}
                 </p>
                 <p className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">

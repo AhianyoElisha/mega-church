@@ -1029,3 +1029,64 @@ whether the banner looks right, not whether it appears.
 And no phone has yet installed the app, which is still item 2 of "Not yet
 done". That check is now two taps rather than a hunt through a browser menu,
 which was the point.
+
+## /sms did not fit a phone — 2026-08-27
+
+Reported as "the messages page seems not to be mobile responsive", and it was
+two separate faults stacked on the same screen. The first was visible by
+reading: the member search box was a fixed `w-64` in a flex row with no
+`flex-wrap`, beside two buttons that a `Button` marks `shrink-0`. That row
+cannot fold and cannot shrink, so it overflowed.
+
+The second was the one that mattered, and it survived fixing the first.
+
+### An implicit grid column cannot be narrower than its widest card
+
+Each tab's wrapper was a bare `<div className="grid gap-6">`. An implicit
+column is sized `minmax(min-content, auto)`, so the column takes a floor from
+the largest min-content among its items — and the item here is the member
+picker, whose rows carry a full name beside a `+233…` number.
+
+Measured in a 390px viewport against the live congregation (158 active
+members): the card's min-content was **407px** inside a **343px** container, so
+the track refused to shrink, the card stuck out of it, and the whole document
+scrolled sideways by 33px. The `truncate` already on those rows never got a
+chance to fire, because nothing ever told the row it was short of room.
+
+Tailwind's `grid-cols-1` is `repeat(1, minmax(0, 1fr))`. The `0` is the entire
+fix. Applied to all three tab wrappers and the two inner grids; above `sm`
+nothing changes, which is exactly why this was invisible on the screen it was
+built on.
+
+### A long link in a message body is the same bug one level down
+
+An SMS body is free text and frequently carries a URL, which has no break
+opportunity. With the track capped the page no longer scrolls, but the
+paragraph itself still spilled 20px past the card. `break-words` on the three
+message-body paragraphs closes it.
+
+Worth knowing for the next time: `overflow-wrap: break-word` does **not**
+reduce an element's min-content size, so it cannot rescue a grid track on its
+own — it was measured doing nothing at all until `grid-cols-1` was in place.
+The two fixes are ordered, not alternatives.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npx vitest run` 234 passed, 4 skipped.
+- Real Chrome against `npm run dev` and the live project, the page rendered in
+  a 390px frame so the `sm:` breakpoint actually applies: all three tabs report
+  **zero** elements overflowing the viewport and `scrollWidth` 375 ≤ 390. Same
+  at 320px. Before the fix, the Send tab measured 423.
+- A long name now ellipses (*"Stanley Uriel Kwadwo Safo Ase…"*) instead of
+  widening the card.
+- A simulated receipt link in a template body and in a sent message: no page
+  scroll, no spill past the card.
+- At 1100px the select row is still two 464px columns and the picker header is
+  still one horizontal row — the desktop layout is untouched.
+
+### Left alone
+
+Four bare `grid gap-*` wrappers remain elsewhere (`/bacentas`,
+`/constituencies`, `template-editor`). All four are forms of fields rather than
+lists of member-shaped rows, so none of them has a 407px item today. They are
+the same hazard waiting for a long enough constituency name.
