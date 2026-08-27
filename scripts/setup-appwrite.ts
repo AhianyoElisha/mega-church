@@ -381,6 +381,11 @@ async function setupMembers() {
   await ensureIndex(COLLECTIONS.members, 'by_birthday', 'key', ['birth_month', 'birth_day'])
   // "Everyone in Ahodwo" — the constituency head's entire view.
   await ensureIndex(COLLECTIONS.members, 'by_constituency', 'key', ['constituency_id'])
+  // "Everyone who comes to First Service" — the registry filter.
+  // `home_service` never gates ATTENDANCE (PRD §2.1); it is only where a
+  // member usually sits, and whoever is compiling a list to call wants one
+  // service at a time.
+  await ensureIndex(COLLECTIONS.members, 'by_home_service', 'key', ['home_service'])
 }
 
 async function setupConstituencies() {

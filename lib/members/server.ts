@@ -251,11 +251,25 @@ export async function updateMember(
 
 export async function listMembers(
   databases: Databases,
-  filters: { search?: string; status?: string; constituencyId?: string } = {},
+  filters: {
+    search?: string
+    status?: string
+    constituencyId?: string
+    homeService?: string
+  } = {},
 ): Promise<Member[]> {
   const base: string[] = []
   if (filters.status === 'active' || filters.status === 'inactive') {
     base.push(Query.equal('status', filters.status))
+  }
+  // Which service the member usually attends. Validated HERE rather than at the
+  // route, exactly as `status` above is: an unrecognised value is dropped and
+  // the caller gets the whole registry, because a filter nobody can spell
+  // should not be able to empty the page. It never gates attendance — a
+  // member may be marked at either service regardless (PRD §2.1) — this is
+  // only the registry asking to see one service at a time.
+  if (filters.homeService === 'first' || filters.homeService === 'second') {
+    base.push(Query.equal('home_service', filters.homeService))
   }
   // Pushed to the server rather than filtered in memory: a constituency head's
   // whole view is this one query, and shipping the entire registry to filter

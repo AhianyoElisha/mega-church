@@ -1090,3 +1090,61 @@ Four bare `grid gap-*` wrappers remain elsewhere (`/bacentas`,
 `/constituencies`, `template-editor`). All four are forms of fields rather than
 lists of member-shaped rows, so none of them has a 407px item today. They are
 the same hazard waiting for a long enough constituency name.
+
+## Filtering the registry by service — 2026-08-27
+
+`/members` could be narrowed by status, enrolment and constituency, but not by
+which service somebody actually comes to — so "everyone at First Service"
+meant reading 158 rows and picking out the 63. The filter is now a fifth
+control beside the others.
+
+It goes to the SERVER, like `constituency` and unlike the "no constituency
+yet" case: `home_service` is a required enum with no null, so there is nothing
+to fix up in memory afterwards.
+
+**It filters the REGISTRY and nothing else.** `home_service` is where a member
+usually sits; attendance is never gated by it, and anyone active may be marked
+present at either service (PRD §2.1). Nothing on the attendance path reads
+this parameter.
+
+An unrecognised value is dropped and the caller gets the whole registry, the
+same way `status` already behaves — measured, not assumed: `service=third`,
+`service=` and `service=FIRST` each return all 158. A filter nobody can spell
+should not be able to empty the page.
+
+### Two things fixed on the way past
+
+- The empty state tested `search || status || enrolment` and had never been
+  told about `constituency`. Filtering to a constituency nobody is in yet
+  therefore said **"No members yet"** and offered "Register a member", which is
+  the opposite of what is wrong. It is one `filtered` flag now, so the next
+  filter added cannot be forgotten in the same place.
+- The filter row was a bare `grid` — one of the four wrappers the `/sms` fix
+  listed under "Left alone". It is `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3`
+  now, five controls at three across.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npx vitest run` 234 passed, 4 skipped.
+- Real Chrome against `npm run dev` and the live project: picking **First
+  Service** fires exactly one request carrying `service=first`, returns **63
+  members**, and every row on screen reads "First Service". Second Service
+  returns 95. 63 + 95 = 158, the whole registry.
+- Read back through `listMembers` directly against Cloud: the same 63/95/158,
+  and every returned row really carries the service asked for.
+- **First Service + Inactive only** is empty, and the page says "No members
+  match those filters" rather than "No members yet".
+- Every control in the filter row measures a min-content of 47px or less
+  (the search box, 33px), against the ~343px a phone card leaves — so no
+  item can put a floor under the track the way the `/sms` picker did. This
+  window would not resize below 1280 to check it the way `/sms` was checked, so
+  it is the intrinsic width that was measured, not a rendered 390px frame.
+
+### Not applied to the live project
+
+The matching `by_home_service` index is in `scripts/setup-appwrite.ts` but has
+NOT been created — `npm run setup:appwrite` is what applies it. Nothing is
+broken until it is: Appwrite Cloud 1.9.6 answers the query without an index,
+which was checked against the live project before relying on it. The index is
+there so that a registry of three thousand is not a table scan per filter
+change.
