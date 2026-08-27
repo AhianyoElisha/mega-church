@@ -57,12 +57,32 @@ export function PageHeader({
 }) {
   return (
     <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      {/*
+        `wrap-anywhere`, and `min-w-0` is not enough on its own.
+
+        Every detail page passes a name straight from the database as `title`
+        — a bacenta, a constituency, a meeting, a member. A name with no space
+        in it long enough to beat the screen sets this heading's min-content,
+        the heading refuses to be narrower than that, and the whole PAGE
+        scrolls sideways rather than the heading wrapping. Measured at 390px
+        with a 96-character name, which is what the schema allows: the document
+        went 1497px wide.
+
+        `overflow-wrap: anywhere` is the one that fixes it. `break-words`
+        (`overflow-wrap: break-word`) measured 1497px too — it permits the break
+        but does NOT reduce min-content, which is the same trap the /sms fix
+        hit one level up. `break-all` also works but breaks ordinary words
+        mid-letter; `anywhere` only breaks when there is no other option, so a
+        normal name is untouched.
+      */}
       <div className="min-w-0">
         {back && <BackLink href={back.href} label={back.label} />}
-        <Heading level={1} className="text-2xl! sm:text-3xl!">
+        <Heading level={1} className="text-2xl! wrap-anywhere sm:text-3xl!">
           {title}
         </Heading>
-        {subtitle && <Subheading className="mt-1.5 text-base!">{subtitle}</Subheading>}
+        {subtitle && (
+          <Subheading className="mt-1.5 text-base! wrap-anywhere">{subtitle}</Subheading>
+        )}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-3">{actions}</div>}
     </div>
@@ -144,9 +164,14 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl bg-neutral-50 px-6 py-16 text-center ring-1 ring-neutral-900/5 dark:bg-neutral-800/60 dark:ring-white/10">
       {Icon && <Icon className="mb-4 size-10 text-neutral-300 dark:text-neutral-600" />}
-      <p className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">{title}</p>
+      {/* Same reason as PageHeader: several callers put a group name in here. */}
+      <p className="wrap-anywhere text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+        {title}
+      </p>
       {message && (
-        <p className="mt-1 max-w-sm text-sm text-neutral-500 dark:text-neutral-400">{message}</p>
+        <p className="mt-1 max-w-sm wrap-anywhere text-sm text-neutral-500 dark:text-neutral-400">
+          {message}
+        </p>
       )}
       {action && <div className="mt-6">{action}</div>}
     </div>

@@ -121,7 +121,7 @@ export default function MeetingsPage() {
               {services.map((m) => (
                 <span
                   key={m.$id}
-                  className="rounded-full bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200"
+                  className="rounded-full bg-neutral-100 px-4 py-2 wrap-anywhere text-sm font-medium text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200"
                 >
                   {m.name}
                   {m.$id === openId && <span className="ml-2 text-primary-600">● open</span>}

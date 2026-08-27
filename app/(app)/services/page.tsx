@@ -268,11 +268,14 @@ export default function ServicesPage() {
               <Card key={m.$id} className={isOpen ? 'ring-2 ring-primary-500!' : undefined}>
                 <div className="flex h-full flex-col">
                   <div className="mb-3 flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-lg font-semibold text-neutral-950 dark:text-white">
+                    {/* `min-w-0` so the flex item may shrink, `wrap-anywhere`
+                        so its text may. A meeting name is free text; an
+                        unbroken one measured 1175px in a 390px viewport. */}
+                    <div className="min-w-0">
+                      <h3 className="wrap-anywhere text-lg font-semibold text-neutral-950 dark:text-white">
                         {m.name}
                       </h3>
-                      <p className="mt-0.5 text-sm text-neutral-500 dark:text-neutral-400">
+                      <p className="mt-0.5 wrap-anywhere text-sm text-neutral-500 dark:text-neutral-400">
                         {m.description}
                       </p>
                     </div>
@@ -362,7 +365,9 @@ export default function ServicesPage() {
             return (
               <Card key={m.$id} className={isOpen ? 'ring-2 ring-primary-500!' : undefined}>
                 <div className="mb-2 flex items-start justify-between gap-2">
-                  <h3 className="font-semibold text-neutral-950 dark:text-white">{m.name}</h3>
+                  <h3 className="wrap-anywhere font-semibold text-neutral-950 dark:text-white">
+                    {m.name}
+                  </h3>
                   {isOpen && <Badge color="green">Open</Badge>}
                   {pausedHere && <Badge color="zinc">Paused</Badge>}
                 </div>

@@ -599,7 +599,7 @@ function TemplatesTab() {
                     {/* Wraps: the name is free text, and "Standard" and the
                         part count sit beside it. A long name pushed both
                         badges off the card on a phone. */}
-                    <h3 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-neutral-950 dark:text-white">
+                    <h3 className="flex flex-wrap items-center gap-2 wrap-anywhere text-sm font-semibold text-neutral-950 dark:text-white">
                       {t.name}
                       {t.is_default && <Badge color="lime">Standard</Badge>}
                       <Badge color={parts.parts > 1 ? 'amber' : 'zinc'}>

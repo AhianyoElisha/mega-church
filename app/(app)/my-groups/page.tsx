@@ -170,12 +170,18 @@ function GroupTile({
       <div className="flex items-start gap-3">
         <Icon className="mt-0.5 size-5 shrink-0 text-primary-600" />
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-neutral-950 dark:text-white">{name}</p>
+          {/* All three are free text from the database. `min-w-0` on the
+              parent lets the column shrink; `wrap-anywhere` is what lets the
+              TEXT shrink with it. Without it a long unbroken group name took
+              the page to 1075px inside a 390px screen. */}
+          <p className="wrap-anywhere font-semibold text-neutral-950 dark:text-white">{name}</p>
           {subtitle && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">{subtitle}</p>
+            <p className="wrap-anywhere text-xs text-neutral-500 dark:text-neutral-400">
+              {subtitle}
+            </p>
           )}
           {description && (
-            <p className="mt-1 line-clamp-2 text-sm text-neutral-500 dark:text-neutral-400">
+            <p className="mt-1 line-clamp-2 wrap-anywhere text-sm text-neutral-500 dark:text-neutral-400">
               {description}
             </p>
           )}
