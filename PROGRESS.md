@@ -1136,9 +1136,9 @@ should not be able to empty the page.
   match those filters" rather than "No members yet".
 - Every control in the filter row measures a min-content of 47px or less
   (the search box, 33px), against the ~343px a phone card leaves — so no
-  item can put a floor under the track the way the `/sms` picker did. This
-  window would not resize below 1280 to check it the way `/sms` was checked, so
-  it is the intrinsic width that was measured, not a rendered 390px frame.
+  item can put a floor under the track the way the `/sms` picker did.
+  Confirmed afterwards in a real 390px frame (see the entry below for how):
+  `/members` reports a document 375px wide with nothing escaping the viewport.
 
 ### Applied to the live project
 
