@@ -359,6 +359,20 @@ async function setupMembers() {
   await ensureEnumAttribute(COLLECTIONS.members, 'home_service', ['first', 'second'], true)
   await ensureEnumAttribute(COLLECTIONS.members, 'status', ['active', 'inactive'], true)
   await ensureStringAttribute(COLLECTIONS.members, 'created_by', 128, false)
+  /**
+   * The human-readable member number — `2026001`. See `lib/members/numbering.ts`.
+   *
+   * OPTIONAL, and deliberately so even though every member ends up with one:
+   * Appwrite cannot add a `required` attribute to a collection that already has
+   * rows without also giving it a default, and an attribute that is both
+   * required and defaulted is refused outright (`attribute_default_unsupported`).
+   * The backfill is what makes it universal; the unique index is what keeps it
+   * honest.
+   *
+   * 16 characters is room for a five-digit year and a five-digit sequence — far
+   * more than the church will use, and free.
+   */
+  await ensureStringAttribute(COLLECTIONS.members, 'member_no', 16, false)
   // Where the member LIVES. Optional at the schema level because the four
   // constituencies did not exist when the congregation was first registered,
   // and a required attribute would have made every existing row unwritable.
@@ -415,6 +429,19 @@ async function setupMembers() {
   // member usually sits, and whoever is compiling a list to call wants one
   // service at a time.
   await ensureIndex(COLLECTIONS.members, 'by_home_service', 'key', ['home_service'])
+  /**
+   * THE guarantee that two members never hold the same number.
+   *
+   * Allocation is claimed by the INSERT, exactly as `notification_runs` claims
+   * a daily run — the read that computes "next" is only the fast path, and two
+   * registrations landing in the same millisecond are resolved here, by the
+   * database, rather than by hoping.
+   *
+   * MariaDB permits many NULLs in a unique index, so this guards nothing for
+   * members who have no number yet. That is correct and temporary: it is what
+   * lets the attribute exist before the backfill has run.
+   */
+  await ensureIndex(COLLECTIONS.members, 'member_no_unique', 'unique', ['member_no'])
 }
 
 async function setupConstituencies() {

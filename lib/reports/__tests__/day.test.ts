@@ -15,6 +15,7 @@ import type { Member } from '@/lib/members/types'
 function member(id: string, last: string, constituencyId: string | null = null): Member {
   return {
     $id: id,
+    member_no: null,
     first_name: 'Test',
     last_name: last,
     other_names: null,

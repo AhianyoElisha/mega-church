@@ -4,9 +4,10 @@ import 'server-only'
 // so the same rules apply to a script or a future import path.
 
 import { ID, Query, type Databases, type Models } from 'node-appwrite'
-import { COLLECTIONS, DATABASE_ID, type ServiceSlot } from '@/lib/appwrite/config'
+import { CHURCH_TIMEZONE, COLLECTIONS, DATABASE_ID, type ServiceSlot } from '@/lib/appwrite/config'
 import { fullName, type Member, type MemberInput, type MemberStatus } from './types'
 import { memberDocToMember } from '@/lib/attendance/server'
+import { nextMemberNo } from './numbering'
 import { releaseCharges } from '@/lib/groups/server'
 
 const PAGE = 100
@@ -245,13 +246,96 @@ function withFullName(
   }
 }
 
+/**
+ * Every `member_no` already issued for `year`.
+ *
+ * `Query.select` keeps this to one small column, and the set is bounded by the
+ * congregation's registrations in a single year. It is read fresh on every
+ * allocation rather than cached: a cached maximum is precisely what would hand
+ * two people the same number.
+ */
+async function issuedMemberNos(databases: Databases, year: number): Promise<string[]> {
+  const out: string[] = []
+  let cursor: string | null = null
+  for (;;) {
+    const q = [Query.select(['$id', 'member_no']), Query.limit(PAGE)]
+    if (cursor) q.push(Query.cursorAfter(cursor))
+    const res = await databases.listDocuments(DATABASE_ID, COLLECTIONS.members, q)
+    for (const d of res.documents) {
+      const value = (d as Models.Document & { member_no?: unknown }).member_no
+      if (typeof value === 'string' && value.startsWith(String(year))) out.push(value)
+    }
+    if (res.documents.length < PAGE) break
+    cursor = res.documents[res.documents.length - 1].$id
+  }
+  return out
+}
+
+/** Appwrite's code for "a unique index refused this". */
+function isDuplicate(err: unknown): boolean {
+  const e = err as { code?: number; type?: string } | null
+  return e?.code === 409 || e?.type === 'document_already_exists'
+}
+
+/**
+ * How many times to re-read and retry after losing a race. Five is far beyond
+ * what a church registration desk can produce — the point is that the loop
+ * TERMINATES, so a persistent 409 from some other cause surfaces as itself
+ * rather than spinning.
+ */
+const ALLOCATION_ATTEMPTS = 5
+
 export async function createMember(
   databases: Databases,
   fields: Record<string, unknown>,
   createdBy: string,
 ): Promise<Member> {
+  /**
+   * The member number is CLAIMED BY THE INSERT, not by a check.
+   *
+   * Read the highest issued, add one, and write it. If two registrations
+   * compute the same number in the same moment, the unique index refuses the
+   * second and we recompute — the database decides, which is the only thing
+   * that can. A check-then-write would pass both times under exactly the
+   * concurrency this exists to survive, and the two members would collide.
+   *
+   * Same rule as `notification_runs` and `sms_messages.dedupe_key`: the read in
+   * front is a fast path, and the index is the guarantee.
+   *
+   * The number is settled HERE, when creation is triggered, and never reserved
+   * by the form — a number handed out when a form opens is a number lost every
+   * time somebody changes their mind and closes it.
+   */
+  const year = Number(
+    new Intl.DateTimeFormat('en-CA', { timeZone: CHURCH_TIMEZONE, year: 'numeric' }).format(
+      new Date(),
+    ),
+  )
+
+  let lastError: unknown = null
+  for (let attempt = 0; attempt < ALLOCATION_ATTEMPTS; attempt += 1) {
+    const memberNo = nextMemberNo(await issuedMemberNos(databases, year), year)
+    try {
+      return await createMemberWithNumber(databases, fields, createdBy, memberNo)
+    } catch (err) {
+      if (!isDuplicate(err)) throw err
+      lastError = err
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Could not allocate a member number. Try again.')
+}
+
+async function createMemberWithNumber(
+  databases: Databases,
+  fields: Record<string, unknown>,
+  createdBy: string,
+  memberNo: string,
+): Promise<Member> {
   const doc = await databases.createDocument(DATABASE_ID, COLLECTIONS.members, ID.unique(), {
     ...withFullName(fields),
+    member_no: memberNo,
     other_names: fields.other_names ?? null,
     photo_file_id: null,
     birth_month: fields.birth_month ?? null,

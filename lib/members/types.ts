@@ -7,6 +7,15 @@ export type MemberStatus = 'active' | 'inactive'
 
 export type Member = {
   $id: string
+  /**
+   * The human-readable member number — `2026001`. See `lib/members/numbering.ts`.
+   *
+   * Null only for a member registered before the numbering existed and not yet
+   * backfilled. It is NOT the primary key: Appwrite's `$id` still is. This is
+   * the reference humans use out loud and on paper, because a twenty-character
+   * hex id is not something anyone reads down a phone.
+   */
+  member_no: string | null
   first_name: string
   last_name: string
   other_names: string | null

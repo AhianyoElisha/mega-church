@@ -21,6 +21,7 @@
     "e2e:groups": "node scripts/e2e-groups.mjs",
     "seed:users": "tsx scripts/seed-users.ts",
     "seed:sms": "tsx --conditions=react-server scripts/seed-sms-templates.ts",
+    "backfill:member-numbers": "tsx --conditions=react-server scripts/backfill-member-numbers.ts",
     "migrate:basonta": "tsx --conditions=react-server scripts/migrate-basonta.ts",
     "build:kiosk-pack": "tsx scripts/build-kiosk-pack.ts",
     "build:brand": "tsx scripts/build-brand-assets.ts"

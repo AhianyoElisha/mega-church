@@ -95,6 +95,10 @@ async function main() {
     [COLLECTIONS.basonta_members, 'pair_unique'],
     // Two groups with the same name are indistinguishable in every dropdown
     // in the app, which makes both of them unusable.
+    // THE guarantee that two members never hold the same number. Allocation
+    // reads the highest and adds one; this is what decides the race when two
+    // registrations compute the same answer at the same moment.
+    [COLLECTIONS.members, 'member_no_unique'],
     [COLLECTIONS.constituencies, 'name_unique'],
     [COLLECTIONS.bacenta_categories, 'name_unique'],
     [COLLECTIONS.basonta_categories, 'name_unique'],
