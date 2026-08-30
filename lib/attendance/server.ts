@@ -71,6 +71,10 @@ type MemberDoc = Models.Document & Record<string, unknown>
 export function memberDocToMember(d: MemberDoc): Member {
   return {
     $id: d.$id,
+    // `|| null` for the same reason as `constituency_id` below — an unset
+    // optional string arrives as `''`, which would render as a blank number
+    // rather than as "not assigned yet".
+    member_no: (d.member_no as string | null) || null,
     first_name: String(d.first_name ?? ''),
     last_name: String(d.last_name ?? ''),
     other_names: (d.other_names as string | null) ?? null,

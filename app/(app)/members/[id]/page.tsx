@@ -133,6 +133,16 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             />
             <Divider className="my-6" />
             <DescriptionList>
+              {/* First, and in tabular figures: this is the number the church
+                  reads out and writes on paper, so it has to be the thing the
+                  eye lands on rather than something to hunt for. */}
+              <DescriptionTerm>Member number</DescriptionTerm>
+              <DescriptionDetails className="font-medium tabular-nums">
+                {member.member_no ?? (
+                  <span className="text-neutral-400">Not assigned</span>
+                )}
+              </DescriptionDetails>
+
               <DescriptionTerm>Call number</DescriptionTerm>
               <DescriptionDetails className="tabular-nums">{member.call_number}</DescriptionDetails>
 

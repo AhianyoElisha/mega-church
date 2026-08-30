@@ -172,7 +172,14 @@ export default function MembersPage() {
                           <span className="block truncate font-medium text-neutral-950 dark:text-white">
                             {fullName(m)}
                           </span>
+                          {/* The member number rides the existing subtitle
+                              rather than taking a column of its own. A sixth
+                              column costs width on a phone, and this table was
+                              already measured down to fit one. */}
                           <span className="block text-xs text-neutral-500 dark:text-neutral-400">
+                            {m.member_no && (
+                              <span className="tabular-nums">{m.member_no} · </span>
+                            )}
                             {m.home_service === 'first' ? 'First Service' : 'Second Service'}
                           </span>
                         </div>
