@@ -982,7 +982,7 @@ function ConfirmPanel({
 }
 
 /** Exactly what /api/members/search returns — deliberately minimal. */
-type MemberHit = { $id: string; full_name: string }
+type MemberHit = { $id: string; full_name: string; member_no: string | null }
 
 function ManualPanel({
   query,
@@ -1046,7 +1046,7 @@ function ManualPanel({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="e.g. Ama Mensah"
+          placeholder="e.g. Ama Mensah, or 2026042"
           autoFocus
           className="mb-4 h-14 w-full rounded-xl border border-white/15 bg-white/10 px-4 text-center text-lg text-white placeholder-white/30 outline-none focus:border-primary-500"
         />
@@ -1060,7 +1060,7 @@ function ManualPanel({
         <div className="max-h-72 overflow-y-auto">
           {query.trim().length < 2 ? (
             <p className="py-4 text-center text-sm text-white/40">
-              Type at least two letters.
+              Type at least two letters, or a member number.
             </p>
           ) : searching ? (
             <p className="py-4 text-center text-sm text-white/40">Searching…</p>
@@ -1075,7 +1075,14 @@ function ManualPanel({
                     disabled={pending}
                     className="w-full cursor-pointer rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-lg hover:bg-white/10 disabled:opacity-50"
                   >
-                    {m.full_name}
+                    <span className="flex items-baseline gap-3">
+                      <span className="min-w-0 flex-1">{m.full_name}</span>
+                      {m.member_no && (
+                        <span className="shrink-0 text-sm tabular-nums text-white/50">
+                          {m.member_no}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 </li>
               ))}

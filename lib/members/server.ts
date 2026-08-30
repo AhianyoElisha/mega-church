@@ -8,6 +8,7 @@ import { CHURCH_TIMEZONE, COLLECTIONS, DATABASE_ID, type ServiceSlot } from '@/l
 import { fullName, type Member, type MemberInput, type MemberStatus } from './types'
 import { memberDocToMember } from '@/lib/attendance/server'
 import { nextMemberNo } from './numbering'
+import { looksLikeMemberNo } from './search'
 import { releaseCharges } from '@/lib/groups/server'
 
 const PAGE = 100
@@ -418,8 +419,24 @@ export async function listMembers(
   if (filters.constituencyId) {
     base.push(Query.equal('constituency_id', filters.constituencyId))
   }
-  if (filters.search && filters.search.trim().length >= 2) {
-    base.push(Query.search('full_name', filters.search.trim()))
+  /**
+   * Name OR member number, decided by `looksLikeMemberNo` — the same rule the
+   * browser uses, so a search box and the server cannot disagree about what
+   * was asked for.
+   *
+   * The number is a PREFIX match, so `2026` lists everyone registered this year
+   * and `202600` narrows to the first nine. `full_name` is a fulltext search
+   * against the `search_name` index; `member_no` cannot use one (a fulltext
+   * index tokenises words, and `2026042` is one token that would only ever
+   * match in full), so it uses the ordinary index behind `member_no_unique`.
+   */
+  const term = filters.search?.trim() ?? ''
+  if (term.length >= 2) {
+    base.push(
+      looksLikeMemberNo(term)
+        ? Query.startsWith('member_no', term)
+        : Query.search('full_name', term),
+    )
   }
 
   const out: Member[] = []

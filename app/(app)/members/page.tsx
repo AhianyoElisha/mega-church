@@ -15,6 +15,7 @@ import { useMembers } from '@/lib/queries/members'
 import { useConstituencies } from '@/lib/queries/groups'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { birthdayLabel, fullName, initials } from '@/lib/members/types'
+import { matchesMemberSearch } from '@/lib/members/search'
 import { TEMPLATES_PER_MEMBER } from '@/lib/appwrite/config'
 
 export default function MembersPage() {
@@ -52,9 +53,11 @@ export default function MembersPage() {
 
   const rows = useMemo(() => {
     let list = data?.ok ? data.members : []
+    // The server needs two characters; below that it returns everything and
+    // this narrows it, using the SAME rule so one keystroke cannot behave
+    // differently from two.
     if (search.trim().length === 1) {
-      const q = search.trim().toLowerCase()
-      list = list.filter((m) => fullName(m).toLowerCase().includes(q))
+      list = list.filter((m) => matchesMemberSearch(m, search))
     }
     if (enrolment === 'complete') list = list.filter((m) => m.enrolment.complete)
     if (enrolment === 'incomplete') list = list.filter((m) => !m.enrolment.complete)
@@ -92,7 +95,7 @@ export default function MembersPage() {
             three across, so both rows are full. */}
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           <Input
-            placeholder="Search by name…"
+            placeholder="Search by name or member no…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -160,6 +163,7 @@ export default function MembersPage() {
           <Table dense grid striped>
             <TableHead>
               <TableRow>
+                <TableHeader>Member no.</TableHeader>
                 <TableHeader>Name</TableHeader>
                 <TableHeader>Call number</TableHeader>
                 <TableHeader>Birthday</TableHeader>
@@ -172,6 +176,13 @@ export default function MembersPage() {
                 const photo = memberPhotoUrl(m.photo_file_id, 64)
                 return (
                   <TableRow key={m.$id} href={`/members/${m.$id}`}>
+                    {/* First column, and `whitespace-nowrap`: this is the
+                        number read down a phone and written on paper, so it
+                        must never wrap mid-number. `tabular-nums` keeps the
+                        digits in columns so a list of them scans vertically. */}
+                    <TableCell className="tabular-nums whitespace-nowrap">
+                      {m.member_no ?? <span className="text-neutral-400">—</span>}
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <Avatar
@@ -184,14 +195,7 @@ export default function MembersPage() {
                           <span className="block truncate font-medium text-neutral-950 dark:text-white">
                             {fullName(m)}
                           </span>
-                          {/* The member number rides the existing subtitle
-                              rather than taking a column of its own. A sixth
-                              column costs width on a phone, and this table was
-                              already measured down to fit one. */}
                           <span className="block text-xs text-neutral-500 dark:text-neutral-400">
-                            {m.member_no && (
-                              <span className="tabular-nums">{m.member_no} · </span>
-                            )}
                             {m.home_service === 'first' ? 'First Service' : 'Second Service'}
                           </span>
                         </div>

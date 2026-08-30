@@ -43,6 +43,7 @@ import {
 import { useMembers } from '@/lib/queries/members'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { fullName, initials } from '@/lib/members/types'
+import { matchesMemberSearch } from '@/lib/members/search'
 import { countParts, render } from '@/lib/sms/render'
 import { sendableCategories } from '@/lib/sms/permissions'
 import { useAuth } from '@/components/auth'
@@ -247,11 +248,8 @@ function SendTab({ canSend }: { canSend: boolean }) {
 
   const all = useMemo(() => (members.data?.ok ? members.data.members : []), [members.data])
   const visible = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return all
-    return all.filter(
-      (m) => fullName(m).toLowerCase().includes(q) || m.call_number.includes(q),
-    )
+    if (!search.trim()) return all
+    return all.filter((m) => matchesMemberSearch(m, search, { phone: true }))
   }, [all, search])
 
   const toggle = (id: string) =>
@@ -460,7 +458,7 @@ function SendTab({ canSend }: { canSend: boolean }) {
         <div className="flex flex-col gap-3 border-b border-neutral-200 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between dark:border-neutral-800">
           <div className="flex flex-wrap items-center gap-3">
             <Input
-              placeholder="Search by name or number"
+              placeholder="Search by name, phone or member no"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full sm:w-64"

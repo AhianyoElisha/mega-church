@@ -16,6 +16,7 @@ import { LoadingRow } from '@/components/ui'
 import { useMembers } from '@/lib/queries/members'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { fullName, initials } from '@/lib/members/types'
+import { matchesMemberSearch } from '@/lib/members/search'
 
 export default function MemberChecklist({
   selected,
@@ -43,8 +44,7 @@ export default function MemberChecklist({
 
   const visible = useMemo(() => {
     let list = all
-    const q = search.trim().toLowerCase()
-    if (q) list = list.filter((m) => fullName(m).toLowerCase().includes(q))
+    if (search.trim()) list = list.filter((m) => matchesMemberSearch(m, search))
     if (onlySelected) list = list.filter((m) => selected.has(m.$id))
     return list
   }, [all, search, onlySelected, selected])
@@ -73,7 +73,7 @@ export default function MemberChecklist({
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Input
           className="max-w-xs"
-          placeholder="Search members…"
+          placeholder="Search by name or member no…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
