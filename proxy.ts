@@ -8,6 +8,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { Account, Client } from 'node-appwrite'
 import type { UserLabel } from '@/lib/auth/types'
+import { USER_LABELS } from '@/lib/appwrite/config'
 import { getCachedUserLabels } from '@/lib/auth/session-cache'
 
 /**
@@ -21,14 +22,24 @@ import { getCachedUserLabels } from '@/lib/auth/session-cache'
  * exactly how it behaved until the groups smoke test caught it.
  */
 const PUBLIC_PATHS = ['/login', '/api/auth', '/api/notifications']
-const RECOGNISED_LABELS: readonly UserLabel[] = [
-  'admin',
-  'usher',
-  'kiosk',
-  'leader',
-  'celebrations',
-  'shepherd',
-]
+/**
+ * Every label the app knows, DERIVED from `USER_LABELS` rather than retyped.
+ *
+ * This was a hand-written list, and `treasurer` shipped without being added to
+ * it — twice, because there is a second copy of this in the other file. The
+ * account existed, carried the right label and had the right password, and
+ * `toAuthUser` still returned null: it could not sign in at all.
+ *
+ * The type did not catch it. `readonly UserLabel[]` is perfectly happy with a
+ * SUBSET, so a missing label is not a type error anywhere. Deriving from the
+ * one source removes the possibility instead of documenting it — the same rule
+ * as "two fields encoding one fact are two fields that can disagree", applied
+ * to a list.
+ *
+ * Order still decides precedence for an account carrying two labels (it should
+ * carry one), and `USER_LABELS` lists admin first, so that is unchanged.
+ */
+const RECOGNISED_LABELS: readonly UserLabel[] = Object.values(USER_LABELS)
 
 const LABEL_HOMES: Record<UserLabel, string> = {
   admin: '/',
