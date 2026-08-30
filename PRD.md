@@ -29,14 +29,23 @@ attendance — see §2.1.
 | `whatsapp_number` | string(32) | no | often identical to `call_number`, but stored independently because some members keep them separate |
 | `home_service` | enum | yes | `first` \| `second` — informational only, **never** an attendance gate |
 | `constituency_id` | string(64) | no | where they LIVE — exactly one (§1.7). Informational only; **never** an attendance gate |
+| `bacenta_id` | string(64) | no | the PLACE inside that constituency — exactly one (§1.7a). Never an attendance gate |
+| `care_of_member_id` | string(64) | no | the member who looks after them, inside their bacenta. Needs no account (§1.7a) |
+| `member_no` | string(16) | no | `2026001` — the human reference. **Unique.** Not the primary key; `$id` still is |
+| `benmp_partner` | boolean | no | a BENMP Partner, contributing monthly to the Global Healing Jesus Campaign |
 | `status` | enum | yes | `active` \| `inactive` |
 | `created_by` | string(128) | no | admin email |
 
 `full_name` is derived, never stored: `first_name [other_names] last_name`.
 
-Bacenta membership is deliberately **not** a field here. A member serves in
-zero or many, so it lives in the join collection `bacenta_members` (§1.9). The
-asymmetry with `constituency_id` is the whole design — see §1.7.
+Basonta membership is deliberately **not** a field here. A member serves in
+zero or many, so it lives in the join collection `basonta_members` (§1.9). The
+asymmetry with `constituency_id` and `bacenta_id` — both fields, because a
+member has one home and one place inside it — is the whole design; see §1.7a.
+
+`member_no` is generated at creation and is the reference the church actually
+uses out loud and on paper. It is **claimed by the INSERT**: the highest issued
+plus one, written, and a unique index refuses a loser under a race.
 
 ### 1.2 Biometric templates
 
@@ -140,17 +149,78 @@ a member to have two homes, which is not a state the church has.
 Assigning a member to a constituency therefore **moves** them out of whichever
 one they were in. The bulk assigner says so before it sends.
 
-### 1.8 Bacentas and bacenta categories
+### 1.7a Bacentas
+
+Where a member **lives**, one level below the constituency. Anloga, Susuankyi,
+Oforikrom, Bomso, Asokwa — *places*, each a part of exactly one constituency.
+
+> This is not what "bacenta" meant in the first draft. That collection held the
+> serving groups AND the places at once, which made the church's own vocabulary
+> unusable in its own system. The serving groups are §1.8, **basontas**, and
+> `scripts/migrate-basonta.ts` is what it cost to separate them. Do not put them
+> back together.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string(96) | yes | unique **within its constituency**, not globally |
+| `constituency_id` | string(64) | no | the constituency it is part of |
+| `description` | string(512) | no | |
+| `head_user_id` | string(64) | no | as §1.7 |
+| `head_name` | string(128) | no | |
+| `sort_order` | integer | yes | |
+
+**A member belongs to exactly one**, so the link is a field on the member
+(`members.bacenta_id`), exactly as the constituency is. Assigning therefore
+**moves** somebody out of whichever bacenta they were in — the same semantics as
+§1.7 and the opposite of §1.9.
+
+The live data settled this before the code was written: of the 28 members in a
+location bacenta, **not one was in two**.
+
+Name uniqueness is per constituency because two constituencies may each have a
+place the congregation calls "Central", and a global unique index would refuse
+the second.
+
+#### Members looking after members
+
+A bacenta grows past the point where one person can keep track of everyone, so
+members are assigned to other members to be checked on and looked after.
+
+`members.care_of_member_id` names that person. They need **no account** — this
+is a record of pastoral responsibility, not a permission, and being named grants
+nothing whatsoever. That is precisely why it is a field on a member rather than
+a role.
+
+`careAssignmentProblem()` in `lib/groups/care.ts` refuses, by name and with a
+reason: assigning somebody to themselves, an inactive carer, a carer from a
+different bacenta, a member who is in no bacenta at all, and **cycles**.
+
+Chains are fine and expected — A under B under C mirrors the real structure.
+Only a cycle is refused, because it is not a shape anybody can be at the top of:
+every walk up it runs forever, and "who is ultimately responsible for A" has no
+answer.
+
+The cycle walk keeps a `seen` set, and it is load-bearing rather than
+defensive: the stored data may **already** contain a loop, written before the
+check existed or by a direct console edit, and without it the walk never
+terminates and the request hangs instead of being refused.
+
+Care links are cleared by hand wherever a carer stops being available — leaving
+a bacenta, being deleted, being made inactive — because Appwrite has no cascade.
+Order matters when a bacenta is deleted: the links go **before** `bacenta_id`,
+or they point into nothing with no way left to find them.
+
+### 1.8 Basontas and basonta categories
 
 The work group a member **serves** in. Two shapes, both first-class:
 
-- **categorised** — `bacenta_categories` holds a family such as *Choir*, and
-  the individual bacentas *Biazo*, *Living Waters* and *Fresh Oil* sit under
+- **categorised** — `basonta_categories` holds a family such as *Choir*, and
+  the individual basontas *Biazo*, *Living Waters* and *Fresh Oil* sit under
   it. Nobody is a member of a category; they are a member of one of the
-  bacentas inside it.
+  basontas inside it.
 - **standalone** — *Technical Team* has no family and takes members directly.
 
-`bacentas.category_id === null` **is** the standalone case. There is
+`basontas.category_id === null` **is** the standalone case. There is
 deliberately no `is_standalone` boolean beside it, because two fields encoding
 one fact are two fields that can disagree.
 
@@ -167,20 +237,25 @@ Name uniqueness is per category on purpose: "Youth" under Choir and "Youth"
 under Ushers are two real, different groups, and a global unique index would
 refuse the second.
 
-Deleting a category that still holds bacentas is **refused**. Orphaning them
+Deleting a category that still holds basontas is **refused**. Orphaning them
 would leave real groups full of real people rendering as "category missing",
-and only an admin knows where those bacentas should go instead.
+and only an admin knows where those basontas should go instead.
 
-### 1.9 Bacenta members
+### 1.9 Basonta members
 
-The many-to-many join. One row per (`bacenta_id`, `member_id`), unique.
+The many-to-many join. One row per (`basonta_id`, `member_id`), unique.
 
 A member may sing in two choirs and run the sound desk at the same time. Every
 write is expressed as a **diff** (`add` / `remove` / `set`), never as
 delete-all-then-insert — a rewrite loses `added_by` and the joined-on
 timestamps for people who never moved, and a rewrite that fails halfway leaves
 the group empty, which is the one state that makes a head's screen look like
-their bacenta was disbanded.
+their basonta was disbanded.
+
+**This is the asymmetry with §1.7a, and it is the design.** A join for a place
+would permit two homes; a field for a serving group would silently drop the
+second choir. Adding somebody to a basonta never removes them from another;
+adding them to a bacenta always does.
 
 ### 1.10 Push subscriptions
 
@@ -367,8 +442,8 @@ security.
 
 ### 2.6 Groups never gate attendance
 
-A constituency and a bacenta are both **descriptive**, exactly like
-`home_service`. A member with no constituency and no bacenta is marked present
+A constituency, a bacenta and a basonta are all **descriptive**, exactly like
+`home_service`. A member with no constituency and no group is marked present
 by a scanner like anybody else. Only `restricted` meetings gate, and only via
 `meeting_members` (§2.3).
 
@@ -529,7 +604,7 @@ Appwrite User Labels, exactly one per user.
 | `admin` | everything: members, meetings, rosters, groups, activate/end, reports |
 | `usher` | live monitor, manual check-in, read-only member lookup |
 | `kiosk` | `/kiosk` only — POST scans, read the active occurrence |
-| `leader` | a constituency head, a bacenta head, or **both**. Read-only, and only the groups that name them as head |
+| `leader` | a constituency head, a bacenta head, a basonta head, or any combination. Read-only, and only the groups that name them as head |
 | `celebrations` | the birthday team: the celebrant list and push notifications, nothing else |
 | `shepherd` | reads the whole church, writes nothing at all |
 
@@ -567,7 +642,8 @@ the church's money and the other is an appliance that writes attendance.
 
 ### 5.1 Why `leader` is one label and not two
 
-The same person frequently heads a constituency *and* a bacenta. Two labels
+The same person frequently heads a constituency *and* a bacenta *and* a
+basonta. Separate labels
 would mean two logins to see the two halves of their own work, which is exactly
 what the church asked to avoid.
 
@@ -590,7 +666,7 @@ They may also:
 2. **register a new member** into it, collecting every detail in §1.1 except
    the ones listed below;
 3. **correct an existing member's details** — anyone in a constituency **or** a
-   bacenta they head;
+   bacenta or basonta they head;
 4. **set a member's photo**, because it is taken at the desk the person is
    standing at (§2.4).
 
@@ -599,12 +675,12 @@ member, and routing every correction through an admin is how a phone number
 stays wrong.
 
 Note that (2) and (3) are scoped DIFFERENTLY, and it is not an oversight.
-Registering demands a constituency the head runs, because a bacenta head has no
+Registering demands a constituency the head runs, because a basonta head has no
 basis for saying where somebody lives. Editing a member who already exists
 reaches anyone their group pages already show them in full.
 
-**A head's bacenta ticks are merged, not substituted.** They are only ever
-shown the bacentas they head, so saving that list as the member's whole answer
+**A head's basonta ticks are merged, not substituted.** They are only ever
+shown the basontas they head, so saving that list as the member's whole answer
 would remove them from every other one. Memberships outside a head's reach pass
 through untouched.
 
@@ -623,8 +699,8 @@ because a head has no basis for the answer:
 | `status` | `active` | `inactive` is what removes somebody from the matcher's gallery. Not a registration-desk decision. |
 | `sms_template_id` | `null` (the standard message) | It picks which text the church pays to send, in the church's voice. `/api/sms/*` refuses a `leader` outright, so they cannot even see the wordings. |
 
-Bacentas may be ticked, but only ones the head themselves heads. A constituency
-head who runs no bacenta is offered none, and the section says so rather than
+Basontas may be ticked, but only ones the head themselves heads. A constituency
+head who runs no basonta is offered none, and the section says so rather than
 disappearing without explanation.
 
 On an edit the same three fields are refused, **by name and with a reason**,
@@ -639,7 +715,7 @@ enrolment.
 Enforcement is server-side and absolute: `canReadGroup` is consulted on every
 group read, `headRegistrationScope` narrows every head registration, and the
 group id is never taken from anything the client sent when listing. A head
-putting somebody else's bacenta id in a URL gets a 403.
+putting somebody else's group id in a URL gets a 403.
 
 ---
 
@@ -655,10 +731,13 @@ putting somebody else's bacenta id in a URL gets a 403.
 8. **Reports** — per-occurrence and per-member history, Excel export.
 9. **Constituencies** — CRUD, head appointment, and a bulk assigner that files
    many already-registered members in one action.
-10. **Bacentas** — categories and standalone groups, many-to-many membership,
-    the same bulk assigner.
+10. **Bacentas and basontas** — bacentas are places under a constituency,
+    one per member, with members assigned to other members for pastoral care.
+    Basontas are the serving groups: categories, standalone groups, and
+    many-to-many membership.
 11. **Head accounts** — one `leader` label, per-request scoping, `/my-groups`
-    with a constituency/bacenta switch for someone who heads both.
+    with a constituency / bacenta / basonta switch for someone who heads more
+    than one kind.
 12. **Birthdays** — the day-before list, the celebrations account, and a
     manual "send now".
 13. **PWA + push** — installable app, service worker, per-device
