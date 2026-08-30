@@ -313,6 +313,7 @@ export async function deleteMemberCascade(
   roster: number
   records: number
   bacentas: number
+  basontas: number
   messages: number
 }> {
   const dbAny = databases as unknown as {
@@ -349,6 +350,10 @@ export async function deleteMemberCascade(
   // longer exists. The constituency needs no equivalent — it is a field ON the
   // member document, and goes when the document does.
   const bacentas = await purge(COLLECTIONS.bacenta_members, 'member_id')
+  // Same reasoning one collection over. Adding a join and forgetting its purge
+  // is how a "deleted" member goes on being counted in the choir, so the two
+  // lines live together where the omission is visible.
+  const basontas = await purge(COLLECTIONS.basonta_members, 'member_id')
   // Attendance history is deleted last and deliberately: it is the only one of
   // the three whose loss changes a past count, so if an earlier step fails the
   // history is still intact.
@@ -359,5 +364,5 @@ export async function deleteMemberCascade(
   const messages = await purge(COLLECTIONS.sms_messages, 'member_id')
 
   await databases.deleteDocument(DATABASE_ID, COLLECTIONS.members, id)
-  return { templates, roster, records, bacentas, messages }
+  return { templates, roster, records, bacentas, basontas, messages }
 }

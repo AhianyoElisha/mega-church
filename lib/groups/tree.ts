@@ -7,6 +7,10 @@ import type {
   BacentaCategory,
   BacentaTree,
   BacentaWithCount,
+  Basonta,
+  BasontaCategory,
+  BasontaTree,
+  BasontaWithCount,
   Constituency,
 } from './types'
 
@@ -52,6 +56,42 @@ export function buildBacentaTree(
     standalone: sortByOrderThenName(standalone),
     orphans: sortByOrderThenName(orphans),
   }
+}
+
+/**
+ * The same three buckets for basontas.
+ *
+ * It DELEGATES rather than duplicating, because the shaping rule — standalone,
+ * categorised, orphaned-but-still-shown — is one rule and deserves one tested
+ * implementation. The delegation is sound only while `Basonta` and `Bacenta`
+ * are structurally compatible: the moment a bacenta gains `constituency_id`
+ * and stops carrying `category_id`, this stops type-checking, which is exactly
+ * the reminder to give basontas their own copy at that point rather than
+ * discovering the divergence at runtime.
+ */
+export function buildBasontaTree(
+  categories: BasontaCategory[],
+  basontas: BasontaWithCount[],
+): BasontaTree {
+  const tree = buildBacentaTree(categories, basontas)
+  return {
+    // `basontas: bacentas` and NOT the `basontas` shorthand — that would
+    // resolve to this function's own parameter, handing every category the
+    // whole list. It type-checks perfectly, because both are the same type.
+    categories: tree.categories.map(({ category, bacentas }) => ({
+      category,
+      basontas: bacentas,
+    })),
+    standalone: tree.standalone,
+    orphans: tree.orphans,
+  }
+}
+
+/** How a basonta reads in a sentence: "Biazo · Choir", or "Technical Team". */
+export function basontaDisplayName(
+  basonta: Pick<Basonta, 'name'> & { category_name?: string | null },
+): string {
+  return basonta.category_name ? `${basonta.name} · ${basonta.category_name}` : basonta.name
 }
 
 /**

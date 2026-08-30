@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import { createLeaderAccount, listLeaderAccounts } from '@/lib/groups/heads'
-import { listBacentas, listConstituencies } from '@/lib/groups/server'
+import { listBacentas, listBasontas, listConstituencies } from '@/lib/groups/server'
 import type {
   CreateLeaderResponse,
   GroupKind,
@@ -25,9 +25,10 @@ export async function GET() {
   if ('error' in auth) return auth.error
 
   const { databases, users } = createAdminClient()
-  const [constituencies, bacentas] = await Promise.all([
+  const [constituencies, bacentas, basontas] = await Promise.all([
     listConstituencies(databases),
     listBacentas(databases),
+    listBasontas(databases),
   ])
 
   const heldBy = new Map<string, { kind: GroupKind; name: string }[]>()
@@ -37,6 +38,10 @@ export async function GET() {
   }
   for (const c of constituencies) note(c.head_user_id, 'constituency', c.name)
   for (const b of bacentas) note(b.head_user_id, 'bacenta', b.name)
+  // Basonta headships count towards the same load. The warning this list feeds
+  // is "heading six usually means the wrong name was picked twice", and it
+  // stops being true the moment a whole kind of group is left out of the tally.
+  for (const b of basontas) note(b.head_user_id, 'basonta', b.name)
 
   const leaders = await listLeaderAccounts(users, heldBy)
   return NextResponse.json<ListLeadersResponse>(

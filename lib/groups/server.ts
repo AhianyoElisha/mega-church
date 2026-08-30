@@ -1,17 +1,20 @@
 import 'server-only'
 
-// Constituencies, bacenta categories, bacentas, and who belongs to what.
+// Constituencies, bacentas, basontas, and who belongs to what.
 //
-// Two different linkages live here and they are NOT symmetrical:
+// Different linkages live here and they are NOT symmetrical:
 //
 //   constituency  a FIELD on the member (`members.constituency_id`), because a
 //                 member lives in exactly one place. Assigning is an update to
 //                 the member rows, not an insert into a join table.
-//   bacenta       a JOIN collection (`bacenta_members`), because a chorister
+//   basonta       a JOIN collection (`basonta_members`), because a chorister
 //                 may also run the sound desk and sing in a second choir.
+//   bacenta       a PLACE under a constituency. Its membership becomes a field
+//                 too, for the same reason a constituency's is — but that is
+//                 the next change; today it is still the join below.
 //
-// Collapsing either into the other shape is the mistake this file exists to
-// prevent, so each write path is written in the shape its data actually has.
+// Collapsing any of them into another's shape is the mistake this file exists
+// to prevent, so each write path is written in the shape its data actually has.
 
 import { ID, Query, type Databases, type Models } from 'node-appwrite'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
@@ -22,6 +25,9 @@ import type {
   Bacenta,
   BacentaCategory,
   BacentaWithCount,
+  Basonta,
+  BasontaCategory,
+  BasontaWithCount,
   Constituency,
   ConstituencyWithCount,
   MembershipMode,
@@ -652,6 +658,376 @@ export async function bacentaMembershipIndex(
   return { byBacenta, byMember }
 }
 
+// --- basonta categories -----------------------------------------------------
+//
+// Everything from here to the leader scoping is the bacenta code above, moved
+// one collection over. It is a deliberate copy and not a shared generic: the
+// two shapes part company as soon as a bacenta gains `constituency_id`, and a
+// generic written now would have to be un-written then, in a hurry, against
+// live data.
+
+export function basontaCategoryDocTo(d: Doc): BasontaCategory {
+  return {
+    $id: d.$id,
+    name: String(d.name ?? ''),
+    description: str(d.description),
+    sort_order: typeof d.sort_order === 'number' ? d.sort_order : 100,
+    created_by: str(d.created_by),
+    $createdAt: d.$createdAt,
+  }
+}
+
+export function basontaDocTo(d: Doc): Basonta {
+  return {
+    $id: d.$id,
+    name: String(d.name ?? ''),
+    category_id: str(d.category_id),
+    description: str(d.description),
+    head_user_id: str(d.head_user_id),
+    head_name: str(d.head_name),
+    sort_order: typeof d.sort_order === 'number' ? d.sort_order : 100,
+    created_by: str(d.created_by),
+    $createdAt: d.$createdAt,
+  }
+}
+
+export async function listBasontaCategories(databases: Databases): Promise<BasontaCategory[]> {
+  const docs = await listAll(databases, COLLECTIONS.basonta_categories, [
+    Query.orderAsc('sort_order'),
+  ])
+  return docs.map(basontaCategoryDocTo)
+}
+
+export async function createBasontaCategory(
+  databases: Databases,
+  input: { name: string; description?: string | null },
+  createdBy: string,
+): Promise<BasontaCategory> {
+  const doc = await databases.createDocument(
+    DATABASE_ID,
+    COLLECTIONS.basonta_categories,
+    ID.unique(),
+    {
+      name: input.name,
+      description: input.description ?? null,
+      sort_order: 100,
+      created_by: createdBy,
+    },
+  )
+  return basontaCategoryDocTo(doc as Doc)
+}
+
+export async function updateBasontaCategory(
+  databases: Databases,
+  id: string,
+  fields: Record<string, unknown>,
+): Promise<BasontaCategory> {
+  const doc = await databases.updateDocument(
+    DATABASE_ID,
+    COLLECTIONS.basonta_categories,
+    id,
+    fields,
+  )
+  return basontaCategoryDocTo(doc as Doc)
+}
+
+/** Refused while it still holds basontas — see `deleteCategory` for the why. */
+export async function deleteBasontaCategory(
+  databases: Databases,
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const held = await databases.listDocuments(DATABASE_ID, COLLECTIONS.basontas, [
+    Query.equal('category_id', id),
+    Query.limit(1),
+  ])
+  if (held.total > 0) {
+    return {
+      ok: false,
+      error:
+        'This category still has basontas in it. Move or delete them first — ' +
+        'deleting the category would leave them with no family.',
+    }
+  }
+  await databases.deleteDocument(DATABASE_ID, COLLECTIONS.basonta_categories, id)
+  return { ok: true }
+}
+
+// --- basontas ---------------------------------------------------------------
+
+export async function listBasontas(databases: Databases): Promise<Basonta[]> {
+  const docs = await listAll(databases, COLLECTIONS.basontas, [Query.orderAsc('sort_order')])
+  return docs.map(basontaDocTo)
+}
+
+export async function getBasonta(databases: Databases, id: string): Promise<Basonta | null> {
+  try {
+    const doc = await databases.getDocument(DATABASE_ID, COLLECTIONS.basontas, id)
+    return basontaDocTo(doc as Doc)
+  } catch {
+    return null
+  }
+}
+
+export async function basontaCounts(databases: Databases): Promise<Map<string, number>> {
+  const counts = new Map<string, number>()
+  const docs = await listAll(databases, COLLECTIONS.basonta_members, [
+    Query.select(['$id', 'basonta_id']),
+  ])
+  for (const d of docs) {
+    const bid = str(d.basonta_id)
+    if (bid) counts.set(bid, (counts.get(bid) ?? 0) + 1)
+  }
+  return counts
+}
+
+export async function listBasontasWithCounts(databases: Databases): Promise<BasontaWithCount[]> {
+  const [rows, categories, counts] = await Promise.all([
+    listBasontas(databases),
+    listBasontaCategories(databases),
+    basontaCounts(databases),
+  ])
+  const catNames = new Map(categories.map((c) => [c.$id, c.name]))
+  return rows.map((b) => ({
+    ...b,
+    member_count: counts.get(b.$id) ?? 0,
+    category_name: b.category_id ? (catNames.get(b.category_id) ?? null) : null,
+  }))
+}
+
+/** Unique WITHIN a category, exactly as for bacentas — see `bacentaNameTaken`. */
+export async function basontaNameTaken(
+  databases: Databases,
+  name: string,
+  categoryId: string | null,
+  exceptId?: string,
+): Promise<boolean> {
+  const siblings = await listAll(databases, COLLECTIONS.basontas, [
+    Query.select(['$id', 'name', 'category_id']),
+  ])
+  const key = normaliseName(name)
+  return siblings.some(
+    (d) =>
+      d.$id !== exceptId &&
+      str(d.category_id) === categoryId &&
+      normaliseName(String(d.name ?? '')) === key,
+  )
+}
+
+export async function createBasonta(
+  databases: Databases,
+  input: {
+    name: string
+    category_id?: string | null
+    description?: string | null
+    head_user_id?: string | null
+    head_name?: string | null
+  },
+  createdBy: string,
+): Promise<Basonta> {
+  const doc = await databases.createDocument(DATABASE_ID, COLLECTIONS.basontas, ID.unique(), {
+    name: input.name,
+    category_id: input.category_id ?? null,
+    description: input.description ?? null,
+    head_user_id: input.head_user_id ?? null,
+    head_name: input.head_name ?? null,
+    sort_order: 100,
+    created_by: createdBy,
+  })
+  return basontaDocTo(doc as Doc)
+}
+
+export async function updateBasonta(
+  databases: Databases,
+  id: string,
+  fields: Record<string, unknown>,
+): Promise<Basonta> {
+  const doc = await databases.updateDocument(DATABASE_ID, COLLECTIONS.basontas, id, fields)
+  return basontaDocTo(doc as Doc)
+}
+
+export async function deleteBasontaCascade(
+  databases: Databases,
+  id: string,
+): Promise<{ removed: number }> {
+  let removed = 0
+  for (;;) {
+    const page = await databases.listDocuments(DATABASE_ID, COLLECTIONS.basonta_members, [
+      Query.equal('basonta_id', id),
+      Query.limit(PAGE),
+    ])
+    if (page.documents.length === 0) break
+    await Promise.all(
+      page.documents.map((d) =>
+        databases.deleteDocument(DATABASE_ID, COLLECTIONS.basonta_members, d.$id),
+      ),
+    )
+    removed += page.documents.length
+    if (page.documents.length < PAGE) break
+  }
+  await databases.deleteDocument(DATABASE_ID, COLLECTIONS.basontas, id)
+  return { removed }
+}
+
+// --- basonta membership (many-to-many) --------------------------------------
+
+export async function basontaMemberIds(
+  databases: Databases,
+  basontaId: string,
+): Promise<string[]> {
+  const docs = await listAll(databases, COLLECTIONS.basonta_members, [
+    Query.select(['$id', 'member_id']),
+    Query.equal('basonta_id', basontaId),
+  ])
+  return docs.map((d) => String(d.member_id ?? '')).filter(Boolean)
+}
+
+export async function basontaIdsForMember(
+  databases: Databases,
+  memberId: string,
+): Promise<string[]> {
+  const docs = await listAll(databases, COLLECTIONS.basonta_members, [
+    Query.select(['$id', 'basonta_id']),
+    Query.equal('member_id', memberId),
+  ])
+  return docs.map((d) => String(d.basonta_id ?? '')).filter(Boolean)
+}
+
+/** A diff, never delete-all-then-insert — see `applyBacentaMembership`. */
+export async function applyBasontaMembership(
+  databases: Databases,
+  basontaId: string,
+  memberIds: string[],
+  mode: MembershipMode,
+  addedBy: string,
+): Promise<MembershipResult> {
+  const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.basonta_members, [
+    Query.equal('basonta_id', basontaId),
+    Query.limit(5000),
+  ])
+  const current = new Map<string, string>() // member_id -> doc $id
+  for (const d of existing.documents) {
+    const memberId = (d as Doc).member_id
+    if (typeof memberId === 'string' && memberId) current.set(memberId, d.$id)
+  }
+
+  const { toAdd, toRemove } = diffMembership([...current.keys()], [...new Set(memberIds)], mode)
+
+  if (toAdd.length > 0) {
+    await bulk(databases).createDocuments(
+      DATABASE_ID,
+      COLLECTIONS.basonta_members,
+      toAdd.map((member_id) => ({
+        $id: ID.unique(),
+        basonta_id: basontaId,
+        member_id,
+        added_by: addedBy,
+      })),
+    )
+  }
+  if (toRemove.length > 0) {
+    await Promise.all(
+      toRemove
+        .map((memberId) => current.get(memberId))
+        .filter((docId): docId is string => !!docId)
+        .map((docId) =>
+          databases.deleteDocument(DATABASE_ID, COLLECTIONS.basonta_members, docId),
+        ),
+    )
+  }
+
+  return {
+    added: toAdd.length,
+    removed: toRemove.length,
+    total: current.size + toAdd.length - toRemove.length,
+  }
+}
+
+/** One member's basontas set to exactly `basontaIds` — the member edit form. */
+export async function setMemberBasontas(
+  databases: Databases,
+  memberId: string,
+  basontaIds: string[],
+  addedBy: string,
+): Promise<{ added: number; removed: number }> {
+  const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.basonta_members, [
+    Query.equal('member_id', memberId),
+    Query.limit(500),
+  ])
+  const current = new Map<string, string>() // basonta_id -> doc $id
+  for (const d of existing.documents) {
+    const basontaId = (d as Doc).basonta_id
+    if (typeof basontaId === 'string' && basontaId) current.set(basontaId, d.$id)
+  }
+
+  const wanted = new Set(basontaIds)
+  const toAdd = [...wanted].filter((id) => !current.has(id))
+  const toRemove = [...current.entries()].filter(([id]) => !wanted.has(id))
+
+  if (toAdd.length > 0) {
+    await bulk(databases).createDocuments(
+      DATABASE_ID,
+      COLLECTIONS.basonta_members,
+      toAdd.map((basonta_id) => ({
+        $id: ID.unique(),
+        basonta_id,
+        member_id: memberId,
+        added_by: addedBy,
+      })),
+    )
+  }
+  if (toRemove.length > 0) {
+    await Promise.all(
+      toRemove.map(([, docId]) =>
+        databases.deleteDocument(DATABASE_ID, COLLECTIONS.basonta_members, docId),
+      ),
+    )
+  }
+  return { added: toAdd.length, removed: toRemove.length }
+}
+
+/** Part of the member delete cascade — cascades are manual here (CLAUDE.md). */
+export async function purgeMemberBasontas(
+  databases: Databases,
+  memberId: string,
+): Promise<number> {
+  const docs = await listAll(databases, COLLECTIONS.basonta_members, [
+    Query.select(['$id']),
+    Query.equal('member_id', memberId),
+  ])
+  await Promise.all(
+    docs.map((d) => databases.deleteDocument(DATABASE_ID, COLLECTIONS.basonta_members, d.$id)),
+  )
+  return docs.length
+}
+
+export async function basontaMembershipIndex(
+  databases: Databases,
+): Promise<{ byBasonta: Map<string, string[]>; byMember: Map<string, string[]> }> {
+  const docs = await listAll(databases, COLLECTIONS.basonta_members, [
+    Query.select(['$id', 'basonta_id', 'member_id']),
+  ])
+  const byBasonta = new Map<string, string[]>()
+  const byMember = new Map<string, string[]>()
+  for (const d of docs) {
+    const b = str(d.basonta_id)
+    const m = str(d.member_id)
+    if (!b || !m) continue
+    byBasonta.set(b, [...(byBasonta.get(b) ?? []), m])
+    byMember.set(m, [...(byMember.get(m) ?? []), b])
+  }
+  return { byBasonta, byMember }
+}
+
+/** Reject basonta ids that name nothing, in one query rather than one per id. */
+export async function unknownBasontaIds(
+  databases: Databases,
+  ids: string[],
+): Promise<string[]> {
+  if (ids.length === 0) return []
+  const known = new Set((await listBasontas(databases)).map((b) => b.$id))
+  return ids.filter((id) => !known.has(id))
+}
+
 // --- leader scoping ---------------------------------------------------------
 
 /**
@@ -669,14 +1045,16 @@ export async function bacentaMembershipIndex(
 export async function leaderScope(
   databases: Databases,
   userId: string,
-): Promise<{ constituencies: Constituency[]; bacentas: Bacenta[] }> {
-  const [constituencies, bacentas] = await Promise.all([
+): Promise<{ constituencies: Constituency[]; bacentas: Bacenta[]; basontas: Basonta[] }> {
+  const [constituencies, bacentas, basontas] = await Promise.all([
     listAll(databases, COLLECTIONS.constituencies, [Query.equal('head_user_id', userId)]),
     listAll(databases, COLLECTIONS.bacentas, [Query.equal('head_user_id', userId)]),
+    listAll(databases, COLLECTIONS.basontas, [Query.equal('head_user_id', userId)]),
   ])
   return {
     constituencies: constituencies.map(constituencyDocTo),
     bacentas: bacentas.map(bacentaDocTo),
+    basontas: basontas.map(basontaDocTo),
   }
 }
 
@@ -689,7 +1067,7 @@ export async function leaderScope(
 export async function canReadGroup(
   databases: Databases,
   user: { id: string; label: string },
-  kind: 'constituency' | 'bacenta',
+  kind: 'constituency' | 'bacenta' | 'basonta',
   groupId: string,
 ): Promise<boolean> {
   if (user.label === 'admin') return true
@@ -700,9 +1078,13 @@ export async function canReadGroup(
   if (user.label === 'shepherd') return true
   if (user.label !== 'leader') return false
   const scope = await leaderScope(databases, user.id)
-  return kind === 'constituency'
-    ? scope.constituencies.some((c) => c.$id === groupId)
-    : scope.bacentas.some((b) => b.$id === groupId)
+  // Switched on rather than defaulted: an unrecognised `kind` reaching here
+  // must REFUSE, not fall through to whichever branch happens to be last.
+  // The bug that shape produces is a head reading a group they do not head.
+  if (kind === 'constituency') return scope.constituencies.some((c) => c.$id === groupId)
+  if (kind === 'bacenta') return scope.bacentas.some((b) => b.$id === groupId)
+  if (kind === 'basonta') return scope.basontas.some((b) => b.$id === groupId)
+  return false
 }
 
 // --- validation -------------------------------------------------------------
