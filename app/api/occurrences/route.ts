@@ -7,7 +7,7 @@ import { occurrenceDocToOccurrence } from '@/lib/attendance/server'
 
 // GET /api/occurrences[?meeting_id=…] — session history, most recent first.
 export async function GET(request: NextRequest) {
-  const auth = await requireRole(['admin', 'usher', 'shepherd'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const meetingId = request.nextUrl.searchParams.get('meeting_id')

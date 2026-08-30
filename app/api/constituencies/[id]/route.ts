@@ -25,7 +25,7 @@ type Ctx = { params: Promise<{ id: string }> }
  * instead of it (CLAUDE.md — server-side enforcement is mandatory).
  */
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole(['admin', 'leader', 'shepherd'])
+  const auth = await requireRole(['admin', 'leader', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { id } = await params

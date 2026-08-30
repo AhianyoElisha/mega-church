@@ -19,7 +19,10 @@ function isCategory(v: unknown): v is SmsCategory {
  * on the birthdays page.
  */
 export async function GET(request: NextRequest) {
-  const auth = await requireRole('admin')
+  // Reading the wordings, not writing them: POST below stays admin-only, so a
+  // treasurer picks from the church's tithe messages and cannot compose a new
+  // one. Without this they would have a Send button and nothing to send.
+  const auth = await requireRole(['admin', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const categoryRaw = request.nextUrl.searchParams.get('category')

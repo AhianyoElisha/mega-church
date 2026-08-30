@@ -18,7 +18,7 @@ import type { BasontaResponse, ListBasontasResponse } from '@/lib/groups/types'
  * and the member detail page without three shapes of the same data.
  */
 export async function GET() {
-  const auth = await requireRole(['admin', 'usher', 'shepherd'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

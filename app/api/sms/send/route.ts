@@ -6,6 +6,7 @@ import { memberDocToMember } from '@/lib/attendance/server'
 import { todayInAccra } from '@/lib/attendance/occurrenceResolver'
 import { createSmsService } from '@/lib/sms/mnotify'
 import { getTemplate, sendToMembers, type SendTarget } from '@/lib/sms/server'
+import { canSendSmsCategory } from '@/lib/sms/permissions'
 import type { Member } from '@/lib/members/types'
 import type { SendSmsResponse } from '@/lib/sms/types'
 
@@ -31,7 +32,7 @@ function isCategory(v: unknown): v is SmsCategory {
  * `/api/notifications/birthday-sms`.
  */
 export async function POST(request: NextRequest) {
-  const auth = await requireRole('admin')
+  const auth = await requireRole(['admin', 'treasurer'])
   if ('error' in auth) return auth.error
 
   let body: { member_ids?: unknown; template_id?: unknown; category?: unknown }
@@ -49,6 +50,27 @@ export async function POST(request: NextRequest) {
   if (typeof body.template_id !== 'string') return bad('Pick a message template.')
   if (!isCategory(body.category)) {
     return bad(`category must be one of: ${SMS_CATEGORIES.join(', ')}.`)
+  }
+
+  /**
+   * The category gate, checked BEFORE anything is looked up or sent.
+   *
+   * A treasurer may send `tithe` and nothing else, and a refusal NAMES the
+   * category rather than quietly sending a tithe message instead. Silently
+   * downgrading would return 200 and leave them believing a hundred birthday
+   * messages went out — the same failure a head's refused fields are refused
+   * by name to avoid.
+   *
+   * This runs on the CATEGORY the caller asked for. The template's own category
+   * is checked further down and must agree, so neither a mismatched template
+   * nor a mislabelled request gets a treasurer past this.
+   */
+  const allowed = canSendSmsCategory(auth.user.label, body.category)
+  if (!allowed.ok) {
+    return NextResponse.json<SendSmsResponse>(
+      { ok: false, error: allowed.error },
+      { status: allowed.status },
+    )
   }
 
   const { databases } = createAdminClient()

@@ -104,7 +104,7 @@ export const NAVIGATION: NavItem[] = [
     name: 'Messages',
     href: '/sms',
     icon: ChatBubbleLeftRightIcon,
-    roles: ['admin'],
+    roles: ['admin', 'treasurer'],
     group: 'people',
   },
   {

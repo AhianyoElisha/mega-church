@@ -24,6 +24,7 @@ const HOME_FOR: Record<UserLabel, string> = {
   leader: '/my-groups',
   celebrations: '/birthdays',
   shepherd: '/members',
+  treasurer: '/sms',
 }
 
 function LoginContent() {

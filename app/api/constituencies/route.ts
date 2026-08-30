@@ -22,7 +22,7 @@ import type {
  * they do not head (see `/api/my-groups`).
  */
 export async function GET() {
-  const auth = await requireRole(['admin', 'usher', 'shepherd'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

@@ -20,7 +20,7 @@ import type { ActiveSession } from '@/lib/meetings/types'
  * so the two can never disagree about what a number means.
  */
 export async function GET(request: NextRequest) {
-  const auth = await requireRole(['admin', 'usher', 'shepherd'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

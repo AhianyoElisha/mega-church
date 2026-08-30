@@ -13,6 +13,7 @@
  *   SEED_KIOSK_EMAIL / SEED_KIOSK_PASSWORD
  *   SEED_LEADER_EMAIL / SEED_LEADER_PASSWORD
  *   SEED_CELEBRATIONS_EMAIL / SEED_CELEBRATIONS_PASSWORD
+ *   SEED_TREASURER_EMAIL / SEED_TREASURER_PASSWORD
  *
  * A role whose env vars are absent is skipped, so this stays safe to re-run on
  * a project that only wants some of them.
@@ -79,6 +80,12 @@ const SEEDS: Seed[] = [
     password: process.env.SEED_SHEPHERD_PASSWORD,
     name: 'Shepherd',
   },
+  {
+    label: USER_LABELS.treasurer,
+    email: process.env.SEED_TREASURER_EMAIL,
+    password: process.env.SEED_TREASURER_PASSWORD,
+    name: 'Church Treasurer',
+  },
 ]
 
 async function findByEmail(email: string) {
@@ -122,8 +129,48 @@ async function main() {
     console.error(`Missing env: ${missing.join(', ')}`)
     process.exit(1)
   }
-  console.log('Seeding accounts…')
-  for (const s of SEEDS) await seed(s)
+  /**
+   * `--only=treasurer,usher` seeds just those roles.
+   *
+   * Not a convenience. This script CREATES an account for every SEED_*_EMAIL it
+   * finds, so a stale variable quietly provisions a login nobody asked for. The
+   * live example is `SEED_LEADER_EMAIL`, which names the TEMPLATE head account
+   * (`leader@megachurch.local`) from before the four real heads existed: it is
+   * still there, and a bare run keeps re-labelling it rather than letting it be
+   * retired.
+   *
+   * Seeding one role is the common case after the first setup, and it should
+   * not require emptying and restoring half of `.env.local` to be safe.
+   */
+  const onlyArg = process.argv.find((a) => a.startsWith('--only='))
+  const only = onlyArg
+    ? new Set(
+        onlyArg
+          .slice('--only='.length)
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean),
+      )
+    : null
+
+  if (only) {
+    const unknown = [...only].filter((v) => !SEEDS.some((s) => s.label === v))
+    if (unknown.length > 0) {
+      console.error(
+        `Unknown role(s): ${unknown.join(', ')}. ` +
+          `Known: ${SEEDS.map((s) => s.label).join(', ')}.`,
+      )
+      process.exit(1)
+    }
+  }
+
+  const todo = only ? SEEDS.filter((s) => only.has(s.label)) : SEEDS
+  console.log(
+    only
+      ? `Seeding accounts: ${[...only].join(', ')} (--only)`
+      : 'Seeding accounts… (all roles with SEED_*_EMAIL set)',
+  )
+  for (const s of todo) await seed(s)
   console.log('Done.')
 }
 

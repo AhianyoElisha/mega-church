@@ -44,6 +44,8 @@ import { useMembers } from '@/lib/queries/members'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { fullName, initials } from '@/lib/members/types'
 import { countParts, render } from '@/lib/sms/render'
+import { sendableCategories } from '@/lib/sms/permissions'
+import { useAuth } from '@/components/auth'
 import {
   CHURCH_TIMEZONE,
   SMS_CATEGORIES,
@@ -53,6 +55,22 @@ import {
 import type { SmsTemplate } from '@/lib/sms/types'
 
 type Tab = 'send' | 'templates' | 'log'
+
+/**
+ * The categories this screen sends BY HAND.
+ *
+ * `birthday` is deliberately absent even for an admin: it goes out from the
+ * nightly run, which is idempotent per member per day. Sending one from here
+ * would write a `birthday:<member>:<today>` dedupe key and silently suppress
+ * the real message that morning.
+ */
+const MANUAL_CATEGORIES: readonly SmsCategory[] = ['tithe', 'general']
+
+const MANUAL_CATEGORY_LABEL: Record<SmsCategory, string> = {
+  birthday: 'Birthday',
+  tithe: 'Tithe — thank somebody who paid',
+  general: 'General — anything else',
+}
 
 /**
  * "25 Aug 2026, 08:00" on the church's clock, from the stored ISO instant.
@@ -94,6 +112,11 @@ export default function SmsPage() {
   const [tab, setTab] = useState<Tab>('send')
   const templates = useSmsTemplates()
   const config = templates.data?.ok ? templates.data.config : null
+  const { user } = useAuth()
+  // Writing a template is composing in the church's voice, and every template
+  // route below GET is admin-only. Offering the tab to a treasurer would be
+  // offering a screen whose every button answers 403.
+  const canEditTemplates = user?.label === 'admin'
 
   return (
     <PageWrap>
@@ -121,13 +144,13 @@ export default function SmsPage() {
         onChange={setTab}
         tabs={[
           { value: 'send' as Tab, label: 'Send a message' },
-          { value: 'templates' as Tab, label: 'Templates' },
+          ...(canEditTemplates ? [{ value: 'templates' as Tab, label: 'Templates' }] : []),
           { value: 'log' as Tab, label: 'Sent messages' },
         ]}
       />
 
       {tab === 'send' && <SendTab canSend={config?.configured ?? false} />}
-      {tab === 'templates' && <TemplatesTab />}
+      {tab === 'templates' && canEditTemplates && <TemplatesTab />}
       {tab === 'log' && <LogTab />}
     </PageWrap>
   )
@@ -190,6 +213,17 @@ function CreditBalance() {
 // --- send -------------------------------------------------------------------
 
 function SendTab({ canSend }: { canSend: boolean }) {
+  const { user } = useAuth()
+  /**
+   * What this account may actually send, intersected with what the manual
+   * screen offers at all — `birthday` is sent by the nightly run, never by
+   * hand, so it is not in the second list even for an admin.
+   *
+   * Read from the same map the SERVER checks (`canSendSmsCategory`), so a
+   * choice on screen and a choice the route accepts cannot drift apart. The
+   * failure that prevents is a Send button that 403s after it is pressed.
+   */
+  const offered = MANUAL_CATEGORIES.filter((c) => sendableCategories(user?.label).includes(c))
   // Tithe first: it is the reason this tab exists. Birthday is absent from the
   // picker on purpose — those send themselves, and offering a manual birthday
   // blast beside them invites somebody to send the same wishes twice.
@@ -335,16 +369,34 @@ function SendTab({ canSend }: { canSend: boolean }) {
             <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
               Kind of message
             </label>
-            <Select
-              value={category}
-              onChange={(e) => {
-                setCategory(e.target.value as SmsCategory)
-                setTemplateId('')
-              }}
-            >
-              <option value="tithe">Tithe — thank somebody who paid</option>
-              <option value="general">General — anything else</option>
-            </Select>
+            {offered.length > 1 ? (
+              <Select
+                value={category}
+                onChange={(e) => {
+                  setCategory(e.target.value as SmsCategory)
+                  setTemplateId('')
+                }}
+              >
+                {offered.map((c) => (
+                  <option key={c} value={c}>
+                    {MANUAL_CATEGORY_LABEL[c]}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              // A statement, not a disabled <Select> — the same choice the
+              // head's constituency field makes. A greyed-out dropdown reads as
+              // "this is broken"; a sentence reads as "this is settled".
+              <div className="rounded-xl bg-neutral-50 px-4 py-3 ring-1 ring-neutral-900/5 dark:bg-neutral-900/40 dark:ring-white/10">
+                <p className="text-sm font-medium text-neutral-950 dark:text-white">
+                  {MANUAL_CATEGORY_LABEL[offered[0] ?? 'tithe']}
+                </p>
+                <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                  This account sends tithe messages. Everything else is an
+                  administrator&rsquo;s to send.
+                </p>
+              </div>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">

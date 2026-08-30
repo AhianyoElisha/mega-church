@@ -16,7 +16,7 @@ import type { BasontaCategoryResponse } from '@/lib/groups/types'
  * `/api/basontas` without ever touching this route.
  */
 export async function GET() {
-  const auth = await requireRole(['admin', 'usher', 'shepherd'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()
