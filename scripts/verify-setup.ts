@@ -183,11 +183,12 @@ async function main() {
   }
 
   // --- groups ---------------------------------------------------------------
-  // The one thing about this schema that a passing "collection exists" check
-  // would not catch: a bacenta pointing at a category that no longer exists.
-  // `buildBacentaTree` surfaces those rather than dropping them, but a project
-  // in that state has real groups showing a warning banner, and the fix is a
-  // human decision about where they belong.
+  // The things a passing "collection exists" check would not catch: a bacenta
+  // pointing at a constituency that is gone, a basonta pointing at a missing
+  // category, or a member filed into a bacenta that no longer exists. The tree
+  // builders surface all of these rather than dropping them, but a project in
+  // that state has real groups showing a warning banner, and the fix is a human
+  // decision about where they belong.
   console.log('\ngroups')
   const [categories, bacentas, constituencies, basontaCategories, basontas] = await Promise.all([
     listCategories(databases),
@@ -199,19 +200,30 @@ async function main() {
   ok(`${constituencies.length} constituency/ies, ${categories.length} category/ies, ${bacentas.length} bacenta(s)`)
   ok(`${basontaCategories.length} basonta category/ies, ${basontas.length} basonta(s)`)
 
-  const categoryIds = new Set(categories.map((c) => c.$id))
-  const orphans = bacentas.filter((b) => b.category_id && !categoryIds.has(b.category_id))
-  if (orphans.length > 0) {
+  const constituencyIds = new Set(constituencies.map((c) => c.$id))
+  const misfiled = bacentas.filter(
+    (b) => b.constituency_id && !constituencyIds.has(b.constituency_id),
+  )
+  if (misfiled.length > 0) {
     bad(
-      `${orphans.length} bacenta(s) point at a missing category: ` +
-        orphans.map((b) => b.name).join(', '),
+      `${misfiled.length} bacenta(s) point at a missing constituency: ` +
+        misfiled.map((b) => b.name).join(', '),
     )
   } else {
-    ok('every bacenta is standalone or in a category that exists')
+    ok('every bacenta is in a constituency that exists, or in none')
   }
 
-  const standalone = bacentas.filter((b) => b.category_id === null)
-  ok(`${standalone.length} standalone bacenta(s), ${bacentas.length - standalone.length} in categories`)
+  const unfiled = bacentas.filter((b) => b.constituency_id === null)
+  if (unfiled.length > 0) {
+    // Not a failure: this is the state between the schema change and the
+    // migration, and the page shows them under "Not filed yet".
+    ok(
+      `${unfiled.length} bacenta(s) not yet in a constituency: ` +
+        unfiled.map((b) => b.name).join(', '),
+    )
+  } else {
+    ok('every bacenta is filed into a constituency')
+  }
 
   // The same orphan check for basontas. Written out rather than folded into a
   // loop with the bacenta one: the two collections are about to stop having

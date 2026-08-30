@@ -8,7 +8,7 @@ import {
   listBacentasWithCounts,
   listBasontaCategories,
   listBasontasWithCounts,
-  listCategories,
+  listConstituencies,
   listConstituenciesWithCounts,
 } from '@/lib/groups/server'
 import type { MyGroupsResponse } from '@/lib/groups/types'
@@ -53,15 +53,15 @@ export async function GET() {
     )
   }
 
-  const [scope, cCounts, bCounts, sCounts, categories, basontaCategories] = await Promise.all([
+  const [scope, cCounts, bCounts, sCounts, allConstituencies, basontaCategories] = await Promise.all([
     leaderScope(databases, auth.user.id),
     constituencyCounts(databases),
     bacentaCounts(databases),
     basontaCounts(databases),
-    listCategories(databases),
+    listConstituencies(databases),
     listBasontaCategories(databases),
   ])
-  const catNames = new Map(categories.map((c) => [c.$id, c.name]))
+  const constituencyNames = new Map(allConstituencies.map((c) => [c.$id, c.name]))
   const basontaCatNames = new Map(basontaCategories.map((c) => [c.$id, c.name]))
 
   return NextResponse.json<MyGroupsResponse>(
@@ -74,7 +74,9 @@ export async function GET() {
       bacentas: scope.bacentas.map((b) => ({
         ...b,
         member_count: bCounts.get(b.$id) ?? 0,
-        category_name: b.category_id ? (catNames.get(b.category_id) ?? null) : null,
+        constituency_name: b.constituency_id
+          ? (constituencyNames.get(b.constituency_id) ?? null)
+          : null,
       })),
       basontas: scope.basontas.map((b) => ({
         ...b,

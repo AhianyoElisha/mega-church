@@ -2,23 +2,25 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import {
   deleteMemberCascade,
-  readBacentaIds,
+  readBasontaIds,
   updateMember,
   validateMemberInput,
 } from '@/lib/members/server'
 import { memberDocToMember } from '@/lib/attendance/server'
 import { invalidateCandidateCache } from '@/lib/biometrics/server'
 import {
-  bacentaIdsForMember,
+  basontaIdsForMember,
   constituencyExists,
   getConstituency,
   leaderScope,
-  setMemberBacentas,
-  unknownBacentaIds,
+  setMemberBasontas,
+  unknownBasontaIds,
+  careCandidates,
 } from '@/lib/groups/server'
 import { headEditScope } from '@/lib/groups/tree'
+import { careAssignmentProblem } from '@/lib/groups/care'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
-import type { MemberResponse } from '@/lib/members/types'
+import { fullName, type Member, type MemberResponse } from '@/lib/members/types'
 import type { Models } from 'node-appwrite'
 
 // Next 16: route params are async.
@@ -38,9 +40,9 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   const { id } = await params
   const { databases } = createAdminClient()
   try {
-    const [doc, bacenta_ids] = await Promise.all([
+    const [doc, basonta_ids] = await Promise.all([
       databases.getDocument(DATABASE_ID, COLLECTIONS.members, id),
-      bacentaIdsForMember(databases, id),
+      basontaIdsForMember(databases, id),
     ])
     const member = memberDocToMember(doc as Models.Document & Record<string, unknown>)
 
@@ -49,7 +51,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
       const inScope =
         (member.constituency_id !== null &&
           heads.constituencies.some((c) => c.$id === member.constituency_id)) ||
-        bacenta_ids.some((b) => heads.bacentas.some((h) => h.$id === b))
+        basonta_ids.some((b) => heads.bacentas.some((h) => h.$id === b))
       if (!inScope) {
         return NextResponse.json<MemberResponse>(
           { ok: false, error: 'That member is not in a group you head.' },
@@ -65,7 +67,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     return NextResponse.json<MemberResponse>({
       ok: true,
       member,
-      bacenta_ids,
+      basonta_ids,
       constituency_name: constituency?.name ?? null,
     })
   } catch {
@@ -114,7 +116,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   // left alone; `[]` means the form sent an empty tick-list and they must be
   // cleared. Collapsing the two would make every unrelated edit — a corrected
   // phone number — silently remove somebody from their choir.
-  const bacentaIds = readBacentaIds(body)
+  const bacentaIds = readBasontaIds(body)
 
   if (Object.keys(validated.value).length === 0 && bacentaIds === undefined) {
     return NextResponse.json<MemberResponse>(
@@ -128,37 +130,46 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   let fields = validated.value
   let effectiveBacentaIds = bacentaIds
 
-  if (!isAdmin) {
-    // The member as they stand, because an edit is only meaningful against
-    // what is already there — the scope check, the "did you MOVE them"
-    // comparison and the bacenta merge all need the current row.
-    let current
-    try {
-      const [doc, currentBacentas] = await Promise.all([
-        databases.getDocument(DATABASE_ID, COLLECTIONS.members, id),
-        bacentaIdsForMember(databases, id),
-      ])
-      current = {
-        member: memberDocToMember(doc as Models.Document & Record<string, unknown>),
-        bacenta_ids: currentBacentas,
-      }
-    } catch {
-      return NextResponse.json<MemberResponse>(
-        { ok: false, error: 'No such member.' },
-        { status: 404 },
-      )
+  /**
+   * The member as they stand.
+   *
+   * Loaded for EVERY caller, not just a head: an edit is only meaningful
+   * against what is already there. A head needs it for the scope check, the
+   * "did you MOVE them" comparison and the basonta merge; an admin needs it for
+   * the care check, which has to know which bacenta the member ends up in when
+   * the request does not mention one.
+   */
+  let current: { member: Member; basonta_ids: string[] }
+  try {
+    const [doc, currentBasontas] = await Promise.all([
+      databases.getDocument(DATABASE_ID, COLLECTIONS.members, id),
+      basontaIdsForMember(databases, id),
+    ])
+    current = {
+      member: memberDocToMember(doc as Models.Document & Record<string, unknown>),
+      basonta_ids: currentBasontas,
     }
+  } catch {
+    return NextResponse.json<MemberResponse>(
+      { ok: false, error: 'No such member.' },
+      { status: 404 },
+    )
+  }
+
+  if (!isAdmin) {
 
     const heads = await leaderScope(databases, auth.user.id)
     const narrowed = headEditScope(
-      { fields, bacenta_ids: bacentaIds },
+      { fields, basonta_ids: bacentaIds },
       {
         constituency_id: current.member.constituency_id,
-        bacenta_ids: current.bacenta_ids,
+        bacenta_id: current.member.bacenta_id,
+        basonta_ids: current.basonta_ids,
       },
       {
         constituencies: heads.constituencies.map((c) => c.$id),
         bacentas: heads.bacentas.map((b) => b.$id),
+        basontas: heads.basontas.map((b) => b.$id),
       },
     )
     if (!narrowed.ok) {
@@ -168,7 +179,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       )
     }
     fields = narrowed.fields
-    effectiveBacentaIds = narrowed.bacenta_ids
+    effectiveBacentaIds = narrowed.basonta_ids
 
     // The no-op `constituency_id` may have been dropped above, which can empty
     // a request that looked non-empty to the check further up.
@@ -189,12 +200,63 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   }
   if (
     effectiveBacentaIds !== undefined &&
-    (await unknownBacentaIds(databases, effectiveBacentaIds)).length > 0
+    (await unknownBasontaIds(databases, effectiveBacentaIds)).length > 0
   ) {
     return NextResponse.json<MemberResponse>(
-      { ok: false, error: 'One of those bacentas no longer exists. Reload and try again.' },
+      { ok: false, error: 'One of those basontas no longer exists. Reload and try again.' },
       { status: 400 },
     )
+  }
+
+  /**
+   * The care link, checked against the OTHER members before it is written.
+   *
+   * Everything that makes an assignment wrong needs the rest of the bacenta to
+   * see — an inactive carer, one from another place, or one whose own chain
+   * comes back round to this member. `careAssignmentProblem` is pure and
+   * unit-tested; this is the only place that gives it the data.
+   *
+   * The bacenta being checked against is the one the member ENDS UP in, so a
+   * request that moves them and assigns a carer in the same PATCH is judged on
+   * the destination rather than on where they used to live.
+   */
+  if ('care_of_member_id' in fields) {
+    const carerId = fields.care_of_member_id as string | null
+    const destination =
+      'bacenta_id' in fields
+        ? (fields.bacenta_id as string | null)
+        : current.member.bacenta_id
+
+    if (carerId !== null && destination === null) {
+      return NextResponse.json<MemberResponse>(
+        {
+          ok: false,
+          error:
+            'Put this member in a bacenta first — being looked after is something ' +
+            'that happens inside one.',
+        },
+        { status: 400 },
+      )
+    }
+
+    if (carerId !== null && destination !== null) {
+      const candidates = await careCandidates(databases, destination)
+      const index = new Map(candidates.map((c) => [c.$id, c]))
+      // The member may not be in `destination` yet, so their own row is put in
+      // with the bacenta they are moving to — otherwise the check reads them as
+      // belonging nowhere and refuses a perfectly good assignment.
+      index.set(id, {
+        $id: id,
+        full_name: fullName(current.member),
+        status: current.member.status,
+        bacenta_id: destination,
+        care_of_member_id: current.member.care_of_member_id,
+      })
+      const problem = careAssignmentProblem(id, carerId, index)
+      if (problem) {
+        return NextResponse.json<MemberResponse>({ ok: false, error: problem }, { status: 400 })
+      }
+    }
   }
 
   try {
@@ -206,7 +268,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
               Record<string, unknown>,
           )
     if (effectiveBacentaIds !== undefined) {
-      await setMemberBacentas(databases, id, effectiveBacentaIds, auth.user.email)
+      await setMemberBasontas(databases, id, effectiveBacentaIds, auth.user.email)
     }
     // A member flipped to `inactive` must drop out of the matcher's gallery
     // immediately, not at the next 60s cache expiry.
@@ -214,7 +276,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     return NextResponse.json<MemberResponse>({
       ok: true,
       member,
-      bacenta_ids: effectiveBacentaIds ?? (await bacentaIdsForMember(databases, id)),
+      basonta_ids: effectiveBacentaIds ?? (await basontaIdsForMember(databases, id)),
     })
   } catch {
     return NextResponse.json<MemberResponse>(

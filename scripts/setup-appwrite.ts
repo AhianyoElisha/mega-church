@@ -365,6 +365,30 @@ async function setupMembers() {
   // The registration form asks for it; the bulk assigner is how the backlog
   // gets cleared. PRD §1.7.
   await ensureStringAttribute(COLLECTIONS.members, 'constituency_id', 64, false)
+  /**
+   * The bacenta — the PLACE — this member belongs to.
+   *
+   * A FIELD and not a join, for exactly the reason `constituency_id` is one:
+   * a member lives in one place. The live data agreed before this was written —
+   * of the 28 members in a location bacenta, none was in two.
+   *
+   * The serving groups went the other way and stayed a join
+   * (`basonta_members`), because a chorister really can run the sound desk too.
+   * That asymmetry IS the design; see PRD §1.7a.
+   */
+  await ensureStringAttribute(COLLECTIONS.members, 'bacenta_id', 64, false)
+  /**
+   * Who looks after this member — another MEMBER, not an account.
+   *
+   * The person named here needs no login and gets no permission from being
+   * named. It is a record of pastoral responsibility inside a bacenta, and
+   * nothing reads it to decide what anybody may do.
+   *
+   * Cycles are refused by `careAssignmentProblem`, not by the database: Appwrite
+   * has no foreign keys and no check constraints, so the guarantee lives in a
+   * pure function that is unit-tested instead.
+   */
+  await ensureStringAttribute(COLLECTIONS.members, 'care_of_member_id', 64, false)
   // Which birthday message THIS member gets. Null is the ordinary case and
   // means "use the birthday default" — not "send nothing". Optional because
   // the overwhelming majority of members never need a different wording, and
@@ -381,6 +405,11 @@ async function setupMembers() {
   await ensureIndex(COLLECTIONS.members, 'by_birthday', 'key', ['birth_month', 'birth_day'])
   // "Everyone in Ahodwo" — the constituency head's entire view.
   await ensureIndex(COLLECTIONS.members, 'by_constituency', 'key', ['constituency_id'])
+  await ensureIndex(COLLECTIONS.members, 'by_bacenta', 'key', ['bacenta_id'])
+  // "Who is under this person?" — needed on every member delete, because the
+  // cascade has to release their charges rather than leave them pointing at a
+  // member who is gone.
+  await ensureIndex(COLLECTIONS.members, 'by_care_of', 'key', ['care_of_member_id'])
   // "Everyone who comes to First Service" — the registry filter.
   // `home_service` never gates ATTENDANCE (PRD §2.1); it is only where a
   // member usually sits, and whoever is compiling a list to call wants one
@@ -432,6 +461,18 @@ async function setupBacentas() {
   // add an `is_standalone` boolean beside this — two fields encoding one fact
   // is two fields that can disagree.
   await ensureStringAttribute(COLLECTIONS.bacentas, 'category_id', 64, false)
+  /**
+   * The constituency this bacenta is a part of.
+   *
+   * A bacenta is a PLACE — Anloga, Susuankyi — and every place sits inside
+   * exactly one constituency. This replaces `category_id` as the parent link;
+   * `category_id` above is kept only until the migration has moved the serving
+   * groups out to `basontas`, and is not read by any new code.
+   *
+   * Optional in the schema because the rows exist already and do not have one
+   * yet. `scripts/migrate-basonta.ts` fills it in.
+   */
+  await ensureStringAttribute(COLLECTIONS.bacentas, 'constituency_id', 64, false)
   await ensureStringAttribute(COLLECTIONS.bacentas, 'description', 512, false)
   await ensureStringAttribute(COLLECTIONS.bacentas, 'head_user_id', 64, false)
   await ensureStringAttribute(COLLECTIONS.bacentas, 'head_name', 128, false)
@@ -443,6 +484,8 @@ async function setupBacentas() {
   // groups and both are legitimate. Uniqueness is enforced per category in
   // `lib/groups/server.ts`, where the category is known.
   await ensureIndex(COLLECTIONS.bacentas, 'by_category', 'key', ['category_id'])
+  // "Which bacentas are in this constituency?" — the whole bacentas page.
+  await ensureIndex(COLLECTIONS.bacentas, 'by_constituency', 'key', ['constituency_id'])
   await ensureIndex(COLLECTIONS.bacentas, 'by_head', 'key', ['head_user_id'])
   await ensureIndex(COLLECTIONS.bacentas, 'by_name', 'key', ['name'])
   await ensureIndex(COLLECTIONS.bacentas, 'by_sort', 'key', ['sort_order'])

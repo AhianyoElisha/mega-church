@@ -85,6 +85,11 @@ export function memberDocToMember(d: MemberDoc): Member {
     // Appwrite as `''`, and `''` would compare unequal to every real
     // constituency id while still being truthy in a `if (m.constituency_id)`.
     constituency_id: (d.constituency_id as string | null) || null,
+    // `|| null` for the same reason as `constituency_id` above: Appwrite hands
+    // back `''` for an unset optional string, and `''` is truthy enough to send
+    // a lookup after a bacenta that cannot exist.
+    bacenta_id: (d.bacenta_id as string | null) || null,
+    care_of_member_id: (d.care_of_member_id as string | null) || null,
     status: (d.status as Member['status']) ?? 'active',
     created_by: (d.created_by as string | null) ?? null,
     // `|| null` for the same reason as `constituency_id` above: Appwrite hands

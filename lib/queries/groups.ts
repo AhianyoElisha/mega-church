@@ -155,11 +155,17 @@ export function useDeleteBacenta() {
   )
 }
 
+/**
+ * A bacenta is a FIELD, so there is no `set` and no diff — `assign` moves
+ * somebody in from wherever they were, `unassign` takes them out. Deliberately
+ * a different vocabulary from the basonta and constituency hooks, so a call
+ * cannot be copied between them and quietly mean something else.
+ */
 export function useAssignBacenta() {
   return useGroupMutation<
     MembershipResponse,
-    { id: string; member_ids: string[]; mode?: MembershipMode }
-  >(({ id, member_ids, mode = 'add' }) =>
+    { id: string; member_ids: string[]; mode?: 'assign' | 'unassign' }
+  >(({ id, member_ids, mode = 'assign' }) =>
     apiFetch(`/api/bacentas/${encodeURIComponent(id)}/members`, {
       method: 'POST',
       body: JSON.stringify({ member_ids, mode }),

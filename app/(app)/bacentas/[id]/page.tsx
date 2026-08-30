@@ -8,6 +8,7 @@ import { Banner, Card, LoadingRow, PageHeader, PageWrap, StatCard, TabBar } from
 import GroupMemberAssigner from '@/components/group-member-assigner'
 import HeadCard from '@/components/head-card'
 import GroupRosterTable from '@/components/group-roster-table'
+import CareAssigner from '@/components/care-assigner'
 import { useDialog } from '@/components/dialog'
 import { useAuth } from '@/components/auth'
 import {
@@ -16,7 +17,8 @@ import {
   useDeleteBacenta,
   useUpdateBacenta,
 } from '@/lib/queries/groups'
-import type { Bacenta } from '@/lib/groups/types'
+import { useUpdateMember } from '@/lib/queries/members'
+import type { BacentaWithCount } from '@/lib/groups/types'
 
 export default function BacentaPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -28,7 +30,8 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
   const assign = useAssignBacenta()
   const remove = useDeleteBacenta()
   const update = useUpdateBacenta()
-  const [tab, setTab] = useState<'members' | 'assign'>('members')
+  const [tab, setTab] = useState<'members' | 'care' | 'assign'>('members')
+  const updateMember = useUpdateMember()
 
   const isAdmin = user?.label === 'admin'
   const isShepherd = user?.label === 'shepherd'
@@ -60,7 +63,7 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
     )
   }
 
-  const group = data.group as Bacenta
+  const group = data.group as BacentaWithCount
   const members = data.members
   const active = members.filter((m) => m.status === 'active').length
   const memberIds = members.map((m) => m.$id)
@@ -71,8 +74,8 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
       message: (
         <>
           The {members.length} member{members.length === 1 ? '' : 's'} in it are NOT deleted —
-          they stop serving in this group and keep every other bacenta they are in. Attendance
-          history is untouched.
+          they stop living anywhere until they are filed again, and anybody looking after them
+          is released. Attendance history is untouched.
         </>
       ),
       confirmText: 'Delete bacenta',
@@ -92,7 +95,12 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
             : { href: '/my-groups', label: 'My groups' }
         }
         title={group.name}
-        subtitle={group.description ?? 'A bacenta — a work group members serve in.'}
+        subtitle={
+          group.description ??
+          (group.constituency_name
+            ? `A bacenta in ${group.constituency_name}.`
+            : 'A bacenta — a place inside a constituency.')
+        }
         actions={
           isAdmin && (
             <>
@@ -107,6 +115,14 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
       <div className="mb-8 grid gap-4 sm:grid-cols-3">
         <StatCard label="Members" value={members.length} />
         <StatCard label="Active" value={active} />
+        <StatCard
+          label="Constituency"
+          value={
+            group.constituency_name ?? (
+              <span className="text-base text-neutral-400">Not filed yet</span>
+            )
+          }
+        />
         <StatCard
           label="Head"
           value={
@@ -136,12 +152,34 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
           onChange={setTab}
           tabs={[
             { value: 'members', label: `Members (${members.length})` },
+            { value: 'care', label: 'Who looks after whom' },
             { value: 'assign', label: 'Assign members' },
           ]}
         />
       )}
 
-      {tab === 'members' || !isAdmin ? (
+      {tab === 'care' && isAdmin ? (
+        <Card>
+          <h2 className="mb-1 text-base font-semibold text-neutral-950 dark:text-white">
+            Who looks after whom
+          </h2>
+          <p className="mb-5 text-sm text-neutral-500 dark:text-neutral-400">
+            Put members under other members so somebody is checking on everyone. The person
+            looking after them does not need an account — this is a record, not a login.
+          </p>
+          <CareAssigner
+            members={data.care ?? []}
+            busy={updateMember.isPending}
+            onAssign={async (memberId, carerId) => {
+              const res = await updateMember.mutateAsync({
+                id: memberId,
+                care_of_member_id: carerId,
+              })
+              if (!res.ok) throw new Error(res.error)
+            }}
+          />
+        </Card>
+      ) : tab === 'members' || !isAdmin ? (
         <Card padded={false}>
           <GroupRosterTable
             members={members}
@@ -156,8 +194,9 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
             Add members to {group.name}
           </h2>
           <p className="mb-5 text-sm text-neutral-500 dark:text-neutral-400">
-            Tick everyone who serves here. Adding somebody to this bacenta does not take them out
-            of any other — a chorister can run the sound desk too.
+            Tick everyone who lives here. A member belongs to exactly ONE bacenta, so adding
+            somebody MOVES them out of whichever one they were in — and clears whoever was
+            looking after them there, because a care link belongs to a place.
           </p>
           <GroupMemberAssigner
             kind="bacenta"
@@ -165,11 +204,11 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
             currentMemberIds={memberIds}
             busy={assign.isPending}
             onAssign={async (ids) => {
-              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'add' })
+              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'assign' })
               if (!res.ok) throw new Error(res.error)
             }}
             onRemove={async (ids) => {
-              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'remove' })
+              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'unassign' })
               if (!res.ok) throw new Error(res.error)
             }}
           />

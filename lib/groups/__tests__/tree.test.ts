@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildBacentaTree,
   diffMembership,
-  headBacentaMerge,
+  headBasontaMerge,
   headEditScope,
   headRegistrationScope,
   headsAnything,
@@ -10,12 +10,14 @@ import {
   sortByOrderThenName,
   validateGroupName,
 } from '../tree'
-import type { BacentaCategory, BacentaWithCount } from '../types'
+import type { BacentaWithCount, Constituency } from '../types'
 
-const category = (id: string, name: string, sort = 100): BacentaCategory => ({
+const constituency = (id: string, name: string, sort = 100): Constituency => ({
   $id: id,
   name,
   description: null,
+  head_user_id: null,
+  head_name: null,
   sort_order: sort,
   created_by: null,
   $createdAt: '2026-01-01T00:00:00.000Z',
@@ -24,12 +26,12 @@ const category = (id: string, name: string, sort = 100): BacentaCategory => ({
 const bacenta = (
   id: string,
   name: string,
-  categoryId: string | null,
+  constituencyId: string | null,
   sort = 100,
 ): BacentaWithCount => ({
   $id: id,
   name,
-  category_id: categoryId,
+  constituency_id: constituencyId,
   description: null,
   head_user_id: null,
   head_name: null,
@@ -37,55 +39,67 @@ const bacenta = (
   created_by: null,
   $createdAt: '2026-01-01T00:00:00.000Z',
   member_count: 0,
-  category_name: null,
+  constituency_name: null,
 })
 
 describe('buildBacentaTree', () => {
-  it('files the choirs under Choir and the Technical Team on its own', () => {
-    // The two shapes the church actually has, in one tree.
+  const alos = constituency('alos', 'Alos')
+  const anagkazo = constituency('anagkazo', 'Anagkazo')
+
+  it('files each place under the constituency it belongs to', () => {
     const tree = buildBacentaTree(
-      [category('choir', 'Choir')],
+      [alos, anagkazo],
       [
-        bacenta('biazo', 'Biazo', 'choir'),
-        bacenta('living', 'Living Waters', 'choir'),
-        bacenta('fresh', 'Fresh Oil', 'choir'),
-        bacenta('tech', 'Technical Team', null),
+        bacenta('anloga', 'Anloga Bacenta', 'alos'),
+        bacenta('bomso', 'Bomso Bacenta', 'alos'),
+        bacenta('elsewhere', 'Somewhere Else', 'anagkazo'),
       ],
     )
-
-    expect(tree.categories).toHaveLength(1)
-    expect(tree.categories[0].category.name).toBe('Choir')
-    expect(tree.categories[0].bacentas.map((b) => b.name)).toEqual([
-      'Biazo',
-      'Fresh Oil',
-      'Living Waters',
+    expect(tree.constituencies).toHaveLength(2)
+    expect(tree.constituencies[0].constituency.name).toBe('Alos')
+    expect(tree.constituencies[0].bacentas.map((b) => b.name)).toEqual([
+      'Anloga Bacenta',
+      'Bomso Bacenta',
     ])
-    expect(tree.standalone.map((b) => b.name)).toEqual(['Technical Team'])
-    expect(tree.orphans).toHaveLength(0)
+    expect(tree.constituencies[1].bacentas.map((b) => b.name)).toEqual(['Somewhere Else'])
+    expect(tree.unfiled).toHaveLength(0)
   })
 
-  it('keeps a category that has no bacentas yet', () => {
-    // A category is created before it is filled. Hiding an empty one makes the
-    // create button look like it did nothing.
-    const tree = buildBacentaTree([category('ushers', 'Ushers')], [])
-    expect(tree.categories).toHaveLength(1)
-    expect(tree.categories[0].bacentas).toEqual([])
+  it('shows a bacenta with no constituency rather than dropping it', () => {
+    // The migration has not run yet for these, and a place full of real people
+    // that vanishes from every screen is the failure this bucket prevents.
+    const tree = buildBacentaTree([alos], [bacenta('anloga', 'Anloga Bacenta', null)])
+    expect(tree.unfiled.map((b) => b.name)).toEqual(['Anloga Bacenta'])
+    expect(tree.constituencies[0].bacentas).toHaveLength(0)
   })
 
-  it('surfaces a bacenta whose category is gone instead of dropping it', () => {
-    // The failure this bucket exists to prevent: a group full of real people
-    // silently disappearing from every screen while its rows sit in the
-    // database.
-    const tree = buildBacentaTree([], [bacenta('biazo', 'Biazo', 'deleted-category')])
-    expect(tree.categories).toHaveLength(0)
-    expect(tree.standalone).toHaveLength(0)
-    expect(tree.orphans.map((b) => b.name)).toEqual(['Biazo'])
+  it('treats a constituency that no longer exists as unfiled', () => {
+    // Same human fix as never having been filed — pick a constituency — so the
+    // two do not need separate buckets.
+    const tree = buildBacentaTree([alos], [bacenta('ghost', 'Ghost Bacenta', 'deleted')])
+    expect(tree.unfiled.map((b) => b.name)).toEqual(['Ghost Bacenta'])
   })
 
-  it('does not confuse a null category with a missing one', () => {
-    const tree = buildBacentaTree([], [bacenta('tech', 'Technical Team', null)])
-    expect(tree.standalone.map((b) => b.name)).toEqual(['Technical Team'])
-    expect(tree.orphans).toEqual([])
+  it('keeps a constituency that has no bacentas yet', () => {
+    const tree = buildBacentaTree([alos], [])
+    expect(tree.constituencies).toHaveLength(1)
+    expect(tree.constituencies[0].bacentas).toEqual([])
+  })
+
+  it('orders by sort_order then name', () => {
+    const tree = buildBacentaTree(
+      [alos],
+      [
+        bacenta('b', 'Bomso', 'alos', 100),
+        bacenta('a', 'Anloga', 'alos', 100),
+        bacenta('z', 'Zzz First', 'alos', 1),
+      ],
+    )
+    expect(tree.constituencies[0].bacentas.map((b) => b.name)).toEqual([
+      'Zzz First',
+      'Anloga',
+      'Bomso',
+    ])
   })
 })
 
@@ -196,30 +210,30 @@ describe('headsAnything', () => {
 })
 
 describe('headRegistrationScope', () => {
-  const heads = { constituencies: ['c1', 'c2'], bacentas: ['b1'] }
+  const heads = { constituencies: ['c1', 'c2'], basontas: ['b1'] }
 
   it('accepts a registration into a constituency they head', () => {
-    expect(headRegistrationScope({ constituency_id: 'c1', bacenta_ids: [] }, heads)).toEqual({
+    expect(headRegistrationScope({ constituency_id: 'c1', basonta_ids: [] }, heads)).toEqual({
       ok: true,
       constituency_id: 'c1',
-      bacenta_ids: [],
+      basonta_ids: [],
     })
   })
 
   it('accepts bacentas they head alongside it', () => {
-    const out = headRegistrationScope({ constituency_id: 'c2', bacenta_ids: ['b1'] }, heads)
-    expect(out).toEqual({ ok: true, constituency_id: 'c2', bacenta_ids: ['b1'] })
+    const out = headRegistrationScope({ constituency_id: 'c2', basonta_ids: ['b1'] }, heads)
+    expect(out).toEqual({ ok: true, constituency_id: 'c2', basonta_ids: ['b1'] })
   })
 
   it('de-duplicates a repeated bacenta id', () => {
-    const out = headRegistrationScope({ constituency_id: 'c1', bacenta_ids: ['b1', 'b1'] }, heads)
-    expect(out).toEqual({ ok: true, constituency_id: 'c1', bacenta_ids: ['b1'] })
+    const out = headRegistrationScope({ constituency_id: 'c1', basonta_ids: ['b1', 'b1'] }, heads)
+    expect(out).toEqual({ ok: true, constituency_id: 'c1', basonta_ids: ['b1'] })
   })
 
   it('refuses a bacenta-only head — they cannot say where anybody LIVES', () => {
     const out = headRegistrationScope(
       { constituency_id: 'c1' },
-      { constituencies: [], bacentas: ['b1'] },
+      { constituencies: [], basontas: ['b1'] },
     )
     expect(out).toMatchObject({ ok: false, status: 403 })
   })
@@ -229,7 +243,7 @@ describe('headRegistrationScope', () => {
   // guess is invisible afterwards — the member simply appears in the wrong
   // roster, and nobody knows to look.
   it('refuses an omitted constituency rather than defaulting to their first', () => {
-    const out = headRegistrationScope({ bacenta_ids: [] }, heads)
+    const out = headRegistrationScope({ basonta_ids: [] }, heads)
     expect(out).toMatchObject({ ok: false, status: 400 })
     expect(out).not.toMatchObject({ constituency_id: 'c1' })
   })
@@ -249,12 +263,12 @@ describe('headRegistrationScope', () => {
   })
 
   it('refuses a bacenta they do not head, even into their own constituency', () => {
-    const out = headRegistrationScope({ constituency_id: 'c1', bacenta_ids: ['b9'] }, heads)
+    const out = headRegistrationScope({ constituency_id: 'c1', basonta_ids: ['b9'] }, heads)
     expect(out).toMatchObject({ ok: false, status: 403 })
   })
 
   it('refuses the whole registration when ONE bacenta is foreign', () => {
-    const out = headRegistrationScope({ constituency_id: 'c1', bacenta_ids: ['b1', 'b9'] }, heads)
+    const out = headRegistrationScope({ constituency_id: 'c1', basonta_ids: ['b1', 'b9'] }, heads)
     expect(out.ok).toBe(false)
   })
 
@@ -266,56 +280,65 @@ describe('headRegistrationScope', () => {
   })
 })
 
-describe('headBacentaMerge', () => {
+describe('headBasontaMerge', () => {
   // The whole reason this function exists: a head only ever sees their own
   // bacentas, so writing their tick-list verbatim would silently remove the
   // member from every other one.
   it('preserves memberships the head cannot see', () => {
-    expect(headBacentaMerge([], ['choir', 'tech'], ['tech'])).toEqual(['choir'])
+    expect(headBasontaMerge([], ['choir', 'tech'], ['tech'])).toEqual(['choir'])
   })
 
   it('applies the head’s ticks within their own bacentas', () => {
-    expect(headBacentaMerge(['tech'], ['choir'], ['tech']).sort()).toEqual(['choir', 'tech'])
+    expect(headBasontaMerge(['tech'], ['choir'], ['tech']).sort()).toEqual(['choir', 'tech'])
   })
 
   it('removes from a bacenta the head heads when they untick it', () => {
-    expect(headBacentaMerge([], ['choir', 'tech'], ['tech'])).toEqual(['choir'])
+    expect(headBasontaMerge([], ['choir', 'tech'], ['tech'])).toEqual(['choir'])
   })
 
   it('ignores a tick for a bacenta they do not head', () => {
-    expect(headBacentaMerge(['choir'], [], ['tech'])).toEqual([])
+    expect(headBasontaMerge(['choir'], [], ['tech'])).toEqual([])
   })
 
   it('does not duplicate one they already had', () => {
-    expect(headBacentaMerge(['tech'], ['tech'], ['tech'])).toEqual(['tech'])
+    expect(headBasontaMerge(['tech'], ['tech'], ['tech'])).toEqual(['tech'])
   })
 
   it('leaves everything alone for a head who heads no bacenta', () => {
-    expect(headBacentaMerge([], ['choir', 'tech'], [])).toEqual(['choir', 'tech'])
+    expect(headBasontaMerge([], ['choir', 'tech'], [])).toEqual(['choir', 'tech'])
   })
 })
 
 describe('headEditScope', () => {
-  const heads = { constituencies: ['c1'], bacentas: ['b1'] }
-  const member = { constituency_id: 'c1', bacenta_ids: ['b1', 'b2'] }
+  const heads = { constituencies: ['c1'], bacentas: ['p1'], basontas: ['b1'] }
+  const member = { constituency_id: 'c1', bacenta_id: 'p1', basonta_ids: ['b1', 'b2'] }
 
   it('lets a head correct an ordinary field', () => {
     const out = headEditScope(
-      { fields: { call_number: '+233240000000' }, bacenta_ids: undefined },
+      { fields: { call_number: '+233240000000' }, basonta_ids: undefined },
       member,
       heads,
     )
     expect(out).toEqual({
       ok: true,
       fields: { call_number: '+233240000000' },
-      bacenta_ids: undefined,
+      basonta_ids: undefined,
     })
   })
 
-  it('reaches a member through a BACENTA they head, with no constituency in common', () => {
+  it('reaches a member through a BASONTA they head, with no constituency in common', () => {
     const out = headEditScope(
-      { fields: { address: 'x' }, bacenta_ids: undefined },
-      { constituency_id: 'somewhere-else', bacenta_ids: ['b1'] },
+      { fields: { address: 'x' }, basonta_ids: undefined },
+      { constituency_id: 'somewhere-else', bacenta_id: null, basonta_ids: ['b1'] },
+      heads,
+    )
+    expect(out.ok).toBe(true)
+  })
+
+  it('reaches a member through a BACENTA they head — the place, not the choir', () => {
+    const out = headEditScope(
+      { fields: { address: 'x' }, basonta_ids: undefined },
+      { constituency_id: 'somewhere-else', bacenta_id: 'p1', basonta_ids: [] },
       heads,
     )
     expect(out.ok).toBe(true)
@@ -323,38 +346,77 @@ describe('headEditScope', () => {
 
   it('refuses a member in no group they head', () => {
     const out = headEditScope(
-      { fields: { address: 'x' }, bacenta_ids: undefined },
-      { constituency_id: 'c9', bacenta_ids: ['b9'] },
+      { fields: { address: 'x' }, basonta_ids: undefined },
+      { constituency_id: 'c9', bacenta_id: 'p9', basonta_ids: ['b9'] },
       heads,
     )
     expect(out).toMatchObject({ ok: false, status: 403 })
   })
 
-  it('refuses a member with no constituency and no shared bacenta', () => {
+  it('refuses a member in no group at all', () => {
     const out = headEditScope(
-      { fields: { address: 'x' }, bacenta_ids: undefined },
-      { constituency_id: null, bacenta_ids: [] },
+      { fields: { address: 'x' }, basonta_ids: undefined },
+      { constituency_id: null, bacenta_id: null, basonta_ids: [] },
       heads,
     )
     expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('refuses MOVING the member to another bacenta, and says so', () => {
+    // The same rule as constituency_id one level down: where somebody LIVES is
+    // an administrator's to change.
+    const out = headEditScope(
+      { fields: { bacenta_id: 'p2' }, basonta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toMatch(/different bacenta/i)
+  })
+
+  it('accepts bacenta_id resent UNCHANGED and drops it from the write', () => {
+    // The shared form always sends it; resending what is already stored is not
+    // a move, and treating it as one would refuse every ordinary edit.
+    const out = headEditScope(
+      { fields: { bacenta_id: 'p1', address: 'x' }, basonta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toEqual({ ok: true, fields: { address: 'x' }, basonta_ids: undefined })
+  })
+
+  it('lets a head record who looks after somebody', () => {
+    // Deliberately NOT refused: it is the head's own pastoral work, it grants
+    // the named carer nothing, and the server still checks it separately.
+    const out = headEditScope(
+      { fields: { care_of_member_id: 'm2' }, basonta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toEqual({
+      ok: true,
+      fields: { care_of_member_id: 'm2' },
+      basonta_ids: undefined,
+    })
   })
 
   // Named, not silently dropped — a head who is told nothing assumes it saved.
   it('refuses a status change and says so', () => {
-    const out = headEditScope({ fields: { status: 'inactive' }, bacenta_ids: undefined }, member, heads)
+    const out = headEditScope({ fields: { status: 'inactive' }, basonta_ids: undefined }, member, heads)
     expect(out).toMatchObject({ ok: false, status: 403 })
     if (out.ok) throw new Error('expected a refusal')
     expect(out.error).toMatch(/active or inactive/i)
   })
 
   it('refuses a birthday-message change', () => {
-    const out = headEditScope({ fields: { sms_template_id: 't1' }, bacenta_ids: undefined }, member, heads)
+    const out = headEditScope({ fields: { sms_template_id: 't1' }, basonta_ids: undefined }, member, heads)
     expect(out).toMatchObject({ ok: false, status: 403 })
   })
 
   it('refuses MOVING the member to another constituency', () => {
     const out = headEditScope(
-      { fields: { constituency_id: 'c2' }, bacenta_ids: undefined },
+      { fields: { constituency_id: 'c2' }, basonta_ids: undefined },
       member,
       heads,
     )
@@ -365,31 +427,31 @@ describe('headEditScope', () => {
   // not a move, and must not be treated as one.
   it('accepts the constituency it already has, and drops it from the write', () => {
     const out = headEditScope(
-      { fields: { constituency_id: 'c1', address: 'x' }, bacenta_ids: undefined },
+      { fields: { constituency_id: 'c1', address: 'x' }, basonta_ids: undefined },
       member,
       heads,
     )
-    expect(out).toEqual({ ok: true, fields: { address: 'x' }, bacenta_ids: undefined })
+    expect(out).toEqual({ ok: true, fields: { address: 'x' }, basonta_ids: undefined })
   })
 
   it('treats a null constituency resent as null as unchanged', () => {
     const out = headEditScope(
-      { fields: { constituency_id: null }, bacenta_ids: undefined },
-      { constituency_id: null, bacenta_ids: ['b1'] },
+      { fields: { constituency_id: null }, basonta_ids: undefined },
+      { constituency_id: null, bacenta_id: null, basonta_ids: ['b1'] },
       heads,
     )
-    expect(out).toEqual({ ok: true, fields: {}, bacenta_ids: undefined })
+    expect(out).toEqual({ ok: true, fields: {}, basonta_ids: undefined })
   })
 
   it('merges bacentas rather than replacing them', () => {
-    const out = headEditScope({ fields: {}, bacenta_ids: [] }, member, heads)
+    const out = headEditScope({ fields: {}, basonta_ids: [] }, member, heads)
     // b2 is outside their reach and survives; b1 is theirs and was unticked.
-    expect(out).toEqual({ ok: true, fields: {}, bacenta_ids: ['b2'] })
+    expect(out).toEqual({ ok: true, fields: {}, basonta_ids: ['b2'] })
   })
 
   it('leaves bacentas untouched when the request never mentions them', () => {
-    const out = headEditScope({ fields: { address: 'x' }, bacenta_ids: undefined }, member, heads)
+    const out = headEditScope({ fields: { address: 'x' }, basonta_ids: undefined }, member, heads)
     if (!out.ok) throw new Error('expected acceptance')
-    expect(out.bacenta_ids).toBeUndefined()
+    expect(out.basonta_ids).toBeUndefined()
   })
 })
