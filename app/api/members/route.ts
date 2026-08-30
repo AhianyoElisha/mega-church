@@ -3,16 +3,16 @@ import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import {
   createMember,
   listMembers,
-  readBacentaIds,
+  readBasontaIds,
   validateMemberInput,
 } from '@/lib/members/server'
 import { emptyEnrolment, enrolmentByMember } from '@/lib/biometrics/server'
 import {
-  bacentaMembershipIndex,
+  basontaMembershipIndex,
   constituencyExists,
   leaderScope,
-  setMemberBacentas,
-  unknownBacentaIds,
+  setMemberBasontas,
+  unknownBasontaIds,
 } from '@/lib/groups/server'
 import { headRegistrationScope } from '@/lib/groups/tree'
 import type {
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
   const [members, enrolment, bacentaIndex] = await Promise.all([
     listMembers(databases, { search, status, constituencyId, homeService }),
     enrolmentByMember(databases),
-    bacentaMembershipIndex(databases),
+    basontaMembershipIndex(databases),
   ])
 
   const rows = members.map((m) => {
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
       fingers_done: Object.keys(e.by_finger),
       complete: e.complete,
     }
-    return { ...m, enrolment: summary, bacenta_ids: bacentaIndex.byMember.get(m.$id) ?? [] }
+    return { ...m, enrolment: summary, basonta_ids: bacentaIndex.byMember.get(m.$id) ?? [] }
   })
 
   return NextResponse.json<ListMembersResponse>(
@@ -106,17 +106,17 @@ export async function POST(request: NextRequest) {
 
   const { databases } = createAdminClient()
   const fields = validated.value
-  let bacentaIds = readBacentaIds(body) ?? []
+  let bacentaIds = readBasontaIds(body) ?? []
 
   if (!isAdmin) {
     // Resolved from the database, never from the request: the client says which
     // constituency it wants, and this says which ones it is entitled to want.
     const scope = await leaderScope(databases, auth.user.id)
     const narrowed = headRegistrationScope(
-      { constituency_id: fields.constituency_id, bacenta_ids: bacentaIds },
+      { constituency_id: fields.constituency_id, basonta_ids: bacentaIds },
       {
         constituencies: scope.constituencies.map((c) => c.$id),
-        bacentas: scope.bacentas.map((b) => b.$id),
+        basontas: scope.basontas.map((b) => b.$id),
       },
     )
     if (!narrowed.ok) {
@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     }
 
     fields.constituency_id = narrowed.constituency_id
-    bacentaIds = narrowed.bacenta_ids
+    bacentaIds = narrowed.basonta_ids
 
     // Forced, never read from the request — both of these are church-wide
     // decisions that happen to live on the member row:
@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const unknown = await unknownBacentaIds(databases, bacentaIds)
+  const unknown = await unknownBasontaIds(databases, bacentaIds)
   if (unknown.length > 0) {
     return NextResponse.json<MemberResponse>(
       { ok: false, error: 'One of those bacentas no longer exists. Reload and try again.' },
@@ -179,11 +179,11 @@ export async function POST(request: NextRequest) {
   // the member page. The reverse order would leave join rows pointing at a
   // member id that was never created.
   if (bacentaIds.length > 0) {
-    await setMemberBacentas(databases, member.$id, bacentaIds, auth.user.email)
+    await setMemberBasontas(databases, member.$id, bacentaIds, auth.user.email)
   }
 
   return NextResponse.json<MemberResponse>(
-    { ok: true, member, bacenta_ids: bacentaIds },
+    { ok: true, member, basonta_ids: bacentaIds },
     { status: 201 },
   )
 }

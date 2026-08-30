@@ -20,10 +20,11 @@ import Select from '@/shared/Select'
 import { Description, Field, Label } from '@/shared/fieldset'
 import { Banner, Card } from '@/components/ui'
 import { useDialog } from '@/components/dialog'
+import type { GroupKind } from '@/lib/groups/types'
 import { useCreateLeader, useLeaderAccounts, useSetLeaderPassword } from '@/lib/queries/groups'
 
 export type HeadCardProps = {
-  kind: 'constituency' | 'bacenta'
+  kind: GroupKind
   groupName: string
   headUserId: string | null
   headName: string | null

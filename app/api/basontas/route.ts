@@ -1,19 +1,19 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import {
-  bacentaNameTaken,
-  createBacenta,
-  listBacentasWithCounts,
-  listConstituencies,
+  basontaNameTaken,
+  createBasonta,
+  listBasontaCategories,
+  listBasontasWithCounts,
   validateGroupName,
 } from '@/lib/groups/server'
 import { resolveHead } from '@/lib/groups/heads'
-import type { BacentaResponse, ListBacentasResponse } from '@/lib/groups/types'
+import type { BasontaResponse, ListBasontasResponse } from '@/lib/groups/types'
 
 /**
- * GET /api/bacentas — categories and bacentas, flat.
+ * GET /api/basontas — categories and basontas, flat.
  *
- * Flat and not pre-nested: `buildBacentaTree` does the nesting on the client so
+ * Flat and not pre-nested: `buildBasontaTree` does the nesting on the client so
  * the same payload feeds the tree view, the registration form's multi-select
  * and the member detail page without three shapes of the same data.
  */
@@ -22,20 +22,20 @@ export async function GET() {
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()
-  const [constituencies, bacentas] = await Promise.all([
-    listConstituencies(databases),
-    listBacentasWithCounts(databases),
+  const [categories, basontas] = await Promise.all([
+    listBasontaCategories(databases),
+    listBasontasWithCounts(databases),
   ])
-  return NextResponse.json<ListBacentasResponse>(
-    { ok: true, constituencies, bacentas },
+  return NextResponse.json<ListBasontasResponse>(
+    { ok: true, categories, basontas },
     { headers: { 'Cache-Control': 'private, no-store' } },
   )
 }
 
 /**
- * POST /api/bacentas — create one, categorised or standalone.
+ * POST /api/basontas — create one, categorised or standalone.
  *
- * Omitting `category_id` (or sending null) creates a STANDALONE bacenta like
+ * Omitting `category_id` (or sending null) creates a STANDALONE basonta like
  * the Technical Team: members sit directly under it, there are no siblings.
  * Passing a category id creates one of a family, like Biazo under Choir. There
  * is no third "type" field to keep in step — the presence of the category is
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
 
   let body: {
     name?: unknown
-    constituency_id?: unknown
+    category_id?: unknown
     description?: unknown
     head_user_id?: unknown
   }
@@ -59,30 +59,26 @@ export async function POST(request: NextRequest) {
 
   const { databases, users } = createAdminClient()
 
-  const constituencyId =
-    typeof body.constituency_id === 'string' && body.constituency_id
-      ? body.constituency_id
-      : null
-  if (constituencyId) {
-    const constituencies = await listConstituencies(databases)
-    if (!constituencies.some((c) => c.$id === constituencyId)) {
-      return bad('That constituency no longer exists. Reload and pick another.')
+  const categoryId =
+    typeof body.category_id === 'string' && body.category_id ? body.category_id : null
+  if (categoryId) {
+    const categories = await listBasontaCategories(databases)
+    if (!categories.some((c) => c.$id === categoryId)) {
+      return bad('That category no longer exists. Reload and pick another.')
     }
   }
 
-  const shape = validateGroupName(body.name, { noun: 'bacenta' })
+  const shape = validateGroupName(body.name, { noun: 'basonta' })
   if (!shape.ok) return bad(shape.error)
 
   // Uniqueness is per-category, not global: "Youth" under Choir and "Youth"
   // under Ushers are two real, different groups, and a global unique index
   // would refuse the second one.
-  // Unique WITHIN a constituency: two constituencies may each have a place the
-  // congregation calls "Central", and both are real.
-  if (await bacentaNameTaken(databases, shape.value, constituencyId)) {
+  if (await basontaNameTaken(databases, shape.value, categoryId)) {
     return bad(
-      constituencyId
-        ? `There is already a "${shape.value}" in that constituency.`
-        : `There is already a bacenta called "${shape.value}" with no constituency.`,
+      categoryId
+        ? `There is already a "${shape.value}" in that category.`
+        : `There is already a basonta called "${shape.value}".`,
     )
   }
 
@@ -92,20 +88,20 @@ export async function POST(request: NextRequest) {
   const description =
     typeof body.description === 'string' ? body.description.trim().slice(0, 512) || null : null
 
-  const bacenta = await createBacenta(
+  const basonta = await createBasonta(
     databases,
     {
       name: shape.value,
-      constituency_id: constituencyId,
+      category_id: categoryId,
       description,
       head_user_id: head.user?.id ?? null,
       head_name: head.user?.name ?? null,
     },
     auth.user.email,
   )
-  return NextResponse.json<BacentaResponse>({ ok: true, bacenta }, { status: 201 })
+  return NextResponse.json<BasontaResponse>({ ok: true, basonta }, { status: 201 })
 }
 
 function bad(error: string, status = 400) {
-  return NextResponse.json<BacentaResponse>({ ok: false, error }, { status })
+  return NextResponse.json<BasontaResponse>({ ok: false, error }, { status })
 }
