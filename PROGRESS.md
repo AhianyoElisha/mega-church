@@ -1542,15 +1542,57 @@ Merged 01:14:58Z; the Git integration built production three seconds later
 (`mega-church-e7y5pl7e7`, Ready in 46s, aliased `git-main`). `GET /login` → 200.
 The environment override landed **before** the merge, so this build has it.
 
+### The deployed environment is verified — signed in, it does read out
+
+The paragraph below originally said VAPID state "cannot be read from outside".
+That is true of an ANONYMOUS probe and misleading about a signed-in one, which
+answers the question outright.
+
+`vapidPublicKey()` returns `null` whenever `vapidSubjectProblem()` rejects the
+stored subject — the check added in #30 so nobody could tap Enable and join a
+list nothing is delivered from. So a **non-null key from the deployed
+function** is a direct statement that the deployment holds a usable subject.
+Signed in against production:
+
+    GET https://mega-church.vercel.app/api/push
+    {"ok":true,"vapid_public_key":"BKjCLJMpp4wvS-aJDS9XPvdarss1jd3MCVKebd…"}
+
+`/birthdays` agrees, in the state it renders: *"Off. Turn them on…"* — the
+**you have not opted in** state, not **not configured on the server**. The two
+are indistinguishable from the client, which is exactly why the key is served
+from the route rather than baked into the bundle; here that distinction is what
+carries the evidence.
+
+Two things the same page confirmed in passing: its birthday list matches the
+Appwrite read exactly (nobody tomorrow; Anthonia Okafor and Comfort Zowornu on
+1 September), and the device list is still the same two `admin` subscriptions at
+unchanged timestamps — installing the PWA does not subscribe anything, which is
+why that page reports notifications off *on this device*.
+
+So the chain is verified end to end except its last link. Environment: set and
+read back per environment. Deployment: built after the override, and confirmed
+serving a key rather than `null`. Delivery: not yet observed.
+
 ### What is still not proven
 
-**No push has been observed delivered from production since the change.** There
-is no anonymous probe for it: `/api/push` is behind the session gate, so unlike
-`CRON_SECRET` — which announces its own presence through the 401/403 split —
-VAPID state cannot be read from outside.
+**No push has been observed delivered from production since the change.** What
+remains is only the delivery itself — everything upstream of it is now checked.
 
-The evidence will be the `birthday` run at 06:00 UTC stamping `last_success_at`
-in `push_subscriptions`. The Android row has been stamped since 2026-08-27; the
+The evidence will be the `birthday` run stamping `last_success_at` in
+`push_subscriptions`. The Android row has been stamped since 2026-08-27; the
 iPhone row is the one that answers this. Until that read, production push is
 correct-by-construction and not correct-by-observation, which is precisely the
 distinction that let this bug live for months.
+
+**Most mornings cannot answer it.** `birthday` fires at lead 1 and exits
+`nobody_celebrating` when nobody has a birthday tomorrow — 2026-08-28, 08-29
+and 08-30 were all such days and stamped no device. Pressing "Send notification
+now" on one of them sends nothing either, for the same reason. **The first run
+that can answer it is 2026-08-31 06:00 UTC** (landing 06:21–06:29 on the Hobby
+flexible window), for the two celebrants on 09-01. After that: 09-03, 09-07,
+09-08, 09-09.
+
+And when reading it, the iPhone's `2026-08-27T07:44:15.540Z` is **not** the
+answer — that stamp came from the local manual `sendToAll` test during the fix,
+while production still held the placeholder. Proof is that timestamp advancing,
+on a run row that says `triggered_by=scheduler`.
