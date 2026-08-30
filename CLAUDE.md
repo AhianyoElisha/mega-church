@@ -62,28 +62,98 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **`sessions` is never a collection name.** Appwrite reserves "session" for
   auth. The collections are `meetings`, `meeting_occurrences`,
   `meeting_members`, `attendance_records`, `constituencies`,
-  `bacenta_categories`, `bacentas`, `bacenta_members`, `push_subscriptions`,
-  `notification_runs`, `sms_templates`, `sms_messages`.
-- **Constituency is a FIELD; bacenta is a JOIN.** A member lives in exactly one
-  constituency (`members.constituency_id`) and serves in zero or many bacentas
-  (`bacenta_members`). The asymmetry is the design, not an inconsistency to
-  tidy up: a join for constituency would permit two homes, and a field for
-  bacenta would silently drop the second choir. PRD §1.7–1.9.
-- **`bacentas.category_id === null` IS the standalone bacenta** ("Technical
+  `bacentas`, `basonta_categories`, `basontas`, `basonta_members`,
+  `push_subscriptions`, `notification_runs`, `sms_templates`, `sms_messages`.
+  (`bacenta_categories` and `bacenta_members` are retired by
+  `scripts/migrate-basonta.ts` — a bacenta has a constituency, not a category,
+  and its membership is a field.)
+- **BACENTA is a PLACE; BASONTA is a serving group.** The two were one
+  collection once, and that is exactly why the church's own vocabulary was
+  unusable in its own system. A bacenta is Anloga, Susuankyi, Oforikrom — part
+  of a constituency, where a member LIVES. A basonta is Biazo, the Technical
+  Team, Media — what a member SERVES in. Never reintroduce a single collection
+  for both; `scripts/migrate-basonta.ts` is what it cost to separate them.
+- **Constituency and bacenta are FIELDS; basonta is a JOIN.** A member lives in
+  exactly one constituency (`members.constituency_id`) and in exactly one
+  bacenta inside it (`members.bacenta_id`), and serves in zero or many basontas
+  (`basonta_members`). The asymmetry is the design, not an inconsistency to
+  tidy up: a join for either place would permit two homes, and a field for
+  basonta would silently drop the second choir. The live data settled it before
+  the code was written — of 28 members in a location bacenta, none was in two.
+  PRD §1.7–1.9.
+- **Assigning a BACENTA moves somebody; assigning a BASONTA does not.**
+  `assignBacenta` overwrites a field, so a member joining Anloga leaves
+  wherever they were. `applyBasontaMembership` adds without removing, because a
+  chorister can run the sound desk too. Two routes that look alike and mean
+  opposite things — which is the whole reason the church needed two words. The
+  bacenta route REFUSES an unrecognised `mode` rather than defaulting to
+  `assign`: defaulting turned a mistyped "remove" into adding everybody named
+  to the group they were being taken out of.
+- **`basontas.category_id === null` IS the standalone basonta** ("Technical
   Team"). Never add an `is_standalone` boolean beside it — two fields encoding
   one fact are two fields that can disagree.
-- **Bacenta names are unique per CATEGORY, not globally.** "Youth" under Choir
-  and "Youth" under Ushers are two real groups. Enforced in
-  `lib/groups/server.ts::bacentaNameTaken`, deliberately not by an index.
-- **Group membership writes are DIFFS** (`add` / `remove` / `set`), never
+- **Basonta names are unique per CATEGORY; bacenta names per CONSTITUENCY.**
+  "Youth" under Choir and "Youth" under Ushers are two real groups, and two
+  constituencies may each have a place the congregation calls "Central".
+  Enforced in `basontaNameTaken` / `bacentaNameTaken`, deliberately not by an
+  index.
+- **Basonta membership writes are DIFFS** (`add` / `remove` / `set`), never
   delete-all-then-insert — same reason as the meeting roster. `add` is what the
   bulk assigner sends; a `set` from a filtered view would remove everyone who
   happened to be off screen.
-- **A PATCH that omits `bacenta_ids` must leave them alone.** `undefined` means
+- **A PATCH that omits `basonta_ids` must leave them alone.** `undefined` means
   "don't touch", `[]` means "clear". Collapsing the two removes somebody from
   their choir every time an admin corrects a phone number.
+- **A member is looked after by another MEMBER, who needs no account.**
+  `members.care_of_member_id` is a record of pastoral responsibility inside a
+  bacenta, not a permission — being named grants nothing at all, which is why
+  it is a field and not a role. `careAssignmentProblem()` in
+  `lib/groups/care.ts` refuses self-assignment, an inactive carer, a carer from
+  another bacenta, and **cycles**. Chains are fine and expected (A under B
+  under C); only a cycle is a shape nobody can be at the top of.
+- **The cycle walk carries a `seen` set, and it is load-bearing.** The stored
+  data may ALREADY contain a loop — written before the check existed, or by a
+  direct console edit — and without it the walk never terminates and the
+  request HANGS rather than being refused. That is a worse failure than a wrong
+  answer, and there is a test for it.
+- **Care links are cleared by hand, in the right ORDER.** Appwrite has no
+  cascade. Deleting a bacenta clears the care links BEFORE `bacenta_id`, or
+  they point into nothing with no way left to find them. Moving somebody
+  between bacentas clears their carer and releases anybody left behind who was
+  under them. Deleting a member calls `releaseCharges`: `bacenta_id` needs no
+  equivalent because it is a field on the member's OWN document, and a care
+  link is a field on somebody else's — which is exactly why it is the one that
+  gets forgotten.
+- **`member_no` is the human reference; `$id` is still the key.** `2026001` —
+  the year of registration then a sequence that restarts each January. Claimed
+  by the INSERT, never by a check: compute the highest, add one, write it, and
+  let the unique index refuse a loser. The maximum is computed by PARSING and
+  comparing NUMERICALLY, never lexically — `max(['2026999','20261000'])` as
+  strings is `2026999`, which reissues a number the day the church passes 999
+  registrations in a year. Numbers are max+1 and never fill a gap; a gap is a
+  deleted member or a reservation, and reissuing either points every paper
+  record naming that number at somebody else.
+- **A reserved member number is enforced, not documented.**
+  `RESERVED_MEMBER_NUMBERS` holds `2026005` for a constituency head with no
+  member row. The allocator skips it, so it survives a re-run of the backfill
+  and a busy Sunday. Reservations do NOT count towards the maximum — counting
+  them raised the floor from the very first allocation and would have handed
+  the church's first member `2026006`.
+- **`benmp_partner` is read as `=== true`, never cast.** A row written before
+  the backfill has no such field, and "not a partner" is the only safe reading:
+  the other direction texts somebody, at the church's expense, about a
+  commitment they never made. A non-boolean is REFUSED rather than coerced —
+  the string `"false"` is truthy, and coercing it enrols the very person being
+  taken off the list. A head MAY set it: it records a fact the member stated,
+  and the head at the desk is who they told.
+- **A `treasurer` sends TITHE and nothing else.** Reads what a shepherd reads;
+  the one write is enforced by `canSendSmsCategory`, an ALLOW-map rather than a
+  deny-list, so a fourth SMS category is refused to them the moment somebody
+  adds one. A refusal NAMES the category — silently downgrading returns 200 and
+  leaves them believing a hundred birthday messages went out.
 - **`leader` is ONE label covering both kinds of head.** The same person often
-  heads a constituency and a bacenta, and two labels would mean two logins.
+  heads a constituency, a bacenta and a basonta, and separate labels would
+  mean separate logins.
   The label grants nothing; scope comes from `leaderScope()` per request, and
   every group read goes through `canReadGroup()`.
 - **A head writes in exactly FOUR places, and every one is inside their own
@@ -101,22 +171,26 @@ large type; body text is black. Never yellow text on white below 18pt.
   enrolment** — stays admin-only. A head registers and corrects the person; an
   admin enrols the fingerprints, on the machine the scanner is plugged into.
 - **REGISTERING is constituency-scoped; EDITING is group-scoped.** The two
-  scopes differ on purpose. A bacenta head has no basis for saying where
+  scopes differ on purpose. A basonta head has no basis for saying where
   somebody LIVES, so `headRegistrationScope()` demands a constituency they
   head. Editing a member who already exists is different: `headEditScope()`
-  admits anyone in a constituency **or** a bacenta they head — the same set
-  their group page already shows them in full.
-- **A head's bacenta ticks are MERGED, never written verbatim
-  (`headBacentaMerge`).** A head is only ever shown the bacentas they head, so
+  admits anyone in a constituency, a bacenta **or** a basonta they head — the
+  same set their group pages already show them in full.
+- **A head's basonta ticks are MERGED, never written verbatim
+  (`headBasontaMerge`).** A head is only ever shown the basontas they head, so
   saving that list as the member's complete answer would remove them from every
   other one — a constituency head correcting a phone number would silently take
   somebody out of the choir. It is the `undefined`/`[]` hazard one level deeper,
   and the same bug wearing a different hat.
 - **A head's refused field is refused BY NAME, never silently dropped.** A
-  `PATCH` carrying `status` or `sms_template_id` is a 403 that says which one
-  and why. Stripping it would return 200 and leave the head believing the edit
-  landed. The one exception is `constituency_id` resent UNCHANGED: the shared
-  form always sends it, and resending what is already stored is not a move.
+  `PATCH` carrying `status`, `sms_template_id` or `bacenta_id` is a 403 that
+  says which one and why. Stripping it would return 200 and leave the head
+  believing the edit landed. The exceptions are `constituency_id` and
+  `bacenta_id` resent UNCHANGED: the shared form always sends both, and
+  resending what is already stored is not a move. `care_of_member_id` is
+  deliberately NOT refused — recording who looks after whom inside a bacenta is
+  the head's own pastoral work, and the decision is written down at both
+  refusal lists because an absent entry is invisible.
 - **A head's registration is narrowed by `headRegistrationScope()`, not by the
   form.** It is pure and unit-tested, and the route forces `status: 'active'`
   and `sms_template_id: null` afterwards rather than reading them from the
@@ -373,10 +447,12 @@ large type; body text is black. Never yellow text on white below 18pt.
   read-only meaning bounces in the page itself. `POST /api/meetings` is what
   actually refuses them.
 - **Cascades are manual.** Deleting a member means deleting their
-  `biometric_templates`, `meeting_members`, `bacenta_members` and
-  `attendance_records` first. Deleting a constituency means clearing
-  `constituency_id` off its members BEFORE the row goes, or they are left
-  pointing at a home that no longer exists.
+  `biometric_templates`, `meeting_members`, `basonta_members`,
+  `sms_messages` and `attendance_records`, and calling `releaseCharges()` so
+  nobody is left looked after by somebody who is gone. Deleting a constituency
+  means clearing `constituency_id` off its members BEFORE the row goes, or they
+  are left pointing at a home that no longer exists; deleting a bacenta clears
+  the care links first and `bacenta_id` second.
 - **Idempotent setup:** `scripts/setup-appwrite.ts` is the single source of
   truth for schema and must be safe to re-run. New attributes go there, not
   into the console by hand. `npm run verify:appwrite` reads the live project

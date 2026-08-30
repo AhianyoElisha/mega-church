@@ -75,7 +75,10 @@ export default function RegisterIntoConstituencyPage({
   }
 
   const group = data.group
-  const bacentas = myGroups.data?.ok ? myGroups.data.bacentas : []
+  // The head's tick-list is their BASONTAS — the serving groups. A bacenta is
+  // a place and is one per member, set by an administrator, so it is not a
+  // list to tick here at all.
+  const basontas = myGroups.data?.ok ? myGroups.data.basontas : []
 
   const handleSubmit = async (values: MemberFormValues) => {
     setSaveError(null)
@@ -146,7 +149,7 @@ export default function RegisterIntoConstituencyPage({
         <MemberForm
           restrict={{
             constituency: { id: group.$id, name: group.name },
-            bacentas,
+            basontas,
           }}
           submitLabel="Register member"
           submitting={create.isPending}

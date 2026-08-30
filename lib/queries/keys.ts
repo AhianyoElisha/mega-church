@@ -53,6 +53,8 @@ export const queryKeys = {
   constituency: (id: string) => ['groups', 'constituencies', 'one', id] as const,
   bacentas: ['groups', 'bacentas'] as const,
   bacenta: (id: string) => ['groups', 'bacentas', 'one', id] as const,
+  basontas: ['groups', 'basontas'] as const,
+  basonta: (id: string) => ['groups', 'basontas', 'one', id] as const,
   myGroups: ['groups', 'mine'] as const,
   leaders: ['groups', 'leaders'] as const,
 

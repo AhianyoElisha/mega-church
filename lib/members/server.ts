@@ -8,6 +8,7 @@ import { CHURCH_TIMEZONE, COLLECTIONS, DATABASE_ID, type ServiceSlot } from '@/l
 import { fullName, type Member, type MemberInput, type MemberStatus } from './types'
 import { memberDocToMember } from '@/lib/attendance/server'
 import { nextMemberNo } from './numbering'
+import { releaseCharges } from '@/lib/groups/server'
 
 const PAGE = 100
 
@@ -148,7 +149,7 @@ export function validateMemberInput(
 
   // The per-member birthday-message override. `null` clears it back to the
   // category default; omitting the key leaves it alone — the same `undefined`
-  // vs `null` distinction `bacenta_ids` relies on, and for the same reason: a
+  // vs `null` distinction `basonta_ids` relies on, and for the same reason: a
   // PATCH correcting a phone number must not silently reset which birthday
   // message somebody gets.
   if (body.sms_template_id !== undefined) {
@@ -166,6 +167,39 @@ export function validateMemberInput(
     out.sms_template_id = null
   }
 
+  // Where they live, one level down from the constituency. Same `undefined` vs
+  // `null` rule: omitting leaves it alone, `null` takes them out of a bacenta.
+  if (body.bacenta_id !== undefined) {
+    if (body.bacenta_id === null || body.bacenta_id === '') {
+      out.bacenta_id = null
+    } else if (typeof body.bacenta_id !== 'string' || body.bacenta_id.length > 64) {
+      return { ok: false, error: 'That bacenta is not valid.' }
+    } else {
+      out.bacenta_id = body.bacenta_id
+    }
+  } else if (need) {
+    out.bacenta_id = null
+  }
+
+  // Who looks after them. Only the SHAPE is checked here — that the carer is
+  // active, in the same bacenta, and does not close a loop is
+  // `careAssignmentProblem`, which needs the other members and therefore a
+  // database handle the route has and this does not.
+  if (body.care_of_member_id !== undefined) {
+    if (body.care_of_member_id === null || body.care_of_member_id === '') {
+      out.care_of_member_id = null
+    } else if (
+      typeof body.care_of_member_id !== 'string' ||
+      body.care_of_member_id.length > 64
+    ) {
+      return { ok: false, error: 'That member is not valid.' }
+    } else {
+      out.care_of_member_id = body.care_of_member_id
+    }
+  } else if (need) {
+    out.care_of_member_id = null
+  }
+
   if (body.status !== undefined) {
     if (body.status !== 'active' && body.status !== 'inactive') {
       return { ok: false, error: 'status must be "active" or "inactive".' }
@@ -179,7 +213,7 @@ export function validateMemberInput(
 }
 
 /**
- * Pull `bacenta_ids` out of a request body.
+ * Pull `basonta_ids` out of a request body.
  *
  * Kept apart from `validateMemberInput` because it is NOT a member column —
  * bacenta membership is many-to-many and lands in `bacenta_members` after the
@@ -187,8 +221,8 @@ export function validateMemberInput(
  * load-bearing: a PATCH that never mentions bacentas must leave them alone,
  * while an explicit `[]` clears them.
  */
-export function readBacentaIds(body: unknown): string[] | undefined {
-  const raw = (body as { bacenta_ids?: unknown } | null)?.bacenta_ids
+export function readBasontaIds(body: unknown): string[] | undefined {
+  const raw = (body as { basonta_ids?: unknown } | null)?.basonta_ids
   if (raw === undefined) return undefined
   if (!Array.isArray(raw)) return []
   return [...new Set(raw.filter((v): v is string => typeof v === 'string' && v.length > 0))]
@@ -309,6 +343,8 @@ async function createMemberWithNumber(
     address: fields.address ?? null,
     whatsapp_number: fields.whatsapp_number ?? null,
     constituency_id: fields.constituency_id ?? null,
+    bacenta_id: fields.bacenta_id ?? null,
+    care_of_member_id: fields.care_of_member_id ?? null,
     sms_template_id: fields.sms_template_id ?? null,
     created_by: createdBy,
   })
@@ -396,7 +432,9 @@ export async function deleteMemberCascade(
   templates: number
   roster: number
   records: number
-  bacentas: number
+  basontas: number
+  /** How many members were looked after by this one, and are now released. */
+  released: number
   messages: number
 }> {
   const dbAny = databases as unknown as {
@@ -428,11 +466,18 @@ export async function deleteMemberCascade(
 
   const templates = await purge(COLLECTIONS.biometric_templates, 'member_id')
   const roster = await purge(COLLECTIONS.meeting_members, 'member_id')
-  // Bacenta membership is a join collection and Appwrite has no cascade, so a
+  // Basonta membership is a join collection and Appwrite has no cascade, so a
   // skipped purge here leaves the choir's roster counting a person who no
-  // longer exists. The constituency needs no equivalent — it is a field ON the
-  // member document, and goes when the document does.
-  const bacentas = await purge(COLLECTIONS.bacenta_members, 'member_id')
+  // longer exists.
+  //
+  // Neither `constituency_id` nor `bacenta_id` needs an equivalent: both are
+  // fields ON the member document and go when the document does.
+  const basontas = await purge(COLLECTIONS.basonta_members, 'member_id')
+  // `care_of_member_id` DOES need one, and the difference is the whole reason
+  // it is easy to miss: it is a field on SOMEBODY ELSE'S document. Skip this
+  // and everyone the deleted member looked after is left pointing at a person
+  // who is not there — invisible on screen, and wrong in the records.
+  const released = await releaseCharges(databases, [id])
   // Attendance history is deleted last and deliberately: it is the only one of
   // the three whose loss changes a past count, so if an earlier step fails the
   // history is still intact.
@@ -443,5 +488,5 @@ export async function deleteMemberCascade(
   const messages = await purge(COLLECTIONS.sms_messages, 'member_id')
 
   await databases.deleteDocument(DATABASE_ID, COLLECTIONS.members, id)
-  return { templates, roster, records, bacentas, messages }
+  return { templates, roster, records, basontas, released, messages }
 }

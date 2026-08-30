@@ -64,7 +64,7 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
   // `/constituencies` and `/bacentas` are admin data; their APIs refuse a
   // leader with a 403, and the pages themselves bounce one to /my-groups
   // rather than rendering an error.
-  leader: ['/my-groups', '/constituencies', '/bacentas'],
+  leader: ['/my-groups', '/constituencies', '/bacentas', '/basontas'],
   // The birthday team. Deliberately narrow: they prepare flyers and shoutouts,
   // so they need the celebrant list and nothing else in the registry.
   celebrations: ['/birthdays'],
@@ -89,6 +89,7 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
     '/members',
     '/constituencies',
     '/bacentas',
+    '/basontas',
     '/my-groups',
     '/birthdays',
     '/meetings',

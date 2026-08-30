@@ -15,10 +15,14 @@ import type {
   BacentaCategoryResponse,
   BacentaInput,
   BacentaResponse,
+  BasontaCategoryResponse,
+  BasontaInput,
+  BasontaResponse,
   ConstituencyInput,
   ConstituencyResponse,
   GroupDetailResponse,
   ListBacentasResponse,
+  ListBasontasResponse,
   ListConstituenciesResponse,
   CreateLeaderResponse,
   ListLeadersResponse,
@@ -151,15 +155,86 @@ export function useDeleteBacenta() {
   )
 }
 
+/**
+ * A bacenta is a FIELD, so there is no `set` and no diff — `assign` moves
+ * somebody in from wherever they were, `unassign` takes them out. Deliberately
+ * a different vocabulary from the basonta and constituency hooks, so a call
+ * cannot be copied between them and quietly mean something else.
+ */
 export function useAssignBacenta() {
   return useGroupMutation<
     MembershipResponse,
-    { id: string; member_ids: string[]; mode?: MembershipMode }
-  >(({ id, member_ids, mode = 'add' }) =>
+    { id: string; member_ids: string[]; mode?: 'assign' | 'unassign' }
+  >(({ id, member_ids, mode = 'assign' }) =>
     apiFetch(`/api/bacentas/${encodeURIComponent(id)}/members`, {
       method: 'POST',
       body: JSON.stringify({ member_ids, mode }),
     }),
+  )
+}
+
+// --- basontas ---------------------------------------------------------------
+
+/** `enabled` for the same reason `useBacentas` has it — see the note there. */
+export function useBasontas(options: { enabled?: boolean } = {}) {
+  return useQuery<ListBasontasResponse>({
+    queryKey: queryKeys.basontas,
+    queryFn: () => apiFetch('/api/basontas'),
+    enabled: options.enabled ?? true,
+  })
+}
+
+export function useBasonta(id: string | null) {
+  return useQuery<GroupDetailResponse>({
+    queryKey: queryKeys.basonta(id ?? ''),
+    queryFn: () => apiFetch(`/api/basontas/${encodeURIComponent(id!)}`),
+    enabled: !!id,
+  })
+}
+
+export function useCreateBasonta() {
+  return useGroupMutation<BasontaResponse, BasontaInput>((body) =>
+    apiFetch('/api/basontas', { method: 'POST', body: JSON.stringify(body) }),
+  )
+}
+
+export function useUpdateBasonta() {
+  return useGroupMutation<BasontaResponse, { id: string } & Partial<BasontaInput>>(
+    ({ id, ...body }) =>
+      apiFetch(`/api/basontas/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+  )
+}
+
+export function useDeleteBasonta() {
+  return useGroupMutation<{ ok: boolean }, { id: string }>(({ id }) =>
+    apiFetch(`/api/basontas/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  )
+}
+
+export function useAssignBasonta() {
+  return useGroupMutation<
+    MembershipResponse,
+    { id: string; member_ids: string[]; mode?: MembershipMode }
+  >(({ id, member_ids, mode = 'add' }) =>
+    apiFetch(`/api/basontas/${encodeURIComponent(id)}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ member_ids, mode }),
+    }),
+  )
+}
+
+export function useCreateBasontaCategory() {
+  return useGroupMutation<BasontaCategoryResponse, { name: string; description?: string | null }>(
+    (body) => apiFetch('/api/basonta-categories', { method: 'POST', body: JSON.stringify(body) }),
+  )
+}
+
+export function useDeleteBasontaCategory() {
+  return useGroupMutation<{ ok: boolean }, { id: string }>(({ id }) =>
+    apiFetch(`/api/basonta-categories/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   )
 }
 

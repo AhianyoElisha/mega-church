@@ -8,30 +8,27 @@ import { Banner, Card, LoadingRow, PageHeader, PageWrap, StatCard, TabBar } from
 import GroupMemberAssigner from '@/components/group-member-assigner'
 import HeadCard from '@/components/head-card'
 import GroupRosterTable from '@/components/group-roster-table'
-import CareAssigner from '@/components/care-assigner'
 import { useDialog } from '@/components/dialog'
 import { useAuth } from '@/components/auth'
 import {
-  useAssignBacenta,
-  useBacenta,
-  useDeleteBacenta,
-  useUpdateBacenta,
+  useAssignBasonta,
+  useBasonta,
+  useDeleteBasonta,
+  useUpdateBasonta,
 } from '@/lib/queries/groups'
-import { useUpdateMember } from '@/lib/queries/members'
-import type { BacentaWithCount } from '@/lib/groups/types'
+import type { Basonta } from '@/lib/groups/types'
 
-export default function BacentaPage({ params }: { params: Promise<{ id: string }> }) {
+export default function BasontaPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
   const { user } = useAuth()
   const { confirm } = useDialog()
 
-  const { data, isLoading, error } = useBacenta(id)
-  const assign = useAssignBacenta()
-  const remove = useDeleteBacenta()
-  const update = useUpdateBacenta()
-  const [tab, setTab] = useState<'members' | 'care' | 'assign'>('members')
-  const updateMember = useUpdateMember()
+  const { data, isLoading, error } = useBasonta(id)
+  const assign = useAssignBasonta()
+  const remove = useDeleteBasonta()
+  const update = useUpdateBasonta()
+  const [tab, setTab] = useState<'members' | 'assign'>('members')
 
   const isAdmin = user?.label === 'admin'
   const isShepherd = user?.label === 'shepherd'
@@ -52,10 +49,10 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
         <Banner tone="error">
           {error instanceof Error
             ? error.message
-            : ((data as { error?: string })?.error ?? 'Could not load that bacenta.')}
+            : ((data as { error?: string })?.error ?? 'Could not load that basonta.')}
         </Banner>
         <div className="mt-6">
-          <Button plain href={isAdmin ? '/bacentas' : '/my-groups'}>
+          <Button plain href={isAdmin ? '/basontas' : '/my-groups'}>
             Back
           </Button>
         </div>
@@ -63,7 +60,7 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
     )
   }
 
-  const group = data.group as BacentaWithCount
+  const group = data.group as Basonta
   const members = data.members
   const active = members.filter((m) => m.status === 'active').length
   const memberIds = members.map((m) => m.$id)
@@ -74,16 +71,16 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
       message: (
         <>
           The {members.length} member{members.length === 1 ? '' : 's'} in it are NOT deleted —
-          they stop living anywhere until they are filed again, and anybody looking after them
-          is released. Attendance history is untouched.
+          they stop serving in this group and keep every other basonta they are in. Attendance
+          history is untouched.
         </>
       ),
-      confirmText: 'Delete bacenta',
+      confirmText: 'Delete basonta',
       tone: 'danger',
     })
     if (!ok) return
     await remove.mutateAsync({ id })
-    router.push('/bacentas')
+    router.push('/basontas')
   }
 
   return (
@@ -91,23 +88,16 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
       <PageHeader
         back={
           isAdmin
-            ? { href: '/bacentas', label: 'All bacentas' }
+            ? { href: '/basontas', label: 'All basontas' }
             : { href: '/my-groups', label: 'My groups' }
         }
         title={group.name}
-        subtitle={
-          group.description ??
-          (group.constituency_name
-            ? `A bacenta in ${group.constituency_name}.`
-            : 'A bacenta — a place inside a constituency.')
-        }
+        subtitle={group.description ?? 'A basonta — a work group members serve in.'}
         actions={
           isAdmin && (
-            <>
-              <Button plain onClick={handleDelete} disabled={remove.isPending}>
-                Delete
-              </Button>
-            </>
+            <Button plain onClick={handleDelete} disabled={remove.isPending}>
+              Delete
+            </Button>
           )
         }
       />
@@ -115,14 +105,6 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
       <div className="mb-8 grid gap-4 sm:grid-cols-3">
         <StatCard label="Members" value={members.length} />
         <StatCard label="Active" value={active} />
-        <StatCard
-          label="Constituency"
-          value={
-            group.constituency_name ?? (
-              <span className="text-base text-neutral-400">Not filed yet</span>
-            )
-          }
-        />
         <StatCard
           label="Head"
           value={
@@ -133,7 +115,7 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
 
       {isAdmin && (
         <HeadCard
-          kind="bacenta"
+          kind="basonta"
           groupName={group.name}
           headUserId={group.head_user_id}
           headName={group.head_name}
@@ -152,34 +134,12 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
           onChange={setTab}
           tabs={[
             { value: 'members', label: `Members (${members.length})` },
-            { value: 'care', label: 'Who looks after whom' },
             { value: 'assign', label: 'Assign members' },
           ]}
         />
       )}
 
-      {tab === 'care' && isAdmin ? (
-        <Card>
-          <h2 className="mb-1 text-base font-semibold text-neutral-950 dark:text-white">
-            Who looks after whom
-          </h2>
-          <p className="mb-5 text-sm text-neutral-500 dark:text-neutral-400">
-            Put members under other members so somebody is checking on everyone. The person
-            looking after them does not need an account — this is a record, not a login.
-          </p>
-          <CareAssigner
-            members={data.care ?? []}
-            busy={updateMember.isPending}
-            onAssign={async (memberId, carerId) => {
-              const res = await updateMember.mutateAsync({
-                id: memberId,
-                care_of_member_id: carerId,
-              })
-              if (!res.ok) throw new Error(res.error)
-            }}
-          />
-        </Card>
-      ) : tab === 'members' || !isAdmin ? (
+      {tab === 'members' || !isAdmin ? (
         <Card padded={false}>
           <GroupRosterTable
             members={members}
@@ -194,21 +154,20 @@ export default function BacentaPage({ params }: { params: Promise<{ id: string }
             Add members to {group.name}
           </h2>
           <p className="mb-5 text-sm text-neutral-500 dark:text-neutral-400">
-            Tick everyone who lives here. A member belongs to exactly ONE bacenta, so adding
-            somebody MOVES them out of whichever one they were in — and clears whoever was
-            looking after them there, because a care link belongs to a place.
+            Tick everyone who serves here. Adding somebody to this basonta does not take them out
+            of any other — a chorister can run the sound desk too.
           </p>
           <GroupMemberAssigner
-            kind="bacenta"
+            kind="basonta"
             groupName={group.name}
             currentMemberIds={memberIds}
             busy={assign.isPending}
             onAssign={async (ids) => {
-              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'assign' })
+              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'add' })
               if (!res.ok) throw new Error(res.error)
             }}
             onRemove={async (ids) => {
-              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'unassign' })
+              const res = await assign.mutateAsync({ id, member_ids: ids, mode: 'remove' })
               if (!res.ok) throw new Error(res.error)
             }}
           />

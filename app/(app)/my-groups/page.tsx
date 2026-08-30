@@ -2,11 +2,11 @@
 
 // A head's home.
 //
-// The switch between "Constituencies" and "Bacentas" is the whole point of the
-// single `leader` label: the same person often heads both, and asking them to
-// keep two logins to see the two halves of their own work is what this page
-// exists to avoid. Someone who heads only one kind never sees the switch —
-// there is nothing to switch to, and an inert tab is just noise.
+// The switch between "Constituencies", "Bacentas" and "Basontas" is the whole
+// point of the single `leader` label: the same person often heads more than
+// one, and asking them to keep separate logins to see the parts of their own
+// work is what this page exists to avoid. Someone who heads only one kind never
+// sees the switch — there is nothing to switch to, and an inert tab is noise.
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
@@ -32,19 +32,24 @@ export default function MyGroupsPage() {
 
   const constituencies = data?.ok ? data.constituencies : []
   const bacentas = data?.ok ? data.bacentas : []
+  const basontas = data?.ok ? data.basontas : []
 
-  const hasBoth = constituencies.length > 0 && bacentas.length > 0
-  // Default to whichever they actually have, so a head of one bacenta lands on
-  // their bacenta rather than on an empty constituencies tab.
-  const active: GroupKind = kind ?? (constituencies.length > 0 ? 'constituency' : 'bacenta')
+  // Two or more populated kinds is what earns the switch.
+  const kindsHeld = [constituencies.length, bacentas.length, basontas.length].filter(
+    (n) => n > 0,
+  ).length
+  const hasSeveral = kindsHeld > 1
+  // Default to whichever they actually have, so a head of one basonta lands on
+  // their basonta rather than on an empty constituencies tab.
+  const active: GroupKind =
+    kind ??
+    (constituencies.length > 0 ? 'constituency' : bacentas.length > 0 ? 'bacenta' : 'basonta')
 
-  const totalMembers = useMemo(
-    () =>
-      active === 'constituency'
-        ? constituencies.reduce((n, c) => n + c.member_count, 0)
-        : bacentas.reduce((n, b) => n + b.member_count, 0),
-    [active, constituencies, bacentas],
-  )
+  const totalMembers = useMemo(() => {
+    const list =
+      active === 'constituency' ? constituencies : active === 'bacenta' ? bacentas : basontas
+    return list.reduce((n, g) => n + g.member_count, 0)
+  }, [active, constituencies, bacentas, basontas])
 
   // A shepherd gets the same whole-church list an admin does — the API already
   // serves them everything, so the heading and the footer must agree with it.
@@ -60,7 +65,7 @@ export default function MyGroupsPage() {
     )
   }
 
-  if (constituencies.length === 0 && bacentas.length === 0) {
+  if (constituencies.length === 0 && bacentas.length === 0 && basontas.length === 0) {
     return (
       <PageWrap>
         <PageHeader title="My groups" />
@@ -73,7 +78,7 @@ export default function MyGroupsPage() {
         <EmptyState
           icon={UserGroupIcon}
           title="Nothing assigned to you yet"
-          message="You are signed in, but no constituency or bacenta names you as its head. Ask an administrator to appoint you, then reload this page."
+          message="You are signed in, but no constituency, bacenta or basonta names you as its head. Ask an administrator to appoint you, then reload this page."
         />
       </PageWrap>
     )
@@ -85,27 +90,48 @@ export default function MyGroupsPage() {
         title={isAdmin ? 'All groups' : 'My groups'}
         subtitle={
           isAdmin
-            ? 'Every constituency and bacenta in the church.'
+            ? 'Every constituency, bacenta and basonta in the church.'
             : 'The groups you are responsible for.'
         }
       />
 
-      {hasBoth && (
+      {hasSeveral && (
         <TabBar
           className="mb-6"
           value={active}
           onChange={setKind}
+          // Only the kinds they actually head. An inert "Basontas (0)" tab is
+          // an invitation to click on nothing.
           tabs={[
-            { value: 'constituency', label: `Constituencies (${constituencies.length})` },
-            { value: 'bacenta', label: `Bacentas (${bacentas.length})` },
+            ...(constituencies.length > 0
+              ? [{ value: 'constituency' as const, label: `Constituencies (${constituencies.length})` }]
+              : []),
+            ...(bacentas.length > 0
+              ? [{ value: 'bacenta' as const, label: `Bacentas (${bacentas.length})` }]
+              : []),
+            ...(basontas.length > 0
+              ? [{ value: 'basonta' as const, label: `Basontas (${basontas.length})` }]
+              : []),
           ]}
         />
       )}
 
       <div className="mb-8 grid gap-4 sm:grid-cols-2">
         <StatCard
-          label={active === 'constituency' ? 'Constituencies you head' : 'Bacentas you head'}
-          value={active === 'constituency' ? constituencies.length : bacentas.length}
+          label={
+            active === 'constituency'
+              ? 'Constituencies you head'
+              : active === 'bacenta'
+                ? 'Bacentas you head'
+                : 'Basontas you head'
+          }
+          value={
+            active === 'constituency'
+              ? constituencies.length
+              : active === 'bacenta'
+                ? bacentas.length
+                : basontas.length
+          }
         />
         <StatCard label="Members in them" value={totalMembers} />
       </div>
@@ -122,17 +148,29 @@ export default function MyGroupsPage() {
                 icon="constituency"
               />
             ))
-          : bacentas.map((b) => (
-              <GroupTile
-                key={b.$id}
-                href={`/bacentas/${b.$id}`}
-                name={b.name}
-                description={b.description}
-                count={b.member_count}
-                subtitle={b.category_name}
-                icon="bacenta"
-              />
-            ))}
+          : active === 'bacenta'
+            ? bacentas.map((b) => (
+                <GroupTile
+                  key={b.$id}
+                  href={`/bacentas/${b.$id}`}
+                  name={b.name}
+                  description={b.description}
+                  count={b.member_count}
+                  subtitle={b.constituency_name}
+                  icon="bacenta"
+                />
+              ))
+            : basontas.map((b) => (
+                <GroupTile
+                  key={b.$id}
+                  href={`/basontas/${b.$id}`}
+                  name={b.name}
+                  description={b.description}
+                  count={b.member_count}
+                  subtitle={b.category_name}
+                  icon="basonta"
+                />
+              ))}
       </div>
 
       {!isAdmin && (
@@ -159,7 +197,7 @@ function GroupTile({
   description: string | null
   subtitle?: string | null
   count: number
-  icon: 'constituency' | 'bacenta'
+  icon: GroupKind
 }) {
   const Icon = icon === 'constituency' ? MapPinIcon : UserGroupIcon
   return (
