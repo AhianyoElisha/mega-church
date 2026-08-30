@@ -142,6 +142,12 @@ export async function POST(request: NextRequest) {
     //                     already refuses a leader, so a head cannot even see
     //                     the wordings they would be choosing between. Null is
     //                     the standard message, never "send nothing".
+    //
+    // `benmp_partner` is deliberately NOT forced, and is written down here for
+    // the same reason as in `headEditScope`: an absent entry in this list is
+    // invisible, and the next reader cannot tell "considered" from "missed".
+    // It records something the MEMBER said — that they partner with the
+    // campaign — and the head at the desk is who they said it to.
     fields.status = 'active'
     fields.sms_template_id = null
   }

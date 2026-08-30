@@ -209,6 +209,22 @@ export function validateMemberInput(
     out.status = 'active'
   }
 
+  // BENMP Partner. Written explicitly on every create — never allowed to
+  // acquire a default in the schema, because a defaulted boolean is one nobody
+  // answered, and this one decides who the church pays to text each month.
+  //
+  // Anything that is not a boolean is REFUSED rather than coerced: `"false"`
+  // arriving as a string from a hand-built request is truthy, and silently
+  // coercing it would enrol somebody who was being taken off the list.
+  if (body.benmp_partner !== undefined) {
+    if (typeof body.benmp_partner !== 'boolean') {
+      return { ok: false, error: 'benmp_partner must be true or false.' }
+    }
+    out.benmp_partner = body.benmp_partner
+  } else if (need) {
+    out.benmp_partner = false
+  }
+
   return { ok: true, value: out }
 }
 
@@ -346,6 +362,10 @@ async function createMemberWithNumber(
     bacenta_id: fields.bacenta_id ?? null,
     care_of_member_id: fields.care_of_member_id ?? null,
     sms_template_id: fields.sms_template_id ?? null,
+    // `?? false` and not `|| false`: both give false here, but `??` says the
+    // intent — a create that omitted the key means "not a partner", and
+    // `validateMemberInput` has already supplied it anyway.
+    benmp_partner: fields.benmp_partner ?? false,
     created_by: createdBy,
   })
   return memberDocToMember(doc as Models.Document & Record<string, unknown>)

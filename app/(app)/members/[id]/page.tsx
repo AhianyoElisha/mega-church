@@ -143,6 +143,15 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 )}
               </DescriptionDetails>
 
+              <DescriptionTerm>BENMP Partner</DescriptionTerm>
+              <DescriptionDetails>
+                {member.benmp_partner ? (
+                  <Badge color="yellow">Partner</Badge>
+                ) : (
+                  <span className="text-neutral-400">No</span>
+                )}
+              </DescriptionDetails>
+
               <DescriptionTerm>Call number</DescriptionTerm>
               <DescriptionDetails className="tabular-nums">{member.call_number}</DescriptionDetails>
 

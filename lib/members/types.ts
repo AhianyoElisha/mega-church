@@ -60,6 +60,17 @@ export type Member = {
    */
   care_of_member_id: string | null
   status: MemberStatus
+  /**
+   * A BENMP Partner — contributes monthly to the Global Healing Jesus Campaign
+   * and receives a renewal reminder.
+   *
+   * Never null in practice: the backfill wrote `false` onto every existing row
+   * and every writer supplies it. It is read as `=== true` regardless, so a row
+   * written before the backfill reads as "not a partner" rather than as one —
+   * the safe direction, because the other one texts somebody at the church's
+   * expense about a commitment they never made.
+   */
+  benmp_partner: boolean
   created_by: string | null
   /**
    * Which birthday SMS THIS member gets, overriding the category default.
@@ -124,6 +135,8 @@ export type MemberInput = {
    *  leaves it alone, exactly as `basonta_ids` does. */
   sms_template_id?: string | null
   status?: MemberStatus
+  /** Omitting the key leaves it alone, as with `bacenta_ids`. */
+  benmp_partner?: boolean
 }
 
 /** Enrolment progress, joined onto a member for the registry list. */

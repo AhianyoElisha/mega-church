@@ -373,6 +373,22 @@ async function setupMembers() {
    * more than the church will use, and free.
    */
   await ensureStringAttribute(COLLECTIONS.members, 'member_no', 16, false)
+  /**
+   * BENMP Partner — a member who contributes monthly to the Global Healing
+   * Jesus Campaign and gets a renewal reminder.
+   *
+   * OPTIONAL for the same reason as `member_no`: Appwrite cannot add a
+   * `required` attribute to a populated collection without a default, and
+   * required-and-defaulted is refused outright. `scripts/backfill-benmp.ts`
+   * writes `false` onto every existing row, and every writer supplies the value
+   * explicitly from then on — the same handling `meetings.restricted` gets, and
+   * for the same reason: a DEFAULTED boolean is one nobody has actually
+   * answered, and here it decides who the church pays to text.
+   *
+   * Read as `benmp_partner === true` everywhere, so a null on a row written
+   * before the backfill reads as "not a partner" rather than as a partner.
+   */
+  await ensureBooleanAttribute(COLLECTIONS.members, 'benmp_partner', false)
   // Where the member LIVES. Optional at the schema level because the four
   // constituencies did not exist when the congregation was first registered,
   // and a required attribute would have made every existing row unwritable.
@@ -442,6 +458,9 @@ async function setupMembers() {
    * lets the attribute exist before the backfill has run.
    */
   await ensureIndex(COLLECTIONS.members, 'member_no_unique', 'unique', ['member_no'])
+  // "Who are the partners?" is the monthly reminder list, and it is the only
+  // query this field is ever asked.
+  await ensureIndex(COLLECTIONS.members, 'by_benmp', 'key', ['benmp_partner'])
 }
 
 async function setupConstituencies() {

@@ -16,6 +16,7 @@ function member(id: string, last: string, constituencyId: string | null = null):
   return {
     $id: id,
     member_no: null,
+    benmp_partner: false,
     first_name: 'Test',
     last_name: last,
     other_names: null,

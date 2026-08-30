@@ -369,6 +369,24 @@ export function headEditScope(
       error: 'Only an administrator can change which birthday message a member is sent.',
     }
   }
+  /*
+   * `benmp_partner` is deliberately NOT refused, and the decision is written
+   * down because an absent refusal is invisible — the next person to read this
+   * list cannot tell "considered and allowed" from "never thought about".
+   *
+   * It reads like `sms_template_id`, which IS refused, in that both end in the
+   * church spending money on a text. The difference is what the field records.
+   * `sms_template_id` chooses the church's WORDING and is the church's to pick.
+   * `benmp_partner` records a FACT about the member — they signed up to the
+   * campaign — and the head at the desk is the person the member told. Routing
+   * that through an administrator is how a phone number stays wrong, which is
+   * the exact reasoning that let heads correct details in the first place
+   * (PRD §5.2).
+   *
+   * Revisit if the monthly reminder is ever automated AND a head turns out to
+   * be enrolling people who did not sign up. The failure would be visible in
+   * `sms_messages`, which is a log with a `sent_by` on every row.
+   */
   if ('constituency_id' in fields) {
     if (fields.constituency_id !== member.constituency_id) {
       return {
