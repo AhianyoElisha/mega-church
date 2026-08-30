@@ -194,12 +194,13 @@ Needs people, hardware or a decision — not more code:
    jobs" in `README.md`. `CRON_SECRET` is **set in the Vercel project and
    confirmed working** — five consecutive days of scheduled runs authenticated
    with it. See "`CRON_SECRET` is set — confirmed from the outside" below.
-2. **Push on real phones.** ⚠️ Half done, and the half that is missing is the
-   iPhone. Two devices are subscribed and an **Android phone is receiving real
-   pushes from the scheduled run** — `last_success_at` stamped by the cron
-   itself. The **iPhone has never had a successful delivery**: it errors with
-   something other than a 404/410, so it is counted as `failed` and the
-   subscription is deliberately kept rather than pruned. See below.
+2. **Push on real phones.** ⚠️ Both platforms now deliver — Android from the
+   scheduled run, and the iPhone as of 2026-08-27, whose `last_success_at` had
+   been `null` since the day it subscribed. The cause was the `VAPID_SUBJECT`
+   placeholder, which Apple refuses and FCM ignores; see "The iPhone had never
+   received a push" below. **What is left is one deploy step:
+   `VAPID_SUBJECT` must be set in the Vercel project**, because the default it
+   used to fall back on is deliberately gone.
 3. ~~**The rest of the head accounts.**~~ ✅ Done — four `leader` accounts
    (`alos`, `tsalack`, `anagkazo`, `anadeia`) exist as of 2026-08-22, and heads
    are now created in-app rather than in the console (Plan 3). **`.env.local`
@@ -1366,3 +1367,94 @@ it is the last thing standing between item 2 and done.
 401 means a secret is set; 403 means it has been removed. The runs themselves
 read out of `notification_runs`, newest first — and a morning with no row is
 only evidence after 09:00 UTC, because of the flexible window.
+
+## The iPhone had never received a push, and the default was why — 2026-08-27
+
+Found by the `CRON_SECRET` confirmation above: two devices subscribed, the
+Android one stamped `last_success_at` by the cron itself, the iPhone `null`
+since the day it subscribed. It was the `failed=1` on that morning's run.
+
+### One variable, isolated
+
+Reproduced against the church's real Apple endpoint, then narrowed. Same key
+pair, same `ES256` header, same 12-hour `exp` (Apple caps at 24), same `aud`,
+same encrypted payload, same device — the `sub` claim was the only thing that
+moved:
+
+| VAPID `sub` | Apple | FCM |
+|---|---|---|
+| `mailto:admin@megachurch.local` (what was deployed) | **403 BadJwtToken** | 201 |
+| `https://mega-church.vercel.app` | **201** | — |
+| `mailto:admin@mega-church.vercel.app` | **201** | — |
+
+`mailto:` is not the problem and neither is the scheme. `.local` is reserved by
+RFC 6762 and can never resolve to a mailbox, so it can never be what the `sub`
+claim is *for* — an address a push service contacts about a misbehaving sender
+(RFC 8292 §2.1). **Apple validates that. FCM ignores it entirely.**
+
+### Why it was invisible
+
+    lib/notifications/server.ts:57
+    const subject = process.env.VAPID_SUBJECT || 'mailto:admin@megachurch.local'
+
+The comment above it called the value a placeholder and said the church's real
+address belonged there — so it was known to be provisional and looked harmless,
+because the only devices anyone watched were Android and Android worked.
+
+It is the `MNOTIFY_SENDER_ID` rule exactly, one service over: a plausible
+default that one provider accepts and another silently rejects. And a `403` is
+not a `404`/`410`, so `sendPush` correctly declines to prune — the iPhone stayed
+on the list looking like a live device, which it was. Nothing anywhere was
+wrong except the address, and nothing anywhere said so.
+
+### The hardening
+
+`vapidSubjectProblem()` in the new `lib/notifications/vapid.ts` — pure, 30 unit
+tests. It refuses anything that is not a `mailto:`/`https:` URI, and any host
+under a domain that cannot reach a person: `.local`, `.localhost`, `.test`,
+`.invalid`, `.example`, `.internal`, and the RFC 2606 documentation domains.
+It is careful about the false positive that would turn push off for an ordinary
+church: `local.church.org` is fine, because "local" is a label there and not the
+TLD.
+
+**The default is gone rather than corrected.** A default that half the devices
+reject is not safer than none — it is the same silent failure with nothing to
+report it. Absent or unusable now means push is off and says which variable and
+why, which is what `/api/push` already meant by "not configured on the server".
+`vapidPublicKey()` checks it too, so nobody can tap Enable, see it succeed, and
+join a list nothing is ever delivered from.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npx vitest run` **264 passed**, 4 skipped (was
+  234); `npm run build` compiled.
+- Through the **shipping send path**, not the pure function, against the real
+  iPhone subscription:
+
+| `VAPID_SUBJECT` | `vapidPublicKey()` | `sendToAll()` |
+|---|---|---|
+| `mailto:admin@megachurch.local` | `null` | refused, naming `.local` and the fix |
+| absent | `null` | refused, naming the variable |
+| `https://mega-church.vercel.app` | serves the key | **`sent: 1, failed: 0`** |
+
+- **The iPhone's `last_success_at` is stamped for the first time since it
+  subscribed** — `2026-08-27T07:44:15Z`, written by `sendToAll` itself.
+
+### Still to do — the deploy order matters
+
+**Set `VAPID_SUBJECT` in the Vercel project before deploying this**, to
+`https://mega-church.vercel.app` or a `mailto:` on the church's real domain when
+there is one. There is no longer a default, so a deploy that lands without it
+turns push off for *both* platforms — loudly, on the birthdays page, which is
+the intended behaviour but not a pleasant surprise. `.env.local` is already
+corrected for local development.
+
+Item 2 of "Not yet done" is then done on both platforms, and this is the first
+time that claim has been true.
+
+### The rule that came out of it
+
+In `CLAUDE.md`, beside the `MNOTIFY_SENDER_ID` one it rhymes with: **verify push
+on an Android and an iPhone, because each provider checks things the other does
+not.** One healthy platform is not evidence about the other, and here it was
+actively misleading for as long as it stood.
