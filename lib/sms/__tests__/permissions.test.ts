@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { canSendSmsCategory, sendableCategories } from '../permissions'
+import {
+  canManageTemplateCategory,
+  canSendSmsCategory,
+  sendableCategories,
+} from '../permissions'
 import { SMS_CATEGORIES } from '@/lib/appwrite/config'
 import type { UserLabel } from '@/lib/auth/types'
 
@@ -43,6 +47,62 @@ describe('canSendSmsCategory', () => {
     const invented = 'building-fund' as (typeof SMS_CATEGORIES)[number]
     expect(canSendSmsCategory('treasurer', invented).ok).toBe(false)
     expect(canSendSmsCategory('admin', invented).ok).toBe(false)
+  })
+})
+
+describe('canManageTemplateCategory', () => {
+  it('lets an admin write any category', () => {
+    for (const category of SMS_CATEGORIES) {
+      expect(canManageTemplateCategory('admin', category).ok).toBe(true)
+    }
+  })
+
+  it('lets a treasurer write a tithe template', () => {
+    // The point of the change: a treasurer who may send but not write has to
+    // ask an administrator to type the message for them.
+    expect(canManageTemplateCategory('treasurer', 'tithe').ok).toBe(true)
+  })
+
+  it('refuses a treasurer every other category, by name', () => {
+    for (const category of ['birthday', 'general'] as const) {
+      const res = canManageTemplateCategory('treasurer', category)
+      expect(res.ok).toBe(false)
+      if (res.ok) return
+      expect(res.status).toBe(403)
+      expect(res.error).toContain(category)
+      expect(res.error).toContain('tithe')
+    }
+  })
+
+  it('refuses every label with no authority at all', () => {
+    const others: UserLabel[] = ['usher', 'kiosk', 'leader', 'celebrations', 'shepherd']
+    for (const label of others) {
+      for (const category of SMS_CATEGORIES) {
+        expect(canManageTemplateCategory(label, category).ok).toBe(false)
+      }
+    }
+  })
+
+  it('agrees with canSendSmsCategory for every label and category', () => {
+    // Authority over a category means both sending it and authoring it, and
+    // both read one map. If these two ever disagree, somebody has split the
+    // map without deciding they meant to.
+    const labels: UserLabel[] = [
+      'admin',
+      'usher',
+      'kiosk',
+      'leader',
+      'celebrations',
+      'shepherd',
+      'treasurer',
+    ]
+    for (const label of labels) {
+      for (const category of SMS_CATEGORIES) {
+        expect(canManageTemplateCategory(label, category).ok).toBe(
+          canSendSmsCategory(label, category).ok,
+        )
+      }
+    }
   })
 })
 
