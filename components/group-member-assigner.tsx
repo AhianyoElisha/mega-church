@@ -22,6 +22,7 @@ import { Banner, LoadingRow } from '@/components/ui'
 import { useMembers } from '@/lib/queries/members'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { fullName, initials } from '@/lib/members/types'
+import { matchesMemberSearch } from '@/lib/members/search'
 import { useConstituencies } from '@/lib/queries/groups'
 import type { GroupKind } from '@/lib/groups/types'
 
@@ -58,11 +59,8 @@ export default function GroupMemberAssigner({
 
   const visible = useMemo(() => {
     let list = all
-    const q = search.trim().toLowerCase()
-    if (q) {
-      list = list.filter(
-        (m) => fullName(m).toLowerCase().includes(q) || m.call_number.includes(q),
-      )
+    if (search.trim()) {
+      list = list.filter((m) => matchesMemberSearch(m, search, { phone: true }))
     }
     if (filterConstituency === '__none__') {
       list = list.filter((m) => !m.constituency_id)
@@ -130,7 +128,7 @@ export default function GroupMemberAssigner({
     <div>
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <Input
-          placeholder="Search name or number…"
+          placeholder="Search name, phone or member no…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />

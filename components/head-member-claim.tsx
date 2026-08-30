@@ -22,6 +22,7 @@ import { Banner, EmptyState, LoadingRow } from '@/components/ui'
 import { useUnassignedMembers } from '@/lib/queries/groups'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { fullName, initials, birthdayLabel } from '@/lib/members/types'
+import { matchesMemberSearch } from '@/lib/members/search'
 
 export default function HeadMemberClaim({
   constituencyId,
@@ -45,11 +46,8 @@ export default function HeadMemberClaim({
   const all = useMemo(() => (data?.ok ? data.members : []), [data])
 
   const visible = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return all
-    return all.filter(
-      (m) => fullName(m).toLowerCase().includes(q) || m.call_number.includes(q),
-    )
+    if (!search.trim()) return all
+    return all.filter((m) => matchesMemberSearch(m, search, { phone: true }))
   }, [all, search])
 
   const toggle = (id: string) =>
@@ -98,7 +96,7 @@ export default function HeadMemberClaim({
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Input
-          placeholder="Search by name or number"
+          placeholder="Search by name, phone or member no"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-64"
