@@ -60,7 +60,10 @@ export default function HeadMemberPage({ params }: { params: Promise<{ id: strin
   }
 
   const member = data.member
-  const bacentas = myGroups.data?.ok ? myGroups.data.bacentas : []
+  // The head's tick-list is their BASONTAS — the serving groups. A bacenta is
+  // a place and is one per member, set by an administrator, so it is not a
+  // list to tick here at all.
+  const basontas = myGroups.data?.ok ? myGroups.data.basontas : []
 
   const handleSubmit = async (values: MemberFormValues) => {
     setSaveError(null)
@@ -105,7 +108,7 @@ export default function HeadMemberPage({ params }: { params: Promise<{ id: strin
       <Card>
         <MemberForm
           initial={member}
-          initialBacentaIds={data.bacenta_ids ?? []}
+          initialBasontaIds={data.basonta_ids ?? []}
           restrict={{
             constituency: {
               // '' when they belong to no constituency — a bacenta head's
@@ -115,7 +118,7 @@ export default function HeadMemberPage({ params }: { params: Promise<{ id: strin
               id: member.constituency_id ?? '',
               name: data.constituency_name ?? 'Not recorded',
             },
-            bacentas,
+            basontas,
           }}
           submitLabel="Save changes"
           submitting={update.isPending}

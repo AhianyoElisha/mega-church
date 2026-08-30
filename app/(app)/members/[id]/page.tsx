@@ -14,7 +14,7 @@ import MemberPhotoUpload from '@/components/member-photo-upload'
 import FingerEnrolment from '@/components/finger-enrolment'
 import { useDeleteMember, useMember, useUpdateMember } from '@/lib/queries/members'
 import { useMemberHistory } from '@/lib/queries/attendance'
-import { useBacentas, useConstituencies } from '@/lib/queries/groups'
+import { useBasontas, useConstituencies } from '@/lib/queries/groups'
 import { birthdayLabel, fullName, initials } from '@/lib/members/types'
 
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -27,7 +27,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   const { data, isLoading } = useMember(id)
   const constituencies = useConstituencies()
-  const bacentaQuery = useBacentas()
+  const basontaQuery = useBasontas()
   const history = useMemberHistory(id)
   const update = useUpdateMember()
   const remove = useDeleteMember()
@@ -59,7 +59,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   const member = data.member
   const name = fullName(member)
-  const bacentaIds = data.bacenta_ids ?? []
+  const basontaIds = data.basonta_ids ?? []
 
   // Resolved from the group lists rather than stored on the member: a renamed
   // constituency has to read correctly here without a migration.
@@ -68,8 +68,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       ? (constituencies.data.constituencies.find((c) => c.$id === member.constituency_id)?.name ??
         null)
       : null
-  const memberBacentas = bacentaQuery.data?.ok
-    ? bacentaQuery.data.bacentas.filter((b) => bacentaIds.includes(b.$id))
+  const memberBasontas = basontaQuery.data?.ok
+    ? basontaQuery.data.basontas.filter((b) => basontaIds.includes(b.$id))
     : []
 
   const handleSave = async (values: MemberFormValues) => {
@@ -163,11 +163,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
               <DescriptionTerm>Bacentas</DescriptionTerm>
               <DescriptionDetails>
-                {memberBacentas.length === 0 ? (
+                {memberBasontas.length === 0 ? (
                   <span className="text-neutral-400">None</span>
                 ) : (
                   <span className="flex flex-wrap gap-1.5 wrap-anywhere">
-                    {memberBacentas.map((b) => (
+                    {memberBasontas.map((b) => (
                       <Badge key={b.$id} color="yellow">
                         {b.category_name ? `${b.category_name} · ${b.name}` : b.name}
                       </Badge>
@@ -191,7 +191,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               </h2>
               <MemberForm
                 initial={member}
-                initialBacentaIds={bacentaIds}
+                initialBasontaIds={basontaIds}
                 submitLabel="Save changes"
                 submitting={update.isPending}
                 error={error}

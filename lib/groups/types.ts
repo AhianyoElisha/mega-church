@@ -32,14 +32,27 @@ export type BacentaCategory = {
   $createdAt: string
 }
 
+/**
+ * A PLACE members live in — Anloga, Susuankyi, Oforikrom — sitting inside
+ * exactly one constituency.
+ *
+ * This is not what `Bacenta` meant before the split. It used to hold the
+ * serving groups too (choir, technical team), which are now `Basonta`. The one
+ * collection doing both jobs is what made the church's own vocabulary unusable
+ * in its own system.
+ */
 export type Bacenta = {
   $id: string
   name: string
   /**
-   * `null` is the STANDALONE bacenta — "Technical Team", which has members
-   * directly under it rather than sibling groups. It is not a missing value.
+   * The constituency this place is part of.
+   *
+   * Null only until the migration has filled it in — a bacenta with no
+   * constituency is shown under "Not filed yet" rather than hidden, for the
+   * same reason an orphaned basonta is shown: a group full of real people must
+   * never silently vanish from every screen.
    */
-  category_id: string | null
+  constituency_id: string | null
   description: string | null
   head_user_id: string | null
   head_name: string | null
@@ -85,8 +98,8 @@ export type Basonta = {
 export type ConstituencyWithCount = Constituency & { member_count: number }
 export type BacentaWithCount = Bacenta & {
   member_count: number
-  /** Resolved from `category_id`; null for a standalone bacenta. */
-  category_name: string | null
+  /** Resolved from `constituency_id`; null when not filed yet. */
+  constituency_name: string | null
 }
 
 export type BasontaWithCount = Basonta & {
@@ -104,15 +117,16 @@ export type BasontaTree = {
 }
 
 /**
- * The shape the bacentas page renders: categories holding their bacentas, then
- * the standalone ones, then — deliberately visible rather than dropped —
- * anything pointing at a category that no longer exists.
+ * The bacentas page: each constituency with the places inside it, then any
+ * bacenta not yet filed into one.
+ *
+ * `unfiled` is shown, never hidden — a bacenta with real members in it that
+ * quietly disappeared from every screen is the failure the old `orphans` bucket
+ * existed to prevent, and it is the same failure here.
  */
 export type BacentaTree = {
-  categories: { category: BacentaCategory; bacentas: BacentaWithCount[] }[]
-  standalone: BacentaWithCount[]
-  /** Bacentas whose `category_id` matches no category. Should be empty. */
-  orphans: BacentaWithCount[]
+  constituencies: { constituency: Constituency; bacentas: BacentaWithCount[] }[]
+  unfiled: BacentaWithCount[]
 }
 
 // --- inputs -----------------------------------------------------------------
@@ -130,8 +144,8 @@ export type BacentaCategoryInput = {
 
 export type BacentaInput = {
   name: string
-  /** Omit or pass null to create a standalone bacenta. */
-  category_id?: string | null
+  /** Which constituency this place belongs to. */
+  constituency_id?: string | null
   description?: string | null
   head_user_id?: string | null
 }
@@ -192,7 +206,7 @@ export type ConstituencyResponse =
   | { ok: false; error: string }
 
 export type ListBacentasResponse =
-  | { ok: true; categories: BacentaCategory[]; bacentas: BacentaWithCount[] }
+  | { ok: true; constituencies: Constituency[]; bacentas: BacentaWithCount[] }
   | { ok: false; error: string }
 
 export type BacentaResponse = { ok: true; bacenta: Bacenta } | { ok: false; error: string }
@@ -238,6 +252,11 @@ export type GroupDetailResponse =
       kind: GroupKind
       group: Constituency | Bacenta | Basonta
       members: GroupMember[]
+      /**
+       * Who looks after whom. Present for a BACENTA only — care is scoped to a
+       * place, and a constituency or basonta has no such structure.
+       */
+      care?: import('./care').CareCandidate[]
     }
   | { ok: false; error: string }
 

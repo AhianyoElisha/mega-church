@@ -4,7 +4,7 @@ import {
   bacentaNameTaken,
   createBacenta,
   listBacentasWithCounts,
-  listCategories,
+  listConstituencies,
   validateGroupName,
 } from '@/lib/groups/server'
 import { resolveHead } from '@/lib/groups/heads'
@@ -22,12 +22,12 @@ export async function GET() {
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()
-  const [categories, bacentas] = await Promise.all([
-    listCategories(databases),
+  const [constituencies, bacentas] = await Promise.all([
+    listConstituencies(databases),
     listBacentasWithCounts(databases),
   ])
   return NextResponse.json<ListBacentasResponse>(
-    { ok: true, categories, bacentas },
+    { ok: true, constituencies, bacentas },
     { headers: { 'Cache-Control': 'private, no-store' } },
   )
 }
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
 
   let body: {
     name?: unknown
-    category_id?: unknown
+    constituency_id?: unknown
     description?: unknown
     head_user_id?: unknown
   }
@@ -59,12 +59,14 @@ export async function POST(request: NextRequest) {
 
   const { databases, users } = createAdminClient()
 
-  const categoryId =
-    typeof body.category_id === 'string' && body.category_id ? body.category_id : null
-  if (categoryId) {
-    const categories = await listCategories(databases)
-    if (!categories.some((c) => c.$id === categoryId)) {
-      return bad('That category no longer exists. Reload and pick another.')
+  const constituencyId =
+    typeof body.constituency_id === 'string' && body.constituency_id
+      ? body.constituency_id
+      : null
+  if (constituencyId) {
+    const constituencies = await listConstituencies(databases)
+    if (!constituencies.some((c) => c.$id === constituencyId)) {
+      return bad('That constituency no longer exists. Reload and pick another.')
     }
   }
 
@@ -74,11 +76,13 @@ export async function POST(request: NextRequest) {
   // Uniqueness is per-category, not global: "Youth" under Choir and "Youth"
   // under Ushers are two real, different groups, and a global unique index
   // would refuse the second one.
-  if (await bacentaNameTaken(databases, shape.value, categoryId)) {
+  // Unique WITHIN a constituency: two constituencies may each have a place the
+  // congregation calls "Central", and both are real.
+  if (await bacentaNameTaken(databases, shape.value, constituencyId)) {
     return bad(
-      categoryId
-        ? `There is already a "${shape.value}" in that category.`
-        : `There is already a bacenta called "${shape.value}".`,
+      constituencyId
+        ? `There is already a "${shape.value}" in that constituency.`
+        : `There is already a bacenta called "${shape.value}" with no constituency.`,
     )
   }
 
@@ -92,7 +96,7 @@ export async function POST(request: NextRequest) {
     databases,
     {
       name: shape.value,
-      category_id: categoryId,
+      constituency_id: constituencyId,
       description,
       head_user_id: head.user?.id ?? null,
       head_name: head.user?.name ?? null,

@@ -156,7 +156,7 @@ export default function MyGroupsPage() {
                   name={b.name}
                   description={b.description}
                   count={b.member_count}
-                  subtitle={b.category_name}
+                  subtitle={b.constituency_name}
                   icon="bacenta"
                 />
               ))

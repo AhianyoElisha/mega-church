@@ -19,6 +19,7 @@ import 'server-only'
 import { ID, Query, type Databases, type Models } from 'node-appwrite'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 import { diffMembership, normaliseName, validateGroupName } from './tree'
+import type { CareCandidate } from './care'
 import { memberDocToMember } from '@/lib/attendance/server'
 import { fullName, type Member } from '@/lib/members/types'
 import type {
@@ -83,9 +84,10 @@ export function bacentaDocTo(d: Doc): Bacenta {
   return {
     $id: d.$id,
     name: String(d.name ?? ''),
-    // `?? null` and not `|| null`: both collapse the empty string, and empty
-    // string is how Appwrite hands back an unset optional. Standalone.
-    category_id: str(d.category_id),
+    // `str()` collapses Appwrite's `''` for an unset optional to null, so a
+    // bacenta that has not been filed into a constituency reads as null rather
+    // than as an id that matches nothing.
+    constituency_id: str(d.constituency_id),
     description: str(d.description),
     head_user_id: str(d.head_user_id),
     head_name: str(d.head_name),
@@ -366,7 +368,11 @@ export async function deleteCategory(
   return { ok: true }
 }
 
-// --- bacentas ---------------------------------------------------------------
+// --- bacentas: the PLACES ---------------------------------------------------
+//
+// Membership is `members.bacenta_id`, a FIELD, exactly like `constituency_id`
+// and for the same reason: a member lives in one place. Everything below is
+// therefore an update to member rows, never an insert into a join table.
 
 export async function listBacentas(databases: Databases): Promise<Bacenta[]> {
   const docs = await listAll(databases, COLLECTIONS.bacentas, [Query.orderAsc('sort_order')])
@@ -382,10 +388,10 @@ export async function getBacenta(databases: Databases, id: string): Promise<Bace
   }
 }
 
-/** Members per bacenta, in one pass over the join collection. */
+/** Members per bacenta, counted off the member rows themselves. */
 export async function bacentaCounts(databases: Databases): Promise<Map<string, number>> {
   const counts = new Map<string, number>()
-  const docs = await listAll(databases, COLLECTIONS.bacenta_members, [
+  const docs = await listAll(databases, COLLECTIONS.members, [
     Query.select(['$id', 'bacenta_id']),
   ])
   for (const d of docs) {
@@ -396,41 +402,41 @@ export async function bacentaCounts(databases: Databases): Promise<Map<string, n
 }
 
 export async function listBacentasWithCounts(databases: Databases): Promise<BacentaWithCount[]> {
-  const [rows, categories, counts] = await Promise.all([
+  const [rows, constituencies, counts] = await Promise.all([
     listBacentas(databases),
-    listCategories(databases),
+    listConstituencies(databases),
     bacentaCounts(databases),
   ])
-  const catNames = new Map(categories.map((c) => [c.$id, c.name]))
+  const names = new Map(constituencies.map((c) => [c.$id, c.name]))
   return rows.map((b) => ({
     ...b,
     member_count: counts.get(b.$id) ?? 0,
-    category_name: b.category_id ? (catNames.get(b.category_id) ?? null) : null,
+    constituency_name: b.constituency_id ? (names.get(b.constituency_id) ?? null) : null,
   }))
 }
 
 /**
- * Names must be unique WITHIN a category, not across the whole church.
+ * Names are unique WITHIN a constituency, not across the church.
  *
- * "Youth" under Choir and "Youth" under Ushers are two real, different groups.
- * A global unique index would refuse the second one, so uniqueness is checked
- * here where the category is known — and standalone bacentas (`category_id`
- * null) are checked against each other as their own bucket.
+ * The same reasoning that makes basonta names unique per category: two
+ * constituencies may each have a place the congregation calls "Central", and a
+ * global unique index would refuse the second one. Bacentas not yet filed into
+ * a constituency are checked against each other as their own bucket.
  */
 export async function bacentaNameTaken(
   databases: Databases,
   name: string,
-  categoryId: string | null,
+  constituencyId: string | null,
   exceptId?: string,
 ): Promise<boolean> {
   const siblings = await listAll(databases, COLLECTIONS.bacentas, [
-    Query.select(['$id', 'name', 'category_id']),
+    Query.select(['$id', 'name', 'constituency_id']),
   ])
   const key = normaliseName(name)
   return siblings.some(
     (d) =>
       d.$id !== exceptId &&
-      str(d.category_id) === categoryId &&
+      str(d.constituency_id) === constituencyId &&
       normaliseName(String(d.name ?? '')) === key,
   )
 }
@@ -439,7 +445,7 @@ export async function createBacenta(
   databases: Databases,
   input: {
     name: string
-    category_id?: string | null
+    constituency_id?: string | null
     description?: string | null
     head_user_id?: string | null
     head_name?: string | null
@@ -448,7 +454,7 @@ export async function createBacenta(
 ): Promise<Bacenta> {
   const doc = await databases.createDocument(DATABASE_ID, COLLECTIONS.bacentas, ID.unique(), {
     name: input.name,
-    category_id: input.category_id ?? null,
+    constituency_id: input.constituency_id ?? null,
     description: input.description ?? null,
     head_user_id: input.head_user_id ?? null,
     head_name: input.head_name ?? null,
@@ -467,195 +473,156 @@ export async function updateBacenta(
   return bacentaDocTo(doc as Doc)
 }
 
-/** Delete a bacenta and the join rows that put people in it. */
+/**
+ * Delete a bacenta, releasing everyone in it.
+ *
+ * Two clears, and the ORDER matters. Care links go first: they are scoped to a
+ * bacenta, so once the place is gone "X looks after Y" is a claim about a group
+ * that no longer exists. Clearing `bacenta_id` first would leave those links
+ * pointing into nothing with no way left to find them.
+ *
+ * The members themselves are untouched — they simply stop living anywhere,
+ * which is the same state as somebody never filed.
+ */
 export async function deleteBacentaCascade(
   databases: Databases,
   id: string,
-): Promise<{ removed: number }> {
-  let removed = 0
-  for (;;) {
-    const page = await databases.listDocuments(DATABASE_ID, COLLECTIONS.bacenta_members, [
-      Query.equal('bacenta_id', id),
-      Query.limit(PAGE),
-    ])
-    if (page.documents.length === 0) break
-    await Promise.all(
-      page.documents.map((d) =>
-        databases.deleteDocument(DATABASE_ID, COLLECTIONS.bacenta_members, d.$id),
-      ),
-    )
-    removed += page.documents.length
-    if (page.documents.length < PAGE) break
-  }
-  await databases.deleteDocument(DATABASE_ID, COLLECTIONS.bacentas, id)
-  return { removed }
-}
+): Promise<{ released: number }> {
+  const docs = await listAll(databases, COLLECTIONS.members, [
+    Query.select(['$id', 'bacenta_id', 'care_of_member_id']),
+    Query.equal('bacenta_id', id),
+  ])
+  const ids = docs.map((d) => d.$id)
 
-// --- bacenta membership (many-to-many) --------------------------------------
+  await Promise.all(
+    docs
+      .filter((d) => str(d.care_of_member_id))
+      .map((d) =>
+        databases.updateDocument(DATABASE_ID, COLLECTIONS.members, d.$id, {
+          care_of_member_id: null,
+        }),
+      ),
+  )
+  await Promise.all(
+    ids.map((memberId) =>
+      databases.updateDocument(DATABASE_ID, COLLECTIONS.members, memberId, {
+        bacenta_id: null,
+      }),
+    ),
+  )
+
+  await databases.deleteDocument(DATABASE_ID, COLLECTIONS.bacentas, id)
+  return { released: ids.length }
+}
 
 export async function bacentaMemberIds(databases: Databases, bacentaId: string): Promise<string[]> {
-  const docs = await listAll(databases, COLLECTIONS.bacenta_members, [
-    Query.select(['$id', 'member_id']),
+  const docs = await listAll(databases, COLLECTIONS.members, [
+    Query.select(['$id']),
     Query.equal('bacenta_id', bacentaId),
   ])
-  return docs.map((d) => String(d.member_id ?? '')).filter(Boolean)
-}
-
-/** Which bacentas one member is in — the member detail page and edit form. */
-export async function bacentaIdsForMember(
-  databases: Databases,
-  memberId: string,
-): Promise<string[]> {
-  const docs = await listAll(databases, COLLECTIONS.bacenta_members, [
-    Query.select(['$id', 'bacenta_id']),
-    Query.equal('member_id', memberId),
-  ])
-  return docs.map((d) => String(d.bacenta_id ?? '')).filter(Boolean)
+  return docs.map((d) => d.$id)
 }
 
 /**
- * Apply a membership change to a bacenta, expressed as a diff.
+ * Put members into a bacenta, or take them out.
  *
- * `set` is the destructive mode and is only sent by the "replace the whole
- * list" control. The group-select assigner sends `add`, because topping up an
- * existing bacenta is the common case and a `set` from a filtered view would
- * quietly remove everyone who happened not to be on screen.
+ * An update to member rows, not a join write — so "assign" MOVES somebody out
+ * of whichever bacenta they were in. That is the correct behaviour for a place
+ * and the wrong behaviour for a serving group, which is exactly why basontas
+ * kept the join. `assignConstituency` says the same thing one level up.
+ *
+ * A member leaving a bacenta has their carer cleared in the same pass. A care
+ * link is scoped to a bacenta, so carrying one across a move would leave
+ * somebody looked after by a person who is no longer in their group — the
+ * cross-bacenta state `careAssignmentProblem` refuses on the way in.
  */
-export async function applyBacentaMembership(
+export async function assignBacenta(
   databases: Databases,
   bacentaId: string,
-  memberIds: string[],
-  mode: MembershipMode,
-  addedBy: string,
-): Promise<MembershipResult> {
-  const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.bacenta_members, [
-    Query.equal('bacenta_id', bacentaId),
-    Query.limit(5000),
-  ])
-  const current = new Map<string, string>() // member_id -> doc $id
-  for (const d of existing.documents) {
-    const memberId = (d as Doc).member_id
-    if (typeof memberId === 'string' && memberId) current.set(memberId, d.$id)
-  }
+  opts: { mode: 'assign' | 'unassign'; memberIds: string[] },
+): Promise<number> {
+  const ids = [...new Set(opts.memberIds)]
+  if (ids.length === 0) return 0
+  const value = opts.mode === 'assign' ? bacentaId : null
 
-  const { toAdd, toRemove } = diffMembership(
-    [...current.keys()],
-    [...new Set(memberIds)],
-    mode,
-  )
-
-  if (toAdd.length > 0) {
-    // Bulk API — a 200-strong choir is one round trip, not 200 (CLAUDE.md).
-    await bulk(databases).createDocuments(
-      DATABASE_ID,
-      COLLECTIONS.bacenta_members,
-      toAdd.map((member_id) => ({
-        $id: ID.unique(),
-        bacenta_id: bacentaId,
-        member_id,
-        added_by: addedBy,
-      })),
-    )
-  }
-  if (toRemove.length > 0) {
-    await Promise.all(
-      toRemove
-        .map((memberId) => current.get(memberId))
-        .filter((docId): docId is string => !!docId)
-        .map((docId) =>
-          databases.deleteDocument(DATABASE_ID, COLLECTIONS.bacenta_members, docId),
+  const db = bulk(databases)
+  let touched = 0
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const chunk = ids.slice(i, i + ID_CHUNK)
+    if (typeof db.updateDocuments === 'function') {
+      await db.updateDocuments(
+        DATABASE_ID,
+        COLLECTIONS.members,
+        { bacenta_id: value, care_of_member_id: null },
+        [Query.equal('$id', chunk)],
+      )
+    } else {
+      await Promise.all(
+        chunk.map((memberId) =>
+          databases.updateDocument(DATABASE_ID, COLLECTIONS.members, memberId, {
+            bacenta_id: value,
+            care_of_member_id: null,
+          }),
         ),
-    )
+      )
+    }
+    touched += chunk.length
   }
 
-  return {
-    added: toAdd.length,
-    removed: toRemove.length,
-    total: current.size + toAdd.length - toRemove.length,
-  }
+  // Anybody left behind who was being looked after by one of the movers now
+  // points at somebody outside their bacenta. Released rather than left
+  // dangling — a stale carer is invisible on screen and wrong in the records.
+  await releaseCharges(databases, ids)
+  return touched
 }
 
 /**
- * Set one member's bacentas to exactly `bacentaIds` — the registration form and
- * the edit form, where the tick-boxes ARE the complete answer for that person.
+ * Clear `care_of_member_id` on everyone looked after by any of `carerIds`.
  *
- * The mirror image of `applyBacentaMembership`: same join collection, pivoted
- * on the member instead of the group.
+ * Appwrite has no cascade, so this is called by hand from every path that makes
+ * a carer unavailable: leaving a bacenta, being deleted, being marked inactive.
  */
-export async function setMemberBacentas(
+export async function releaseCharges(
   databases: Databases,
-  memberId: string,
-  bacentaIds: string[],
-  addedBy: string,
-): Promise<{ added: number; removed: number }> {
-  const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.bacenta_members, [
-    Query.equal('member_id', memberId),
-    Query.limit(500),
-  ])
-  const current = new Map<string, string>() // bacenta_id -> doc $id
-  for (const d of existing.documents) {
-    const bacentaId = (d as Doc).bacenta_id
-    if (typeof bacentaId === 'string' && bacentaId) current.set(bacentaId, d.$id)
-  }
-
-  const wanted = new Set(bacentaIds)
-  const toAdd = [...wanted].filter((id) => !current.has(id))
-  const toRemove = [...current.entries()].filter(([id]) => !wanted.has(id))
-
-  if (toAdd.length > 0) {
-    await bulk(databases).createDocuments(
-      DATABASE_ID,
-      COLLECTIONS.bacenta_members,
-      toAdd.map((bacenta_id) => ({
-        $id: ID.unique(),
-        bacenta_id,
-        member_id: memberId,
-        added_by: addedBy,
-      })),
-    )
-  }
-  if (toRemove.length > 0) {
-    await Promise.all(
-      toRemove.map(([, docId]) =>
-        databases.deleteDocument(DATABASE_ID, COLLECTIONS.bacenta_members, docId),
-      ),
-    )
-  }
-  return { added: toAdd.length, removed: toRemove.length }
-}
-
-/** Remove every bacenta row for a member — part of the member delete cascade. */
-export async function purgeMemberBacentas(
-  databases: Databases,
-  memberId: string,
+  carerIds: readonly string[],
 ): Promise<number> {
-  const docs = await listAll(databases, COLLECTIONS.bacenta_members, [
-    Query.select(['$id']),
-    Query.equal('member_id', memberId),
-  ])
+  if (carerIds.length === 0) return 0
+  const stale: string[] = []
+  for (let i = 0; i < carerIds.length; i += ID_CHUNK) {
+    const docs = await listAll(databases, COLLECTIONS.members, [
+      Query.select(['$id', 'care_of_member_id']),
+      Query.equal('care_of_member_id', carerIds.slice(i, i + ID_CHUNK)),
+    ])
+    stale.push(...docs.map((d) => d.$id))
+  }
   await Promise.all(
-    docs.map((d) => databases.deleteDocument(DATABASE_ID, COLLECTIONS.bacenta_members, d.$id)),
+    stale.map((memberId) =>
+      databases.updateDocument(DATABASE_ID, COLLECTIONS.members, memberId, {
+        care_of_member_id: null,
+      }),
+    ),
   )
-  return docs.length
+  return stale.length
 }
 
-/** bacenta_id -> member_id[], for joining a whole page of members at once. */
-export async function bacentaMembershipIndex(
+/** Every member of a bacenta, in the shape the care checks need. */
+export async function careCandidates(
   databases: Databases,
-): Promise<{ byBacenta: Map<string, string[]>; byMember: Map<string, string[]> }> {
-  const docs = await listAll(databases, COLLECTIONS.bacenta_members, [
-    Query.select(['$id', 'bacenta_id', 'member_id']),
+  bacentaId: string,
+): Promise<CareCandidate[]> {
+  const docs = await listAll(databases, COLLECTIONS.members, [
+    Query.equal('bacenta_id', bacentaId),
   ])
-  const byBacenta = new Map<string, string[]>()
-  const byMember = new Map<string, string[]>()
-  for (const d of docs) {
-    const b = str(d.bacenta_id)
-    const m = str(d.member_id)
-    if (!b || !m) continue
-    byBacenta.set(b, [...(byBacenta.get(b) ?? []), m])
-    byMember.set(m, [...(byMember.get(m) ?? []), b])
-  }
-  return { byBacenta, byMember }
+  return docs.map((d) => {
+    const m = memberDocToMember(d as never)
+    return {
+      $id: m.$id,
+      full_name: fullName(m),
+      status: m.status,
+      bacenta_id: m.bacenta_id,
+      care_of_member_id: m.care_of_member_id,
+    }
+  })
 }
 
 // --- basonta categories -----------------------------------------------------
