@@ -64,9 +64,13 @@ large type; body text is black. Never yellow text on white below 18pt.
   `meeting_members`, `attendance_records`, `constituencies`,
   `bacentas`, `basonta_categories`, `basontas`, `basonta_members`,
   `push_subscriptions`, `notification_runs`, `sms_templates`, `sms_messages`.
-  (`bacenta_categories` and `bacenta_members` are retired by
-  `scripts/migrate-basonta.ts` — a bacenta has a constituency, not a category,
-  and its membership is a field.)
+  `bacenta_members` is **emptied** by `scripts/migrate-basonta.ts` and nothing
+  reads it any more — a bacenta's membership is a field. `bacenta_categories`
+  still holds its one row ("Choir") and is likewise dead: a bacenta has a
+  constituency, not a category. Neither COLLECTION is dropped, because dropping
+  one is not something a migration should do behind an admin's back — deleting
+  them, and the `/api/bacenta-categories` routes that still serve them, is a
+  deliberate follow-up.
 - **BACENTA is a PLACE; BASONTA is a serving group.** The two were one
   collection once, and that is exactly why the church's own vocabulary was
   unusable in its own system. A bacenta is Anloga, Susuankyi, Oforikrom — part
