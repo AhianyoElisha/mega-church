@@ -1596,3 +1596,150 @@ And when reading it, the iPhone's `2026-08-27T07:44:15.540Z` is **not** the
 answer — that stamp came from the local manual `sendToAll` test during the fix,
 while production still held the placeholder. Proof is that timestamp advancing,
 on a run row that says `triggered_by=scheduler`.
+
+## Bacenta and Basonta, split — 2026-08-30
+
+`bacentas` was one collection doing two unrelated jobs, and the church could not
+use its own vocabulary in its own system as a result.
+
+| what was in there | what it actually is |
+|---|---|
+| Biazo, Living Waters, Fresh Oil (under Choir), Technical Team, Ushers, Media, Dancing Stars | **basontas** — groups people SERVE in |
+| Anloga, Susuankyi, Oforikrom, Bomso, Asokwa | **bacentas** — places people STAY, under a constituency |
+
+Five PRs: basonta (#33), member numbers (#34), BENMP (#35), treasurer (#36),
+bacenta repurposed (#37), and the migration.
+
+### The data answered the design question before the code was written
+
+The plan originally said "move all 12 to basonta and start bacenta empty". A
+probe of the live project said otherwise, and the split became 7/5:
+
+- **no member was in more than one location bacenta** — 0 of 28. That is what
+  made `members.bacenta_id` safe as a FIELD; a join would have been modelling a
+  state the church does not have.
+- all 28 were in **Alos Constituency**, unanimously, so the five places had an
+  obvious home.
+- 64 of 157 members have no constituency at all, which caps how much of the
+  congregation the new structure covers on day one.
+
+Asking the data first is what stopped this being a migration that lost the
+second half of somebody's memberships.
+
+### The asymmetry is the whole design
+
+| | shape | assigning |
+|---|---|---|
+| constituency | field | MOVES |
+| bacenta | field | MOVES |
+| basonta | join | ADDS, never removes |
+
+A join for a place would permit two homes; a field for a serving group would
+silently drop the second choir. `assignBacenta` and `applyBasontaMembership`
+look almost identical and mean opposite things — which is exactly why the church
+needed two words for them.
+
+### Members looking after members
+
+`members.care_of_member_id`, refused by a pure `careAssignmentProblem()`: not
+self, active only, same bacenta, and **no cycles**. Chains are fine (A under B
+under C); a cycle is not a shape anybody can be at the top of.
+
+The carer needs **no account**. Being named grants nothing, which is why this is
+a field on a member and not a role.
+
+The cycle walk keeps a `seen` set and it is load-bearing, not defensive: the
+stored data may already contain a loop, and without it the walk never terminates
+and the request HANGS rather than being refused. There is a test for exactly
+that, and it is the one worth keeping if the file is ever trimmed.
+
+### Three bugs the tests and types caught before they shipped
+
+1. **A Remove button that would have added people.** `useAssignBacenta` still
+   sent `add`/`remove` while the new route understood `assign`/`unassign` and
+   defaulted anything unrecognised to `assign`. Pressing Remove would have added
+   everybody named to the bacenta they were being taken out of. The route now
+   refuses an unknown mode by name.
+
+2. **A shorthand that fed every category the whole list.** `buildBasontaTree`
+   delegated to `buildBacentaTree` and returned `{ category, basontas }` — where
+   `basontas` resolved to the *function's own parameter*, not the destructured
+   list. It type-checks perfectly; both are the same type. Only asserting that
+   Choir contains exactly Biazo and Living Waters found it.
+
+3. **A reservation that raised the floor.** In the member-number allocator,
+   counting reserved numbers towards the maximum meant that with `2026005` held
+   and nothing issued, the church's FIRST member would have been handed
+   `2026006`.
+
+A fourth was caught by the type checker rather than a test: `Record<UserLabel,
+string>` on the login page's landing map refused to compile the moment
+`treasurer` existed, which is the only reason that map and `proxy.ts` still
+agree.
+
+### One self-inflicted scare worth recording
+
+The first splice of `lib/groups/server.ts` used `bacentaDocTo` as its start
+marker — which sits in the MAPPERS section near the top, not at the bacenta CRUD
+— and swallowed the constituency and category sections with it. 1132 lines
+became 827.
+
+Caught by diffing the export list against `HEAD` rather than by trusting that
+the edit had done what it said. Restored from git, redone against the section
+comments (`// --- bacentas ---` to `// --- basonta categories ---`). **Splice on
+section boundaries, not on the first occurrence of an identifier** — the same
+name appears in the mapper block and in the section it belongs to.
+
+### The migration — copied and verified, not yet finished
+
+`scripts/migrate-basonta.ts`, run with `--apply --copy-only` against the live
+project on 2026-08-30. Steps 1-4 of 7:
+
+    1  Choir            -> basonta_categories     copied
+    2  7 serving groups -> basontas               copied
+    3  38 memberships   -> basonta_members        copied
+    4  VERIFY                                     all rows resolve
+
+Confirmed independently of the script's own report, by reading Cloud back:
+
+| group | before | after |
+|---|---|---|
+| Biazo | 8 | 8 |
+| Living Waters | 6 | 6 |
+| Fresh Oil | 11 | 11 |
+| Technical Team | 3 | 3 |
+| Ushers | 3 | 3 |
+| Media | 2 | 2 |
+| Dancing Stars | 5 | 5 |
+
+Not just the counts — the same PEOPLE in the same groups, compared as
+(group, member) pairs. 3 categorised, 4 standalone, as expected.
+
+**The old data is untouched**: 12 bacentas, 66 `bacenta_members` rows, 0 members
+with a `bacenta_id`, 0 bacentas with a `constituency_id`. Re-running reports
+"already there" for every row and copies nothing.
+
+### What is left, and why it stopped here
+
+Steps 5-7 — file the five places into Alos, write `members.bacenta_id`, then
+delete the 7 copied groups and all 66 join rows. **Step 7 is the only
+destructive step in the whole project**, and it was left as a separate,
+deliberate decision rather than folded into the same command. `--copy-only`
+exists for exactly that.
+
+Until it runs, the app shows the 12 bacentas under "Not filed yet" and the 7
+basontas alongside them. Both halves of the data exist at once, which is
+untidy and completely safe.
+
+    npm run migrate:basonta -- --apply     # finishes 5, 6, 7
+
+Verification still gates the deletion: step 7 only runs against rows step 4 has
+already proven were copied.
+
+### Not verified
+
+No browser pass on any of the five PRs. The local Chrome profile is signed in to
+production, not to a dev server, and passwords are not something this account
+types — so `/basontas`, the rebuilt `/bacentas`, the care table, the BENMP tick
+box and the treasurer's refusal are type-checked, unit-tested and built, but
+have not been clicked. `npm run e2e` is the harness that would close it.

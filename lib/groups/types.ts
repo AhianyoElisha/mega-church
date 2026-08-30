@@ -7,8 +7,8 @@
 //   category     — a FAMILY of bacentas ("Choir" over Biazo / Living Waters).
 //                  Optional: "Technical Team" is a bacenta with no family.
 
-/** Which half of the app a leader is looking at. */
-export type GroupKind = 'constituency' | 'bacenta'
+/** Which part of the app a leader is looking at. */
+export type GroupKind = 'constituency' | 'bacenta' | 'basonta'
 
 export type Constituency = {
   $id: string
@@ -32,11 +32,57 @@ export type BacentaCategory = {
   $createdAt: string
 }
 
+/**
+ * A PLACE members live in — Anloga, Susuankyi, Oforikrom — sitting inside
+ * exactly one constituency.
+ *
+ * This is not what `Bacenta` meant before the split. It used to hold the
+ * serving groups too (choir, technical team), which are now `Basonta`. The one
+ * collection doing both jobs is what made the church's own vocabulary unusable
+ * in its own system.
+ */
 export type Bacenta = {
   $id: string
   name: string
   /**
-   * `null` is the STANDALONE bacenta — "Technical Team", which has members
+   * The constituency this place is part of.
+   *
+   * Null only until the migration has filled it in — a bacenta with no
+   * constituency is shown under "Not filed yet" rather than hidden, for the
+   * same reason an orphaned basonta is shown: a group full of real people must
+   * never silently vanish from every screen.
+   */
+  constituency_id: string | null
+  description: string | null
+  head_user_id: string | null
+  head_name: string | null
+  sort_order: number
+  created_by: string | null
+  $createdAt: string
+}
+
+export type BasontaCategory = {
+  $id: string
+  name: string
+  description: string | null
+  sort_order: number
+  created_by: string | null
+  $createdAt: string
+}
+
+/**
+ * The work group a member SERVES in — choir, technical team, media, ushers.
+ *
+ * Structurally identical to what `Bacenta` was before the split, and written
+ * out in full rather than aliased to it ON PURPOSE: the two diverge as soon as
+ * a bacenta gains its `constituency_id`, and an alias would silently drag that
+ * change into a place it does not belong.
+ */
+export type Basonta = {
+  $id: string
+  name: string
+  /**
+   * `null` is the STANDALONE basonta — "Technical Team", which has members
    * directly under it rather than sibling groups. It is not a missing value.
    */
   category_id: string | null
@@ -52,20 +98,35 @@ export type Bacenta = {
 export type ConstituencyWithCount = Constituency & { member_count: number }
 export type BacentaWithCount = Bacenta & {
   member_count: number
-  /** Resolved from `category_id`; null for a standalone bacenta. */
+  /** Resolved from `constituency_id`; null when not filed yet. */
+  constituency_name: string | null
+}
+
+export type BasontaWithCount = Basonta & {
+  member_count: number
+  /** Resolved from `category_id`; null for a standalone basonta. */
   category_name: string | null
 }
 
+/** The basontas page, same three buckets as the bacenta tree it came from. */
+export type BasontaTree = {
+  categories: { category: BasontaCategory; basontas: BasontaWithCount[] }[]
+  standalone: BasontaWithCount[]
+  /** Basontas whose `category_id` matches no category. Should be empty. */
+  orphans: BasontaWithCount[]
+}
+
 /**
- * The shape the bacentas page renders: categories holding their bacentas, then
- * the standalone ones, then — deliberately visible rather than dropped —
- * anything pointing at a category that no longer exists.
+ * The bacentas page: each constituency with the places inside it, then any
+ * bacenta not yet filed into one.
+ *
+ * `unfiled` is shown, never hidden — a bacenta with real members in it that
+ * quietly disappeared from every screen is the failure the old `orphans` bucket
+ * existed to prevent, and it is the same failure here.
  */
 export type BacentaTree = {
-  categories: { category: BacentaCategory; bacentas: BacentaWithCount[] }[]
-  standalone: BacentaWithCount[]
-  /** Bacentas whose `category_id` matches no category. Should be empty. */
-  orphans: BacentaWithCount[]
+  constituencies: { constituency: Constituency; bacentas: BacentaWithCount[] }[]
+  unfiled: BacentaWithCount[]
 }
 
 // --- inputs -----------------------------------------------------------------
@@ -83,7 +144,20 @@ export type BacentaCategoryInput = {
 
 export type BacentaInput = {
   name: string
-  /** Omit or pass null to create a standalone bacenta. */
+  /** Which constituency this place belongs to. */
+  constituency_id?: string | null
+  description?: string | null
+  head_user_id?: string | null
+}
+
+export type BasontaCategoryInput = {
+  name: string
+  description?: string | null
+}
+
+export type BasontaInput = {
+  name: string
+  /** Omit or pass null to create a standalone basonta. */
   category_id?: string | null
   description?: string | null
   head_user_id?: string | null
@@ -132,13 +206,23 @@ export type ConstituencyResponse =
   | { ok: false; error: string }
 
 export type ListBacentasResponse =
-  | { ok: true; categories: BacentaCategory[]; bacentas: BacentaWithCount[] }
+  | { ok: true; constituencies: Constituency[]; bacentas: BacentaWithCount[] }
   | { ok: false; error: string }
 
 export type BacentaResponse = { ok: true; bacenta: Bacenta } | { ok: false; error: string }
 
 export type BacentaCategoryResponse =
   | { ok: true; category: BacentaCategory }
+  | { ok: false; error: string }
+
+export type ListBasontasResponse =
+  | { ok: true; categories: BasontaCategory[]; basontas: BasontaWithCount[] }
+  | { ok: false; error: string }
+
+export type BasontaResponse = { ok: true; basonta: Basonta } | { ok: false; error: string }
+
+export type BasontaCategoryResponse =
+  | { ok: true; category: BasontaCategory }
   | { ok: false; error: string }
 
 export type MembershipResponse =
@@ -166,8 +250,13 @@ export type GroupDetailResponse =
   | {
       ok: true
       kind: GroupKind
-      group: Constituency | Bacenta
+      group: Constituency | Bacenta | Basonta
       members: GroupMember[]
+      /**
+       * Who looks after whom. Present for a BACENTA only — care is scoped to a
+       * place, and a constituency or basonta has no such structure.
+       */
+      care?: import('./care').CareCandidate[]
     }
   | { ok: false; error: string }
 
@@ -180,6 +269,7 @@ export type MyGroupsResponse =
       ok: true
       constituencies: ConstituencyWithCount[]
       bacentas: BacentaWithCount[]
+      basontas: BasontaWithCount[]
     }
   | { ok: false; error: string }
 

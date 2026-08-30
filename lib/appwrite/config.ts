@@ -56,6 +56,28 @@ export const COLLECTIONS = {
    * the sound desk. One row per (bacenta, member). PRD §1.9.
    */
   bacenta_members: 'bacenta_members',
+  /**
+   * A FAMILY of basontas: "Choir" holding Biazo, Living Waters, Fresh Oil.
+   * Optional — plenty of basontas have no family. PRD §1.8.
+   */
+  basonta_categories: 'basonta_categories',
+  /**
+   * The work group a member SERVES in — choir, technical team, media, ushers.
+   * `category_id === null` is the standalone case ("Technical Team"); there is
+   * deliberately no separate boolean, because a flag and a foreign key can
+   * disagree.
+   *
+   * This is what "bacenta" used to hold, and the rename is the whole point: a
+   * bacenta is now a PLACE under a constituency (PRD §1.7a), and one collection
+   * doing both jobs is what made the church's own vocabulary unusable in its
+   * own system. PRD §1.8.
+   */
+  basontas: 'basontas',
+  /**
+   * Member ↔ basonta, many-to-many: one member may sing in two choirs and run
+   * the sound desk. One row per (basonta, member). PRD §1.9.
+   */
+  basonta_members: 'basonta_members',
   /** One row per DEVICE that opted into notifications. PRD §1.10. */
   push_subscriptions: 'push_subscriptions',
   /**

@@ -15,6 +15,8 @@ import type { Member } from '@/lib/members/types'
 function member(id: string, last: string, constituencyId: string | null = null): Member {
   return {
     $id: id,
+    member_no: null,
+    benmp_partner: false,
     first_name: 'Test',
     last_name: last,
     other_names: null,
@@ -26,6 +28,8 @@ function member(id: string, last: string, constituencyId: string | null = null):
     whatsapp_number: null,
     home_service: 'second',
     constituency_id: constituencyId,
+    bacenta_id: null,
+    care_of_member_id: null,
     sms_template_id: null,
     status: 'active',
     created_by: null,

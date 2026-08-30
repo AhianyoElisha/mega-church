@@ -7,6 +7,15 @@ export type MemberStatus = 'active' | 'inactive'
 
 export type Member = {
   $id: string
+  /**
+   * The human-readable member number — `2026001`. See `lib/members/numbering.ts`.
+   *
+   * Null only for a member registered before the numbering existed and not yet
+   * backfilled. It is NOT the primary key: Appwrite's `$id` still is. This is
+   * the reference humans use out loud and on paper, because a twenty-character
+   * hex id is not something anyone reads down a phone.
+   */
+  member_no: string | null
   first_name: string
   last_name: string
   other_names: string | null
@@ -35,7 +44,33 @@ export type Member = {
    * present by who they are, not by where they live.
    */
   constituency_id: string | null
+  /**
+   * The bacenta — the PLACE — this member belongs to. Exactly one, so a field
+   * rather than a join, for the same reason `constituency_id` is one.
+   *
+   * Null is ordinary: most of the congregation has not been filed into a
+   * bacenta yet, and like every other group link this NEVER gates attendance.
+   */
+  bacenta_id: string | null
+  /**
+   * The member who looks after this one, inside their bacenta.
+   *
+   * Another MEMBER, not an account — the person named needs no login and gains
+   * nothing from being named. Cycles are refused by `careAssignmentProblem`.
+   */
+  care_of_member_id: string | null
   status: MemberStatus
+  /**
+   * A BENMP Partner — contributes monthly to the Global Healing Jesus Campaign
+   * and receives a renewal reminder.
+   *
+   * Never null in practice: the backfill wrote `false` onto every existing row
+   * and every writer supplies it. It is read as `=== true` regardless, so a row
+   * written before the backfill reads as "not a partner" rather than as one —
+   * the safe direction, because the other one texts somebody at the church's
+   * expense about a commitment they never made.
+   */
+  benmp_partner: boolean
   created_by: string | null
   /**
    * Which birthday SMS THIS member gets, overriding the category default.
@@ -84,16 +119,24 @@ export type MemberInput = {
   home_service?: ServiceSlot
   constituency_id?: string | null
   /**
-   * The bacentas this member serves in. Many-to-many, so it is NOT a column on
-   * the member — the route writes it to `bacenta_members` after the member row
-   * itself is saved. Sending `[]` clears every bacenta; omitting the key
+   * The basontas this member serves in. Many-to-many, so it is NOT a column on
+   * the member — the route writes it to `basonta_members` after the member row
+   * itself is saved. Sending `[]` clears every basonta; omitting the key
    * entirely leaves them untouched, which is what a partial edit needs.
+   *
+   * The BACENTA below is the opposite shape on purpose: one place, one field.
    */
-  bacenta_ids?: string[]
+  basonta_ids?: string[]
+  /** The one place they live. `null` clears it; omitting leaves it alone. */
+  bacenta_id?: string | null
+  /** Who looks after them. `null` clears it; omitting leaves it alone. */
+  care_of_member_id?: string | null
   /** `null` clears the override back to the category default; omitting the key
-   *  leaves it alone, exactly as `bacenta_ids` does. */
+   *  leaves it alone, exactly as `basonta_ids` does. */
   sms_template_id?: string | null
   status?: MemberStatus
+  /** Omitting the key leaves it alone, as with `bacenta_ids`. */
+  benmp_partner?: boolean
 }
 
 /** Enrolment progress, joined onto a member for the registry list. */
@@ -108,8 +151,8 @@ export type MemberEnrolment = {
 
 export type MemberWithEnrolment = Member & {
   enrolment: MemberEnrolment
-  /** Bacenta `$id`s, joined in-memory from `bacenta_members` by the route. */
-  bacenta_ids: string[]
+  /** Basonta `$id`s, joined in-memory from `basonta_members` by the route. */
+  basonta_ids: string[]
 }
 
 export type ListMembersResponse =
@@ -120,7 +163,7 @@ export type MemberResponse =
   | {
       ok: true
       member: Member
-      bacenta_ids?: string[]
+      basonta_ids?: string[]
       /**
        * The member's constituency by NAME, resolved by the route.
        *

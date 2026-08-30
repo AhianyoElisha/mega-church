@@ -6,7 +6,7 @@ import 'server-only'
 
 import { ID, Query, type Users } from 'node-appwrite'
 import { USER_LABELS } from '@/lib/appwrite/config'
-import type { LeaderAccount } from './types'
+import type { GroupKind, LeaderAccount } from './types'
 
 export type ResolvedHead =
   | { ok: true; user: { id: string; name: string } | null }
@@ -59,7 +59,7 @@ export async function resolveHead(users: Users, raw: unknown): Promise<ResolvedH
  */
 export async function listLeaderAccounts(
   users: Users,
-  heldBy: Map<string, { kind: 'constituency' | 'bacenta'; name: string }[]>,
+  heldBy: Map<string, { kind: GroupKind; name: string }[]>,
 ): Promise<LeaderAccount[]> {
   const found: LeaderAccount[] = []
   let offset = 0

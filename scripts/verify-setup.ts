@@ -17,7 +17,13 @@ import { COLLECTIONS, DATABASE_ID, SERVICE_IDS } from '../lib/appwrite/config'
 import { listMeetings } from '../lib/meetings/server'
 import { resolveActiveSession } from '../lib/attendance/server'
 import { loadAllCandidateTemplates } from '../lib/biometrics/server'
-import { listBacentas, listCategories, listConstituencies } from '../lib/groups/server'
+import {
+  listBacentas,
+  listBasontaCategories,
+  listBasontas,
+  listCategories,
+  listConstituencies,
+} from '../lib/groups/server'
 
 let failures = 0
 const ok = (m: string) => console.log(`  ✓ ${m}`)
@@ -85,10 +91,17 @@ async function main() {
     // One row per (bacenta, member) — two admins ticking the same person at
     // the same moment must not double-count a bacenta's roster.
     [COLLECTIONS.bacenta_members, 'pair_unique'],
+    // Same guarantee for the serving groups.
+    [COLLECTIONS.basonta_members, 'pair_unique'],
     // Two groups with the same name are indistinguishable in every dropdown
     // in the app, which makes both of them unusable.
+    // THE guarantee that two members never hold the same number. Allocation
+    // reads the highest and adds one; this is what decides the race when two
+    // registrations compute the same answer at the same moment.
+    [COLLECTIONS.members, 'member_no_unique'],
     [COLLECTIONS.constituencies, 'name_unique'],
     [COLLECTIONS.bacenta_categories, 'name_unique'],
+    [COLLECTIONS.basonta_categories, 'name_unique'],
     // One device, one row. A phone that re-subscribes after a browser update
     // must not end up being notified twice.
     [COLLECTIONS.push_subscriptions, 'endpoint_unique'],
@@ -174,32 +187,63 @@ async function main() {
   }
 
   // --- groups ---------------------------------------------------------------
-  // The one thing about this schema that a passing "collection exists" check
-  // would not catch: a bacenta pointing at a category that no longer exists.
-  // `buildBacentaTree` surfaces those rather than dropping them, but a project
-  // in that state has real groups showing a warning banner, and the fix is a
-  // human decision about where they belong.
+  // The things a passing "collection exists" check would not catch: a bacenta
+  // pointing at a constituency that is gone, a basonta pointing at a missing
+  // category, or a member filed into a bacenta that no longer exists. The tree
+  // builders surface all of these rather than dropping them, but a project in
+  // that state has real groups showing a warning banner, and the fix is a human
+  // decision about where they belong.
   console.log('\ngroups')
-  const [categories, bacentas, constituencies] = await Promise.all([
+  const [categories, bacentas, constituencies, basontaCategories, basontas] = await Promise.all([
     listCategories(databases),
     listBacentas(databases),
     listConstituencies(databases),
+    listBasontaCategories(databases),
+    listBasontas(databases),
   ])
   ok(`${constituencies.length} constituency/ies, ${categories.length} category/ies, ${bacentas.length} bacenta(s)`)
+  ok(`${basontaCategories.length} basonta category/ies, ${basontas.length} basonta(s)`)
 
-  const categoryIds = new Set(categories.map((c) => c.$id))
-  const orphans = bacentas.filter((b) => b.category_id && !categoryIds.has(b.category_id))
-  if (orphans.length > 0) {
+  const constituencyIds = new Set(constituencies.map((c) => c.$id))
+  const misfiled = bacentas.filter(
+    (b) => b.constituency_id && !constituencyIds.has(b.constituency_id),
+  )
+  if (misfiled.length > 0) {
     bad(
-      `${orphans.length} bacenta(s) point at a missing category: ` +
-        orphans.map((b) => b.name).join(', '),
+      `${misfiled.length} bacenta(s) point at a missing constituency: ` +
+        misfiled.map((b) => b.name).join(', '),
     )
   } else {
-    ok('every bacenta is standalone or in a category that exists')
+    ok('every bacenta is in a constituency that exists, or in none')
   }
 
-  const standalone = bacentas.filter((b) => b.category_id === null)
-  ok(`${standalone.length} standalone bacenta(s), ${bacentas.length - standalone.length} in categories`)
+  const unfiled = bacentas.filter((b) => b.constituency_id === null)
+  if (unfiled.length > 0) {
+    // Not a failure: this is the state between the schema change and the
+    // migration, and the page shows them under "Not filed yet".
+    ok(
+      `${unfiled.length} bacenta(s) not yet in a constituency: ` +
+        unfiled.map((b) => b.name).join(', '),
+    )
+  } else {
+    ok('every bacenta is filed into a constituency')
+  }
+
+  // The same orphan check for basontas. Written out rather than folded into a
+  // loop with the bacenta one: the two collections are about to stop having
+  // the same shape, and a shared loop would have to be unpicked exactly then.
+  const basontaCategoryIds = new Set(basontaCategories.map((c) => c.$id))
+  const basontaOrphans = basontas.filter(
+    (b) => b.category_id && !basontaCategoryIds.has(b.category_id),
+  )
+  if (basontaOrphans.length > 0) {
+    bad(
+      `${basontaOrphans.length} basonta(s) point at a missing category: ` +
+        basontaOrphans.map((b) => b.name).join(', '),
+    )
+  } else {
+    ok('every basonta is standalone or in a category that exists')
+  }
 
   // --- notifications --------------------------------------------------------
   console.log('\nnotifications')

@@ -2,11 +2,12 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import {
   bacentaMemberIds,
+  careCandidates,
   bacentaNameTaken,
   canReadGroup,
   deleteBacentaCascade,
   getBacenta,
-  listCategories,
+  listConstituencies,
   updateBacenta,
   validateGroupName,
 } from '@/lib/groups/server'
@@ -41,10 +42,16 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   }
 
   const memberIds = await bacentaMemberIds(databases, id)
-  const members = await buildGroupRoster(databases, memberIds)
+  const [members, care] = await Promise.all([
+    buildGroupRoster(databases, memberIds),
+    // The care links ride along with the roster rather than being a second
+    // request: the page needs both to render one table, and splitting them
+    // gives it a state where it knows who is here but not who looks after them.
+    careCandidates(databases, id),
+  ])
 
   return NextResponse.json<GroupDetailResponse>(
-    { ok: true, kind: 'bacenta', group, members },
+    { ok: true, kind: 'bacenta', group, members, care },
     { headers: { 'Cache-Control': 'private, no-store' } },
   )
 }
@@ -57,7 +64,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   const { id } = await params
   let body: {
     name?: unknown
-    category_id?: unknown
+    constituency_id?: unknown
     description?: unknown
     head_user_id?: unknown
   }
@@ -73,34 +80,36 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 
   const fields: Record<string, unknown> = {}
 
-  // The category may be moving in the same request as the name, and the
-  // uniqueness check depends on which category the bacenta ends up in — so
+  // The constituency may be moving in the same request as the name, and the
+  // uniqueness check depends on which constituency the bacenta ends up in — so
   // resolve the destination before checking the name against it.
-  let targetCategory = current.category_id
-  if (body.category_id !== undefined) {
-    targetCategory =
-      typeof body.category_id === 'string' && body.category_id ? body.category_id : null
-    if (targetCategory) {
-      const categories = await listCategories(databases)
-      if (!categories.some((c) => c.$id === targetCategory)) {
-        return bad('That category no longer exists. Reload and pick another.')
+  let targetConstituency = current.constituency_id
+  if (body.constituency_id !== undefined) {
+    targetConstituency =
+      typeof body.constituency_id === 'string' && body.constituency_id
+        ? body.constituency_id
+        : null
+    if (targetConstituency) {
+      const constituencies = await listConstituencies(databases)
+      if (!constituencies.some((c) => c.$id === targetConstituency)) {
+        return bad('That constituency no longer exists. Reload and pick another.')
       }
     }
-    fields.category_id = targetCategory
+    fields.constituency_id = targetConstituency
   }
 
   if (body.name !== undefined) {
     const shape = validateGroupName(body.name, { noun: 'bacenta' })
     if (!shape.ok) return bad(shape.error)
-    if (await bacentaNameTaken(databases, shape.value, targetCategory, id)) {
-      return bad(`There is already a "${shape.value}" in that category.`)
+    if (await bacentaNameTaken(databases, shape.value, targetConstituency, id)) {
+      return bad(`There is already a "${shape.value}" in that constituency.`)
     }
     fields.name = shape.value
-  } else if (fields.category_id !== undefined) {
-    // Moving an unrenamed bacenta into a category that already has one by that
-    // name would create the duplicate the rename path refuses.
-    if (await bacentaNameTaken(databases, current.name, targetCategory, id)) {
-      return bad(`There is already a "${current.name}" in that category.`)
+  } else if (fields.constituency_id !== undefined) {
+    // Moving an unrenamed bacenta into a constituency that already has one by
+    // that name would create the duplicate the rename path refuses.
+    if (await bacentaNameTaken(databases, current.name, targetConstituency, id)) {
+      return bad(`There is already a "${current.name}" in that constituency.`)
     }
   }
 
@@ -131,8 +140,8 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
   const { id } = await params
   const { databases } = createAdminClient()
   try {
-    const { removed } = await deleteBacentaCascade(databases, id)
-    return NextResponse.json({ ok: true, removed })
+    const { released } = await deleteBacentaCascade(databases, id)
+    return NextResponse.json({ ok: true, released })
   } catch {
     return NextResponse.json({ ok: false, error: 'No such bacenta.' }, { status: 404 })
   }

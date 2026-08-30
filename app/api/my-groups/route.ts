@@ -2,10 +2,13 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import {
   bacentaCounts,
+  basontaCounts,
   constituencyCounts,
   leaderScope,
   listBacentasWithCounts,
-  listCategories,
+  listBasontaCategories,
+  listBasontasWithCounts,
+  listConstituencies,
   listConstituenciesWithCounts,
 } from '@/lib/groups/server'
 import type { MyGroupsResponse } from '@/lib/groups/types'
@@ -45,23 +48,27 @@ export async function GET() {
     auth.user.label === 'shepherd' ||
     auth.user.label === 'treasurer'
   ) {
-    const [constituencies, bacentas] = await Promise.all([
+    const [constituencies, bacentas, basontas] = await Promise.all([
       listConstituenciesWithCounts(databases),
       listBacentasWithCounts(databases),
+      listBasontasWithCounts(databases),
     ])
     return NextResponse.json<MyGroupsResponse>(
-      { ok: true, constituencies, bacentas },
+      { ok: true, constituencies, bacentas, basontas },
       { headers: { 'Cache-Control': 'private, no-store' } },
     )
   }
 
-  const [scope, cCounts, bCounts, categories] = await Promise.all([
+  const [scope, cCounts, bCounts, sCounts, allConstituencies, basontaCategories] = await Promise.all([
     leaderScope(databases, auth.user.id),
     constituencyCounts(databases),
     bacentaCounts(databases),
-    listCategories(databases),
+    basontaCounts(databases),
+    listConstituencies(databases),
+    listBasontaCategories(databases),
   ])
-  const catNames = new Map(categories.map((c) => [c.$id, c.name]))
+  const constituencyNames = new Map(allConstituencies.map((c) => [c.$id, c.name]))
+  const basontaCatNames = new Map(basontaCategories.map((c) => [c.$id, c.name]))
 
   return NextResponse.json<MyGroupsResponse>(
     {
@@ -73,7 +80,14 @@ export async function GET() {
       bacentas: scope.bacentas.map((b) => ({
         ...b,
         member_count: bCounts.get(b.$id) ?? 0,
-        category_name: b.category_id ? (catNames.get(b.category_id) ?? null) : null,
+        constituency_name: b.constituency_id
+          ? (constituencyNames.get(b.constituency_id) ?? null)
+          : null,
+      })),
+      basontas: scope.basontas.map((b) => ({
+        ...b,
+        member_count: sCounts.get(b.$id) ?? 0,
+        category_name: b.category_id ? (basontaCatNames.get(b.category_id) ?? null) : null,
       })),
     },
     { headers: { 'Cache-Control': 'private, no-store' } },

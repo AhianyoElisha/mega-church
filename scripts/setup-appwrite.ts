@@ -359,12 +359,66 @@ async function setupMembers() {
   await ensureEnumAttribute(COLLECTIONS.members, 'home_service', ['first', 'second'], true)
   await ensureEnumAttribute(COLLECTIONS.members, 'status', ['active', 'inactive'], true)
   await ensureStringAttribute(COLLECTIONS.members, 'created_by', 128, false)
+  /**
+   * The human-readable member number — `2026001`. See `lib/members/numbering.ts`.
+   *
+   * OPTIONAL, and deliberately so even though every member ends up with one:
+   * Appwrite cannot add a `required` attribute to a collection that already has
+   * rows without also giving it a default, and an attribute that is both
+   * required and defaulted is refused outright (`attribute_default_unsupported`).
+   * The backfill is what makes it universal; the unique index is what keeps it
+   * honest.
+   *
+   * 16 characters is room for a five-digit year and a five-digit sequence — far
+   * more than the church will use, and free.
+   */
+  await ensureStringAttribute(COLLECTIONS.members, 'member_no', 16, false)
+  /**
+   * BENMP Partner — a member who contributes monthly to the Global Healing
+   * Jesus Campaign and gets a renewal reminder.
+   *
+   * OPTIONAL for the same reason as `member_no`: Appwrite cannot add a
+   * `required` attribute to a populated collection without a default, and
+   * required-and-defaulted is refused outright. `scripts/backfill-benmp.ts`
+   * writes `false` onto every existing row, and every writer supplies the value
+   * explicitly from then on — the same handling `meetings.restricted` gets, and
+   * for the same reason: a DEFAULTED boolean is one nobody has actually
+   * answered, and here it decides who the church pays to text.
+   *
+   * Read as `benmp_partner === true` everywhere, so a null on a row written
+   * before the backfill reads as "not a partner" rather than as a partner.
+   */
+  await ensureBooleanAttribute(COLLECTIONS.members, 'benmp_partner', false)
   // Where the member LIVES. Optional at the schema level because the four
   // constituencies did not exist when the congregation was first registered,
   // and a required attribute would have made every existing row unwritable.
   // The registration form asks for it; the bulk assigner is how the backlog
   // gets cleared. PRD §1.7.
   await ensureStringAttribute(COLLECTIONS.members, 'constituency_id', 64, false)
+  /**
+   * The bacenta — the PLACE — this member belongs to.
+   *
+   * A FIELD and not a join, for exactly the reason `constituency_id` is one:
+   * a member lives in one place. The live data agreed before this was written —
+   * of the 28 members in a location bacenta, none was in two.
+   *
+   * The serving groups went the other way and stayed a join
+   * (`basonta_members`), because a chorister really can run the sound desk too.
+   * That asymmetry IS the design; see PRD §1.7a.
+   */
+  await ensureStringAttribute(COLLECTIONS.members, 'bacenta_id', 64, false)
+  /**
+   * Who looks after this member — another MEMBER, not an account.
+   *
+   * The person named here needs no login and gets no permission from being
+   * named. It is a record of pastoral responsibility inside a bacenta, and
+   * nothing reads it to decide what anybody may do.
+   *
+   * Cycles are refused by `careAssignmentProblem`, not by the database: Appwrite
+   * has no foreign keys and no check constraints, so the guarantee lives in a
+   * pure function that is unit-tested instead.
+   */
+  await ensureStringAttribute(COLLECTIONS.members, 'care_of_member_id', 64, false)
   // Which birthday message THIS member gets. Null is the ordinary case and
   // means "use the birthday default" — not "send nothing". Optional because
   // the overwhelming majority of members never need a different wording, and
@@ -381,11 +435,32 @@ async function setupMembers() {
   await ensureIndex(COLLECTIONS.members, 'by_birthday', 'key', ['birth_month', 'birth_day'])
   // "Everyone in Ahodwo" — the constituency head's entire view.
   await ensureIndex(COLLECTIONS.members, 'by_constituency', 'key', ['constituency_id'])
+  await ensureIndex(COLLECTIONS.members, 'by_bacenta', 'key', ['bacenta_id'])
+  // "Who is under this person?" — needed on every member delete, because the
+  // cascade has to release their charges rather than leave them pointing at a
+  // member who is gone.
+  await ensureIndex(COLLECTIONS.members, 'by_care_of', 'key', ['care_of_member_id'])
   // "Everyone who comes to First Service" — the registry filter.
   // `home_service` never gates ATTENDANCE (PRD §2.1); it is only where a
   // member usually sits, and whoever is compiling a list to call wants one
   // service at a time.
   await ensureIndex(COLLECTIONS.members, 'by_home_service', 'key', ['home_service'])
+  /**
+   * THE guarantee that two members never hold the same number.
+   *
+   * Allocation is claimed by the INSERT, exactly as `notification_runs` claims
+   * a daily run — the read that computes "next" is only the fast path, and two
+   * registrations landing in the same millisecond are resolved here, by the
+   * database, rather than by hoping.
+   *
+   * MariaDB permits many NULLs in a unique index, so this guards nothing for
+   * members who have no number yet. That is correct and temporary: it is what
+   * lets the attribute exist before the backfill has run.
+   */
+  await ensureIndex(COLLECTIONS.members, 'member_no_unique', 'unique', ['member_no'])
+  // "Who are the partners?" is the monthly reminder list, and it is the only
+  // query this field is ever asked.
+  await ensureIndex(COLLECTIONS.members, 'by_benmp', 'key', ['benmp_partner'])
 }
 
 async function setupConstituencies() {
@@ -432,6 +507,18 @@ async function setupBacentas() {
   // add an `is_standalone` boolean beside this — two fields encoding one fact
   // is two fields that can disagree.
   await ensureStringAttribute(COLLECTIONS.bacentas, 'category_id', 64, false)
+  /**
+   * The constituency this bacenta is a part of.
+   *
+   * A bacenta is a PLACE — Anloga, Susuankyi — and every place sits inside
+   * exactly one constituency. This replaces `category_id` as the parent link;
+   * `category_id` above is kept only until the migration has moved the serving
+   * groups out to `basontas`, and is not read by any new code.
+   *
+   * Optional in the schema because the rows exist already and do not have one
+   * yet. `scripts/migrate-basonta.ts` fills it in.
+   */
+  await ensureStringAttribute(COLLECTIONS.bacentas, 'constituency_id', 64, false)
   await ensureStringAttribute(COLLECTIONS.bacentas, 'description', 512, false)
   await ensureStringAttribute(COLLECTIONS.bacentas, 'head_user_id', 64, false)
   await ensureStringAttribute(COLLECTIONS.bacentas, 'head_name', 128, false)
@@ -443,6 +530,8 @@ async function setupBacentas() {
   // groups and both are legitimate. Uniqueness is enforced per category in
   // `lib/groups/server.ts`, where the category is known.
   await ensureIndex(COLLECTIONS.bacentas, 'by_category', 'key', ['category_id'])
+  // "Which bacentas are in this constituency?" — the whole bacentas page.
+  await ensureIndex(COLLECTIONS.bacentas, 'by_constituency', 'key', ['constituency_id'])
   await ensureIndex(COLLECTIONS.bacentas, 'by_head', 'key', ['head_user_id'])
   await ensureIndex(COLLECTIONS.bacentas, 'by_name', 'key', ['name'])
   await ensureIndex(COLLECTIONS.bacentas, 'by_sort', 'key', ['sort_order'])
@@ -464,6 +553,73 @@ async function setupBacentaMembers() {
   // same person at the same moment is what this index is actually for.
   await ensureIndex(COLLECTIONS.bacenta_members, 'pair_unique', 'unique', [
     'bacenta_id',
+    'member_id',
+  ])
+}
+
+// --- basontas ---------------------------------------------------------------
+//
+// The service groups: choir, technical team, media, ushers. Structurally these
+// are what `bacentas` held before the split, and the shape is copied verbatim
+// rather than "improved" in transit — every rule that governed a bacenta
+// (name unique per CATEGORY, `category_id === null` IS standalone, membership
+// written as a diff) governs a basonta unchanged, and re-deriving them would
+// be how one of them quietly stops being true.
+
+async function setupBasontaCategories() {
+  console.log('\nbasonta_categories')
+  await ensureCollection(COLLECTIONS.basonta_categories, 'Basonta Categories')
+  await ensureStringAttribute(COLLECTIONS.basonta_categories, 'name', 96, true)
+  await ensureStringAttribute(COLLECTIONS.basonta_categories, 'description', 512, false)
+  await ensureIntegerAttribute(COLLECTIONS.basonta_categories, 'sort_order', true)
+  await ensureStringAttribute(COLLECTIONS.basonta_categories, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.basonta_categories)
+  await ensureIndex(COLLECTIONS.basonta_categories, 'name_unique', 'unique', ['name'])
+  await ensureIndex(COLLECTIONS.basonta_categories, 'by_sort', 'key', ['sort_order'])
+}
+
+async function setupBasontas() {
+  console.log('\nbasontas')
+  await ensureCollection(COLLECTIONS.basontas, 'Basontas')
+  await ensureStringAttribute(COLLECTIONS.basontas, 'name', 96, true)
+  // NULL is meaningful: it is the standalone basonta ("Technical Team"), the
+  // one that has members directly under it rather than sibling groups. Do not
+  // add an `is_standalone` boolean beside this — two fields encoding one fact
+  // is two fields that can disagree.
+  await ensureStringAttribute(COLLECTIONS.basontas, 'category_id', 64, false)
+  await ensureStringAttribute(COLLECTIONS.basontas, 'description', 512, false)
+  await ensureStringAttribute(COLLECTIONS.basontas, 'head_user_id', 64, false)
+  await ensureStringAttribute(COLLECTIONS.basontas, 'head_name', 128, false)
+  await ensureIntegerAttribute(COLLECTIONS.basontas, 'sort_order', true)
+  await ensureStringAttribute(COLLECTIONS.basontas, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.basontas)
+  // NOT unique: "Youth" under Choir and "Youth" under Ushers are two different
+  // groups and both are legitimate. Uniqueness is enforced per category in
+  // `lib/groups/server.ts`, where the category is known.
+  await ensureIndex(COLLECTIONS.basontas, 'by_category', 'key', ['category_id'])
+  await ensureIndex(COLLECTIONS.basontas, 'by_head', 'key', ['head_user_id'])
+  await ensureIndex(COLLECTIONS.basontas, 'by_name', 'key', ['name'])
+  await ensureIndex(COLLECTIONS.basontas, 'by_sort', 'key', ['sort_order'])
+}
+
+async function setupBasontaMembers() {
+  console.log('\nbasonta_members')
+  await ensureCollection(COLLECTIONS.basonta_members, 'Basonta Members')
+  await ensureStringAttribute(COLLECTIONS.basonta_members, 'basonta_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.basonta_members, 'member_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.basonta_members, 'added_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.basonta_members)
+  await ensureIndex(COLLECTIONS.basonta_members, 'by_basonta', 'key', ['basonta_id'])
+  // The hot query for the member detail page and the registration form:
+  // "which basontas is this person in?"
+  await ensureIndex(COLLECTIONS.basonta_members, 'by_member', 'key', ['member_id'])
+  // One row per pair. The assigner writes a diff, but two admins ticking the
+  // same person at the same moment is what this index is actually for.
+  await ensureIndex(COLLECTIONS.basonta_members, 'pair_unique', 'unique', [
+    'basonta_id',
     'member_id',
   ])
 }
@@ -798,6 +954,11 @@ async function main() {
   await setupBacentaCategories()
   await setupBacentas()
   await setupBacentaMembers()
+  // Same ordering rule one collection over: a basonta's category_id points at
+  // a basonta category, so the categories have to exist first.
+  await setupBasontaCategories()
+  await setupBasontas()
+  await setupBasontaMembers()
   await setupPushSubscriptions()
   await setupNotificationRuns()
   await setupSmsTemplates()

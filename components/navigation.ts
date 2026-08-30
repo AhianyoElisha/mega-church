@@ -76,6 +76,13 @@ export const NAVIGATION: NavItem[] = [
     roles: ['admin', 'shepherd'],
     group: 'people',
   },
+  {
+    name: 'Basontas',
+    href: '/basontas',
+    icon: UserGroupIcon,
+    roles: ['admin', 'shepherd'],
+    group: 'people',
+  },
   // A head's landing page. Deliberately NOT shown to an admin, who reaches the
   // same information through the two full lists above — a third entry pointing
   // at "all groups" again would be a duplicate in their sidebar.
