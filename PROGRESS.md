@@ -1690,10 +1690,11 @@ comments (`// --- bacentas ---` to `// --- basonta categories ---`). **Splice on
 section boundaries, not on the first occurrence of an identifier** — the same
 name appears in the mapper block and in the section it belongs to.
 
-### The migration — copied and verified, not yet finished
+### The migration — finished
 
-`scripts/migrate-basonta.ts`, run with `--apply --copy-only` against the live
-project on 2026-08-30. Steps 1-4 of 7:
+`scripts/migrate-basonta.ts`, run against the live project on 2026-08-30 —
+first `--apply --copy-only` for steps 1-4, then `--apply` for the rest once the
+copy had been checked by hand. Steps 1-4:
 
     1  Choir            -> basonta_categories     copied
     2  7 serving groups -> basontas               copied
@@ -1719,22 +1720,58 @@ Not just the counts — the same PEOPLE in the same groups, compared as
 with a `bacenta_id`, 0 bacentas with a `constituency_id`. Re-running reports
 "already there" for every row and copies nothing.
 
-### What is left, and why it stopped here
+### Steps 5-7, run separately and on purpose
 
-Steps 5-7 — file the five places into Alos, write `members.bacenta_id`, then
-delete the 7 copied groups and all 66 join rows. **Step 7 is the only
-destructive step in the whole project**, and it was left as a separate,
-deliberate decision rather than folded into the same command. `--copy-only`
-exists for exactly that.
+The copy was left to sit while it was checked, and the destructive half run as
+its own decision afterwards. That is what `--copy-only` is for, and it is how a
+migration against a live congregation ought to go.
 
-Until it runs, the app shows the 12 bacentas under "Not filed yet" and the 7
-basontas alongside them. Both halves of the data exist at once, which is
-untidy and completely safe.
+    5  filed the 5 places into Alos Constituency
+    6  gave 28 members their bacenta_id
+    7  removed the 7 copied groups, then all 66 bacenta_members rows
 
-    npm run migrate:basonta -- --apply     # finishes 5, 6, 7
+Read back from Cloud afterwards, independently of what the script said about
+itself:
 
-Verification still gates the deletion: step 7 only runs against rows step 4 has
-already proven were copied.
+| bacenta | constituency | members |
+|---|---|---|
+| Anloga Bacenta | Alos | 16 |
+| Susuankyi Bacenta | Alos | 6 |
+| Oforikrom Bacenta | Alos | 5 |
+| Bomso Bacenta | Alos | 1 |
+| Asokwa Bacenta | Alos | 0 |
+
+| basonta | members |
+|---|---|
+| Fresh Oil | 11 |
+| Biazo | 8 |
+| Living Waters | 6 |
+| Dancing Stars | 5 |
+| Technical Team | 3 |
+| Ushers | 3 |
+| Media | 2 |
+
+Every count is the one it was before the migration. 28 members carry a
+`bacenta_id` and all 28 point at a bacenta that exists; 38 of 38
+`basonta_members` rows resolve to a real member and a real group; 0
+`bacenta_members` rows remain; 0 bacentas are unfiled.
+
+A second `--apply` reports "already filed" for every place, gives 0 members a
+bacenta and removes 0 rows — idempotent after the fact, not merely by design.
+`npm run verify:appwrite` passes every check, and now says **"every bacenta is
+filed into a constituency"** where two days ago it listed twelve that were not.
+
+### One thing the migration deliberately did NOT do
+
+`bacenta_members` is empty and nothing reads it; `bacenta_categories` still
+holds its single "Choir" row and nothing reads that either. **Neither
+collection is dropped.** Dropping a collection is not something a migration
+should do behind an admin's back, and an empty collection costs nothing.
+
+Removing them — and the `/api/bacenta-categories` routes that still serve the
+dead one — is a deliberate follow-up, not a loose end to be tidied by whoever
+notices first. CLAUDE.md previously said the migration "retired" both; that
+overstated what the script does and has been corrected.
 
 ### Not verified
 
