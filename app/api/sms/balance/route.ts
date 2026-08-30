@@ -25,7 +25,10 @@ import type { SmsBalanceResponse } from '@/lib/sms/types'
  * and a cached one would keep reporting credit that has already been spent.
  */
 export async function GET() {
-  const auth = await requireRole('admin')
+  // The treasurer spends this credit, so they see what is left of it. A
+  // sender who cannot see the balance finds out it ran dry from the
+  // congregation.
+  const auth = await requireRole(['admin', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const balance = await createSmsService().balance()

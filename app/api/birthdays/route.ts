@@ -40,7 +40,7 @@ export type BirthdaysResponse = {
  * names and phone numbers is more than the door needs.
  */
 export async function GET(request: NextRequest) {
-  const auth = await requireRole(['admin', 'celebrations', 'shepherd'])
+  const auth = await requireRole(['admin', 'celebrations', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

@@ -152,6 +152,23 @@ export const USER_LABELS = {
    * shepherd may not do that could fall out of date.
    */
   shepherd: 'shepherd',
+  /**
+   * The church treasurer.
+   *
+   * Reads what a shepherd reads, and writes exactly ONE thing: a `tithe` SMS.
+   * Not a variant of `shepherd` for the same reason `shepherd` is not a variant
+   * of `leader` — a shepherd writes nothing at all, and the whole point of this
+   * account is that it writes one thing.
+   *
+   * The single write is enforced by `canSendSmsCategory`, which is an ALLOW-map
+   * rather than a deny-list: a fourth SMS category is refused to the treasurer
+   * the moment somebody adds one, without anybody having to remember.
+   *
+   * Unlike a shepherd they DO see `/sms` — the log and the credit balance
+   * included, because they are the account spending it and a sender who cannot
+   * see the balance finds out it ran dry from the congregation.
+   */
+  treasurer: 'treasurer',
 } as const
 
 export type CollectionId = (typeof COLLECTIONS)[keyof typeof COLLECTIONS]

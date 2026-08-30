@@ -42,6 +42,9 @@ const LABEL_HOMES: Record<UserLabel, string> = {
   // congregation is rather than on an admin dashboard of controls they cannot
   // press.
   shepherd: '/members',
+  // The one thing they are here to do. A treasurer landing on the registry
+  // would have to go looking for the only screen they can act on.
+  treasurer: '/sms',
 }
 
 /** Paths each non-admin label is allowed to reach. Admin reaches everything. */
@@ -95,6 +98,28 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
     '/services',
     '/monitor',
     '/reports',
+  ],
+  /**
+   * A shepherd's reach plus `/sms`, which is the difference between the two
+   * roles in one line.
+   *
+   * `/sms` being reachable is NOT what lets them send: `POST /api/sms/send`
+   * consults `canSendSmsCategory`, so a treasurer posting a birthday send is
+   * refused by name whatever this list says. The page is here so the account
+   * can read the log and the credit balance it is spending — a sender who
+   * cannot see the balance finds out it ran dry from the congregation.
+   */
+  treasurer: [
+    '/members',
+    '/constituencies',
+    '/bacentas',
+    '/my-groups',
+    '/birthdays',
+    '/meetings',
+    '/services',
+    '/monitor',
+    '/reports',
+    '/sms',
   ],
 }
 

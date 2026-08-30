@@ -19,7 +19,7 @@ type Ctx = { params: Promise<{ id: string }> }
 /** GET — the bacenta and everyone serving in it. Head-scoped, like the
  *  constituency route; see the note there on why this is a 403 and not a 404. */
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole(['admin', 'leader', 'shepherd'])
+  const auth = await requireRole(['admin', 'leader', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { id } = await params

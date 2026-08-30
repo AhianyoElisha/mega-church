@@ -5,7 +5,7 @@ import type { AttendanceListResponse } from '@/lib/attendance/types'
 
 // GET /api/attendance/records?occurrence_id=…&cursor=… — the check-in log.
 export async function GET(request: NextRequest) {
-  const auth = await requireRole(['admin', 'usher', 'shepherd'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

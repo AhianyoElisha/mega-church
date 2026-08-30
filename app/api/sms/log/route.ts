@@ -19,7 +19,10 @@ function isCategory(v: unknown): v is SmsCategory {
  * mentions — not every member in the church.
  */
 export async function GET(request: NextRequest) {
-  const auth = await requireRole('admin')
+  // Their own sends are in here, and so is every failure. Withholding the log
+  // from the account that does the sending leaves them unable to tell a
+  // delivered message from a refused one.
+  const auth = await requireRole(['admin', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const params = request.nextUrl.searchParams

@@ -11,7 +11,7 @@ import type { ListMeetingsResponse, MeetingDetailResponse } from '@/lib/meetings
 
 // GET /api/meetings — every meeting, with roster size and when it last ran.
 export async function GET() {
-  const auth = await requireRole(['admin', 'shepherd'])
+  const auth = await requireRole(['admin', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()

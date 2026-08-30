@@ -31,14 +31,20 @@ import type { MyGroupsResponse } from '@/lib/groups/types'
  * says so. A 403 there would look like a broken login.
  */
 export async function GET() {
-  const auth = await requireRole(['admin', 'leader', 'shepherd'])
+  const auth = await requireRole(['admin', 'leader', 'shepherd', 'treasurer'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()
 
   // A shepherd sees every group, exactly as an admin does — the difference
   // between them is what they may WRITE, and this route writes nothing.
-  if (auth.user.label === 'admin' || auth.user.label === 'shepherd') {
+  // A treasurer reads the whole church exactly as a shepherd does. Neither
+  // writes here; this route writes nothing at all.
+  if (
+    auth.user.label === 'admin' ||
+    auth.user.label === 'shepherd' ||
+    auth.user.label === 'treasurer'
+  ) {
     const [constituencies, bacentas] = await Promise.all([
       listConstituenciesWithCounts(databases),
       listBacentasWithCounts(databases),
