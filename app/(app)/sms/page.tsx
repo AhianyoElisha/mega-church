@@ -113,10 +113,11 @@ export default function SmsPage() {
   const templates = useSmsTemplates()
   const config = templates.data?.ok ? templates.data.config : null
   const { user } = useAuth()
-  // Writing a template is composing in the church's voice, and every template
-  // route below GET is admin-only. Offering the tab to a treasurer would be
-  // offering a screen whose every button answers 403.
-  const canEditTemplates = user?.label === 'admin'
+  // Anyone with authority over a category may write templates for it, so the
+  // tab is offered to them — scoped inside `TemplatesTab` to the categories
+  // they actually own. Only an account with no authority at all is kept out,
+  // because for them every button on that screen answers 403.
+  const canEditTemplates = sendableCategories(user?.label).length > 0
 
   return (
     <PageWrap>
@@ -539,7 +540,23 @@ function SendTab({ canSend }: { canSend: boolean }) {
 // --- templates --------------------------------------------------------------
 
 function TemplatesTab() {
-  const [category, setCategory] = useState<SmsCategory>('birthday')
+  const { user } = useAuth()
+  /**
+   * The categories this account may write in. An admin gets all three; a
+   * treasurer gets tithe.
+   *
+   * Read from the same map the SERVER checks with, so the tab bar cannot offer
+   * a category whose Save button then 403s.
+   */
+  const owned = sendableCategories(user?.label)
+  /**
+   * Editing and deleting an EXISTING template stay admin-only, and the buttons
+   * are hidden rather than shown-and-refused. Adding a template of your own and
+   * rewriting the one the whole congregation already receives are different
+   * acts; the API enforces it, this is so nobody is offered the second.
+   */
+  const isAdmin = user?.label === 'admin'
+  const [category, setCategory] = useState<SmsCategory>(owned[0] ?? 'tithe')
   const [editing, setEditing] = useState<SmsTemplate | null>(null)
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -583,7 +600,7 @@ function TemplatesTab() {
             setEditing(null)
             setAdding(false)
           }}
-          tabs={SMS_CATEGORIES.map((c) => ({ value: c, label: SMS_CATEGORY_LABEL[c] }))}
+          tabs={owned.map((c) => ({ value: c, label: SMS_CATEGORY_LABEL[c] }))}
         />
         {!adding && !editing && (
           <Button color="primary" onClick={() => setAdding(true)}>
@@ -599,6 +616,14 @@ function TemplatesTab() {
           each member gets their own message if one is set on their profile, otherwise the standard
           one. The <strong>celebrations team</strong> is told separately, by notification, the day
           before, so there is still time to make a flyer.
+        </Banner>
+      )}
+
+      {!isAdmin && (
+        <Banner tone="info">
+          You can add {SMS_CATEGORY_LABEL[category].toLowerCase()} templates. Changing or
+          deleting an existing one is an administrator&rsquo;s — the standard message is the one
+          the whole congregation receives.
         </Banner>
       )}
 
@@ -664,23 +689,28 @@ function TemplatesTab() {
                   </div>
                   {/* `shrink-0` with no wrap meant three buttons that would
                       not fold and would not shrink. They wrap now. */}
-                  <div className="flex flex-wrap gap-2">
-                    {!t.is_default && (
-                      <Button
-                        plain
-                        onClick={() => update.mutate({ id: t.$id, is_default: true })}
-                        disabled={update.isPending}
-                      >
-                        Make standard
+                  {/* Hidden, not disabled: every one of these calls a route
+                      that is admin-only, and a greyed-out row of three reads as
+                      "broken" rather than "not yours". */}
+                  {isAdmin && (
+                    <div className="flex flex-wrap gap-2">
+                      {!t.is_default && (
+                        <Button
+                          plain
+                          onClick={() => update.mutate({ id: t.$id, is_default: true })}
+                          disabled={update.isPending}
+                        >
+                          Make standard
+                        </Button>
+                      )}
+                      <Button plain onClick={() => setEditing(t)}>
+                        Edit
                       </Button>
-                    )}
-                    <Button plain onClick={() => setEditing(t)}>
-                      Edit
-                    </Button>
-                    <Button plain onClick={() => handleDelete(t)} disabled={remove.isPending}>
-                      Delete
-                    </Button>
-                  </div>
+                      <Button plain onClick={() => handleDelete(t)} disabled={remove.isPending}>
+                        Delete
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </Card>
             )

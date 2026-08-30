@@ -4,6 +4,7 @@ import { SMS_CATEGORIES, type SmsCategory } from '@/lib/appwrite/config'
 import { createSmsService } from '@/lib/sms/mnotify'
 import { createTemplate, listTemplates, templateNameTaken } from '@/lib/sms/server'
 import { unknownPlaceholders, PLACEHOLDERS } from '@/lib/sms/render'
+import { canManageTemplateCategory } from '@/lib/sms/permissions'
 import type { ListTemplatesResponse, TemplateResponse } from '@/lib/sms/types'
 
 function isCategory(v: unknown): v is SmsCategory {
@@ -41,8 +42,19 @@ export async function GET(request: NextRequest) {
   )
 }
 
+/**
+ * POST — write a new template.
+ *
+ * A treasurer may write TITHE templates and nothing else. Writing is the same
+ * authority as sending, from the same map (`canManageTemplateCategory`), because
+ * a treasurer who may send a message but not compose one has to ask an
+ * administrator to type it — which is the thing the account was meant to stop.
+ *
+ * PATCH and DELETE on `[id]` stay admin-only. Adding a template of your own and
+ * rewriting the one the whole congregation already receives are different acts.
+ */
 export async function POST(request: NextRequest) {
-  const auth = await requireRole('admin')
+  const auth = await requireRole(['admin', 'treasurer'])
   if ('error' in auth) return auth.error
 
   let body: { name?: unknown; category?: unknown; body?: unknown; is_default?: unknown }
@@ -58,6 +70,17 @@ export async function POST(request: NextRequest) {
   if (!isCategory(body.category)) {
     return bad(`category must be one of: ${SMS_CATEGORIES.join(', ')}.`)
   }
+  // The category gate, before anything else is checked. Refused BY NAME rather
+  // than silently coerced to tithe: a caller told nothing assumes the template
+  // they wrote is the one that got saved.
+  const allowed = canManageTemplateCategory(auth.user.label, body.category)
+  if (!allowed.ok) {
+    return NextResponse.json<TemplateResponse>(
+      { ok: false, error: allowed.error },
+      { status: allowed.status },
+    )
+  }
+
   if (typeof body.body !== 'string' || body.body.trim().length === 0) {
     return bad('A template needs a message.')
   }
