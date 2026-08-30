@@ -198,9 +198,12 @@ Needs people, hardware or a decision — not more code:
    scheduled run, and the iPhone as of 2026-08-27, whose `last_success_at` had
    been `null` since the day it subscribed. The cause was the `VAPID_SUBJECT`
    placeholder, which Apple refuses and FCM ignores; see "The iPhone had never
-   received a push" below. **What is left is one deploy step:
-   `VAPID_SUBJECT` must be set in the Vercel project**, because the default it
-   used to fall back on is deliberately gone.
+   received a push" below. ✅ **`VAPID_SUBJECT` is now set in the Vercel
+   project** — `https://mega-church.vercel.app`, on all three environments, and
+   PR #30 is merged. It turned out to have been set all along, to the very
+   placeholder the code was being cleaned of; see "The variable was set all
+   along, to the wrong value" below. What is left is one READING, not a change:
+   the iPhone's `last_success_at` after the next scheduled run.
 3. ~~**The rest of the head accounts.**~~ ✅ Done — four `leader` accounts
    (`alos`, `tsalack`, `anagkazo`, `anadeia`) exist as of 2026-08-22, and heads
    are now created in-app rather than in the console (Plan 3). **`.env.local`
@@ -1442,6 +1445,11 @@ join a list nothing is ever delivered from.
 
 ### Still to do — the deploy order matters
 
+**Done on 2026-08-30 — see "The variable was set all along, to the wrong
+value" at the end of this file, which corrects the sentence below: the variable
+already existed, holding the placeholder, so the code fix alone would have
+turned push off for Android as well.**
+
 **Set `VAPID_SUBJECT` in the Vercel project before deploying this**, to
 `https://mega-church.vercel.app` or a `mailto:` on the church's real domain when
 there is one. There is no longer a default, so a deploy that lands without it
@@ -1458,3 +1466,91 @@ In `CLAUDE.md`, beside the `MNOTIFY_SENDER_ID` one it rhymes with: **verify push
 on an Android and an iPhone, because each provider checks things the other does
 not.** One healthy platform is not evidence about the other, and here it was
 actively misleading for as long as it stood.
+
+## The variable was set all along, to the wrong value — 2026-08-30
+
+`VAPID_SUBJECT` is now `https://mega-church.vercel.app` on Production, Preview
+and Development, and PR #30 is merged (`9c72511`). Push should be live on both
+platforms in production for the first time.
+
+The entry above, and the PR body, both said the deploy step was to *set* the
+variable — that the code was falling back to
+`|| 'mailto:admin@megachurch.local'` at `server.ts:57` and the fix was to
+supply a real value where there had been none.
+
+**That is not what production was doing.** The variable already existed, on all
+three environments, explicitly set to `mailto:admin@megachurch.local` — the
+same string as the fallback, entered by hand nine days earlier. The fallback in
+the source was never reached in production. It was a second copy of the bug,
+not the bug.
+
+    $ vercel env ls
+    VAPID_SUBJECT   mailto:admin@megac…   Config   Production, Preview, Development   9d ago
+
+The diagnosis survives this intact: the subject Apple refused is the string it
+was measured against, and every number in the table above still holds. What
+changes is the **consequence of the code fix on its own**.
+
+### Why this matters more than a footnote
+
+Merging PR #30 without touching the environment would not have restored push to
+the iPhone. It would have taken a failure that was silent and iOS-only and made
+it loud and universal: `vapidSubjectProblem()` would have refused the stored
+`.local` subject on every send, `vapidPublicKey()` would have returned `null`,
+and the birthdays page would have reported push unconfigured — for Android too,
+which had been working the whole time.
+
+That is the designed behaviour and it is the right behaviour. But it means the
+code change and the environment change are not two halves of one fix in the
+order they were written down. **The environment change is the one that delivers
+a notification.** The code change is what stops the next placeholder from
+lasting eight months without anyone hearing about it.
+
+The general form, since this is the second time this shape has appeared here
+(the `MNOTIFY_SENDER_ID` rule is the first): removing a bad default fixes
+nothing on a deployment that was overriding the default with the same bad
+value. Check what is deployed before assuming the source is what is running.
+
+### How it was set, and read back
+
+Overwritten in place rather than removed and re-added, so no environment was
+ever without a value:
+
+    vercel env add VAPID_SUBJECT production,preview,development \
+      --value "https://mega-church.vercel.app" --force --no-sensitive --yes
+
+Read back with `vercel env pull` per environment, which decrypts to what the
+runtime actually receives — `vercel env ls` shows the stored ciphertext for
+this row and cannot confirm a value:
+
+| environment | pulled value |
+|---|---|
+| production | `https://mega-church.vercel.app` |
+| preview | `https://mega-church.vercel.app` |
+| development | `https://mega-church.vercel.app` |
+
+Preview and Development carry it too, so a branch deploy does not report push
+unconfigured and read as a regression to whoever is testing it.
+
+The pulled `.env` files hold the project's real secrets — `APPWRITE_API_KEY`,
+both cron secrets, the mNotify key. Delete them after reading. `.env.local` was
+not written to.
+
+### The deployment
+
+Merged 01:14:58Z; the Git integration built production three seconds later
+(`mega-church-e7y5pl7e7`, Ready in 46s, aliased `git-main`). `GET /login` → 200.
+The environment override landed **before** the merge, so this build has it.
+
+### What is still not proven
+
+**No push has been observed delivered from production since the change.** There
+is no anonymous probe for it: `/api/push` is behind the session gate, so unlike
+`CRON_SECRET` — which announces its own presence through the 401/403 split —
+VAPID state cannot be read from outside.
+
+The evidence will be the `birthday` run at 06:00 UTC stamping `last_success_at`
+in `push_subscriptions`. The Android row has been stamped since 2026-08-27; the
+iPhone row is the one that answers this. Until that read, production push is
+correct-by-construction and not correct-by-observation, which is precisely the
+distinction that let this bug live for months.
