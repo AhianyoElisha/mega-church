@@ -90,6 +90,11 @@ export function memberDocToMember(d: MemberDoc): Member {
     // constituency id while still being truthy in a `if (m.constituency_id)`.
     constituency_id: (d.constituency_id as string | null) || null,
     status: (d.status as Member['status']) ?? 'active',
+    // `=== true` and not a cast: a row written before the backfill has no such
+    // field, and `undefined` must read as "not a partner". The other direction
+    // texts somebody, at the church's expense, about a commitment they never
+    // made.
+    benmp_partner: d.benmp_partner === true,
     created_by: (d.created_by as string | null) ?? null,
     // `|| null` for the same reason as `constituency_id` above: Appwrite hands
     // back `''` for an unset optional string, and `''` is truthy enough to

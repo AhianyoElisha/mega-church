@@ -24,6 +24,7 @@ export default function MembersPage() {
   const [enrolment, setEnrolment] = useState('')
   const [constituency, setConstituency] = useState('')
   const [service, setService] = useState('')
+  const [benmp, setBenmp] = useState('')
 
   const constituencies = useConstituencies()
 
@@ -47,7 +48,7 @@ export default function MembersPage() {
   // registered". Listing them individually is how `constituency` came to be
   // left out of that test, which offered "Register a member" to an admin whose
   // only problem was a filter set to a constituency nobody is in yet.
-  const filtered = Boolean(search || status || enrolment || constituency || service)
+  const filtered = Boolean(search || status || enrolment || constituency || service || benmp)
 
   const rows = useMemo(() => {
     let list = data?.ok ? data.members : []
@@ -59,8 +60,14 @@ export default function MembersPage() {
     if (enrolment === 'incomplete') list = list.filter((m) => !m.enrolment.complete)
     // The one filter the server cannot do — see the note on `useMembers`.
     if (constituency === '__none__') list = list.filter((m) => !m.constituency_id)
+    // Client-side rather than a server query: this is what produces the monthly
+    // reminder list, and it has to agree exactly with the `=== true` reading
+    // used everywhere else. A row written before the backfill has no field at
+    // all, and "not a partner" is the only safe way to read that.
+    if (benmp === 'yes') list = list.filter((m) => m.benmp_partner === true)
+    if (benmp === 'no') list = list.filter((m) => m.benmp_partner !== true)
     return list
-  }, [data, search, enrolment, constituency])
+  }, [data, search, enrolment, constituency, benmp])
 
   const isAdmin = user?.label === 'admin'
 
@@ -81,8 +88,8 @@ export default function MembersPage() {
       <Card className="mb-6" padded={false}>
         {/* `grid-cols-1`, not a bare `grid`: an implicit column takes a floor
             from its widest item and refuses to shrink below it, which is what
-            put /sms into a horizontal scroll on a phone. Five controls at
-            three across, so the last row is the two narrowest. */}
+            put /sms into a horizontal scroll on a phone. Six controls at
+            three across, so both rows are full. */}
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           <Input
             placeholder="Search by name…"
@@ -106,6 +113,11 @@ export default function MembersPage() {
             <option value="">Any service</option>
             <option value="first">First Service</option>
             <option value="second">Second Service</option>
+          </Select>
+          <Select value={benmp} onChange={(e) => setBenmp(e.target.value)}>
+            <option value="">Any partnership</option>
+            <option value="yes">BENMP Partners</option>
+            <option value="no">Not partners</option>
           </Select>
           <Select value={constituency} onChange={(e) => setConstituency(e.target.value)}>
             <option value="">Any constituency</option>

@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from 'react'
 import { Button } from '@/shared/Button'
-import { Checkbox } from '@/shared/Checkbox'
+import { Checkbox, CheckboxField } from '@/shared/Checkbox'
 import { Description, ErrorMessage, Field, FieldGroup, Fieldset, Label, Legend } from '@/shared/fieldset'
 import Input from '@/shared/Input'
 import Select from '@/shared/Select'
@@ -93,6 +93,7 @@ export default function MemberForm({
     restrict?.constituency.id ?? initial?.constituency_id ?? '',
   )
   const [smsTemplate, setSmsTemplate] = useState(initial?.sms_template_id ?? '')
+  const [benmpPartner, setBenmpPartner] = useState(initial?.benmp_partner ?? false)
   const [bacentas, setBacentas] = useState<Set<string>>(new Set(initialBacentaIds ?? []))
   const [localError, setLocalError] = useState<string | null>(null)
 
@@ -207,6 +208,9 @@ export default function MemberForm({
       // "leave bacentas alone" and an empty array as "clear them" — and this
       // form always knows the complete answer for this person, so it says so.
       bacenta_ids: [...bacentas],
+      // Always sent, by a head as well as an admin: this form shows the tick
+      // box to both, so it always knows the complete answer.
+      benmp_partner: benmpPartner,
       // The two fields a head is not asked for are OMITTED rather than sent
       // with a made-up value. On create the server supplies `active` and the
       // standard birthday message; sending them from a form that never showed
@@ -344,6 +348,31 @@ export default function MemberForm({
               </Field>
             )}
           </div>
+
+          {/*
+            Shown to a head as well as an admin, unlike Status and the birthday
+            message beside it. This records something the MEMBER said — that
+            they partner with the campaign — and the head at the desk is the
+            person they said it to. See the note in `headEditScope`.
+          */}
+          {/* `CheckboxField`, not a bare <label> around the control. A Headless
+              UI checkbox renders a span with role="checkbox", so wrapping it in
+              a plain label does NOT make the text toggle it — the tick box
+              itself would be the only target, which on a phone is a 24px one.
+              `Field` does the aria association properly. */}
+          <CheckboxField className="mt-4">
+            <Checkbox
+              checked={benmpPartner}
+              onChange={(v: boolean) => setBenmpPartner(v)}
+              color="amber"
+            />
+            <Label>BENMP Partner</Label>
+            <Description>
+              Contributes monthly to the Global Healing Jesus Campaign, and is sent a reminder
+              to renew. Tick only if they have actually signed up — this is what decides who
+              the church texts.
+            </Description>
+          </CheckboxField>
         </FieldGroup>
 
         <FieldGroup>
