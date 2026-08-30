@@ -7,8 +7,8 @@
 //   category     — a FAMILY of bacentas ("Choir" over Biazo / Living Waters).
 //                  Optional: "Technical Team" is a bacenta with no family.
 
-/** Which half of the app a leader is looking at. */
-export type GroupKind = 'constituency' | 'bacenta'
+/** Which part of the app a leader is looking at. */
+export type GroupKind = 'constituency' | 'bacenta' | 'basonta'
 
 export type Constituency = {
   $id: string
@@ -48,12 +48,59 @@ export type Bacenta = {
   $createdAt: string
 }
 
+export type BasontaCategory = {
+  $id: string
+  name: string
+  description: string | null
+  sort_order: number
+  created_by: string | null
+  $createdAt: string
+}
+
+/**
+ * The work group a member SERVES in — choir, technical team, media, ushers.
+ *
+ * Structurally identical to what `Bacenta` was before the split, and written
+ * out in full rather than aliased to it ON PURPOSE: the two diverge as soon as
+ * a bacenta gains its `constituency_id`, and an alias would silently drag that
+ * change into a place it does not belong.
+ */
+export type Basonta = {
+  $id: string
+  name: string
+  /**
+   * `null` is the STANDALONE basonta — "Technical Team", which has members
+   * directly under it rather than sibling groups. It is not a missing value.
+   */
+  category_id: string | null
+  description: string | null
+  head_user_id: string | null
+  head_name: string | null
+  sort_order: number
+  created_by: string | null
+  $createdAt: string
+}
+
 /** A row in a list, with the counts the UI needs and no extra round trip. */
 export type ConstituencyWithCount = Constituency & { member_count: number }
 export type BacentaWithCount = Bacenta & {
   member_count: number
   /** Resolved from `category_id`; null for a standalone bacenta. */
   category_name: string | null
+}
+
+export type BasontaWithCount = Basonta & {
+  member_count: number
+  /** Resolved from `category_id`; null for a standalone basonta. */
+  category_name: string | null
+}
+
+/** The basontas page, same three buckets as the bacenta tree it came from. */
+export type BasontaTree = {
+  categories: { category: BasontaCategory; basontas: BasontaWithCount[] }[]
+  standalone: BasontaWithCount[]
+  /** Basontas whose `category_id` matches no category. Should be empty. */
+  orphans: BasontaWithCount[]
 }
 
 /**
@@ -84,6 +131,19 @@ export type BacentaCategoryInput = {
 export type BacentaInput = {
   name: string
   /** Omit or pass null to create a standalone bacenta. */
+  category_id?: string | null
+  description?: string | null
+  head_user_id?: string | null
+}
+
+export type BasontaCategoryInput = {
+  name: string
+  description?: string | null
+}
+
+export type BasontaInput = {
+  name: string
+  /** Omit or pass null to create a standalone basonta. */
   category_id?: string | null
   description?: string | null
   head_user_id?: string | null
@@ -141,6 +201,16 @@ export type BacentaCategoryResponse =
   | { ok: true; category: BacentaCategory }
   | { ok: false; error: string }
 
+export type ListBasontasResponse =
+  | { ok: true; categories: BasontaCategory[]; basontas: BasontaWithCount[] }
+  | { ok: false; error: string }
+
+export type BasontaResponse = { ok: true; basonta: Basonta } | { ok: false; error: string }
+
+export type BasontaCategoryResponse =
+  | { ok: true; category: BasontaCategory }
+  | { ok: false; error: string }
+
 export type MembershipResponse =
   | ({ ok: true } & MembershipResult)
   | { ok: false; error: string }
@@ -166,7 +236,7 @@ export type GroupDetailResponse =
   | {
       ok: true
       kind: GroupKind
-      group: Constituency | Bacenta
+      group: Constituency | Bacenta | Basonta
       members: GroupMember[]
     }
   | { ok: false; error: string }
@@ -180,6 +250,7 @@ export type MyGroupsResponse =
       ok: true
       constituencies: ConstituencyWithCount[]
       bacentas: BacentaWithCount[]
+      basontas: BasontaWithCount[]
     }
   | { ok: false; error: string }
 

@@ -468,6 +468,73 @@ async function setupBacentaMembers() {
   ])
 }
 
+// --- basontas ---------------------------------------------------------------
+//
+// The service groups: choir, technical team, media, ushers. Structurally these
+// are what `bacentas` held before the split, and the shape is copied verbatim
+// rather than "improved" in transit — every rule that governed a bacenta
+// (name unique per CATEGORY, `category_id === null` IS standalone, membership
+// written as a diff) governs a basonta unchanged, and re-deriving them would
+// be how one of them quietly stops being true.
+
+async function setupBasontaCategories() {
+  console.log('\nbasonta_categories')
+  await ensureCollection(COLLECTIONS.basonta_categories, 'Basonta Categories')
+  await ensureStringAttribute(COLLECTIONS.basonta_categories, 'name', 96, true)
+  await ensureStringAttribute(COLLECTIONS.basonta_categories, 'description', 512, false)
+  await ensureIntegerAttribute(COLLECTIONS.basonta_categories, 'sort_order', true)
+  await ensureStringAttribute(COLLECTIONS.basonta_categories, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.basonta_categories)
+  await ensureIndex(COLLECTIONS.basonta_categories, 'name_unique', 'unique', ['name'])
+  await ensureIndex(COLLECTIONS.basonta_categories, 'by_sort', 'key', ['sort_order'])
+}
+
+async function setupBasontas() {
+  console.log('\nbasontas')
+  await ensureCollection(COLLECTIONS.basontas, 'Basontas')
+  await ensureStringAttribute(COLLECTIONS.basontas, 'name', 96, true)
+  // NULL is meaningful: it is the standalone basonta ("Technical Team"), the
+  // one that has members directly under it rather than sibling groups. Do not
+  // add an `is_standalone` boolean beside this — two fields encoding one fact
+  // is two fields that can disagree.
+  await ensureStringAttribute(COLLECTIONS.basontas, 'category_id', 64, false)
+  await ensureStringAttribute(COLLECTIONS.basontas, 'description', 512, false)
+  await ensureStringAttribute(COLLECTIONS.basontas, 'head_user_id', 64, false)
+  await ensureStringAttribute(COLLECTIONS.basontas, 'head_name', 128, false)
+  await ensureIntegerAttribute(COLLECTIONS.basontas, 'sort_order', true)
+  await ensureStringAttribute(COLLECTIONS.basontas, 'created_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.basontas)
+  // NOT unique: "Youth" under Choir and "Youth" under Ushers are two different
+  // groups and both are legitimate. Uniqueness is enforced per category in
+  // `lib/groups/server.ts`, where the category is known.
+  await ensureIndex(COLLECTIONS.basontas, 'by_category', 'key', ['category_id'])
+  await ensureIndex(COLLECTIONS.basontas, 'by_head', 'key', ['head_user_id'])
+  await ensureIndex(COLLECTIONS.basontas, 'by_name', 'key', ['name'])
+  await ensureIndex(COLLECTIONS.basontas, 'by_sort', 'key', ['sort_order'])
+}
+
+async function setupBasontaMembers() {
+  console.log('\nbasonta_members')
+  await ensureCollection(COLLECTIONS.basonta_members, 'Basonta Members')
+  await ensureStringAttribute(COLLECTIONS.basonta_members, 'basonta_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.basonta_members, 'member_id', 64, true)
+  await ensureStringAttribute(COLLECTIONS.basonta_members, 'added_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.basonta_members)
+  await ensureIndex(COLLECTIONS.basonta_members, 'by_basonta', 'key', ['basonta_id'])
+  // The hot query for the member detail page and the registration form:
+  // "which basontas is this person in?"
+  await ensureIndex(COLLECTIONS.basonta_members, 'by_member', 'key', ['member_id'])
+  // One row per pair. The assigner writes a diff, but two admins ticking the
+  // same person at the same moment is what this index is actually for.
+  await ensureIndex(COLLECTIONS.basonta_members, 'pair_unique', 'unique', [
+    'basonta_id',
+    'member_id',
+  ])
+}
+
 async function setupPushSubscriptions() {
   console.log('\npush_subscriptions')
   await ensureCollection(COLLECTIONS.push_subscriptions, 'Push Subscriptions')
@@ -798,6 +865,11 @@ async function main() {
   await setupBacentaCategories()
   await setupBacentas()
   await setupBacentaMembers()
+  // Same ordering rule one collection over: a basonta's category_id points at
+  // a basonta category, so the categories have to exist first.
+  await setupBasontaCategories()
+  await setupBasontas()
+  await setupBasontaMembers()
   await setupPushSubscriptions()
   await setupNotificationRuns()
   await setupSmsTemplates()
