@@ -1610,6 +1610,77 @@ two rows that exist, so both were delivered to whatever their history.
 `vapidSubjectProblem()` and the no-default rule stay. What was silently broken
 is now silently working, and only the observation could tell the two apart.
 
+## Constituency heads may now delete — 2026-08-31
+
+The church asked for heads to create, edit and delete members. Two of the three
+already worked: `POST /api/members` and `PATCH /api/members/[id]` have been
+`requireRole(['admin', 'leader'])` since Plan 3. What was missing was DELETE,
+and three fields the edit refused.
+
+### The line is drawn at the CONSTITUENCY, and per field
+
+Not at "is a head". Every head who can open a member still corrects an ordinary
+detail; four writes belong to the head of the member's OWN constituency:
+
+| | any head | constituency head |
+|---|---|---|
+| name, numbers, address, birthday, carer, photo | yes | yes |
+| `status` | no | yes |
+| `sms_template_id` | no | yes |
+| `bacenta_id` (move) | no | yes, within their own constituency |
+| **delete outright** | no | yes |
+
+A basonta head marking somebody `inactive` would remove them from the matcher's
+gallery CHURCH-WIDE on the strength of running one serving group. So
+`runsTheirConstituency` is a separate test from `inScope` inside
+`headEditScope()`, and collapsing the two is the bug this shape exists to
+prevent.
+
+### What a head's delete actually costs
+
+The same cascade an admin's is — `biometric_templates`, `meeting_members`,
+`basonta_members`, `sms_messages` and **`attendance_records`**, plus
+`releaseCharges`. No undo, and nothing afterwards reports the rows existed. The
+confirm dialog names all of it and points at Inactive, which is a real
+alternative now that the same head can set it.
+
+`headDeleteScope()` takes ONLY `{ constituencies }`. The signature is the
+enforcement: the argument cannot express a bacenta head, so no later edit widens
+it by accident, and there is a test that says so. An UNASSIGNED member is
+refused to every head — nobody heads "unassigned", and an empty field read as a
+wildcard is how a record with no owner gets deleted by whoever finds it first.
+
+### Two reads had to open, and exactly two
+
+`GET /api/bacentas` (narrowed server-side to places inside constituencies they
+head — a picker offering a neighbour's bacenta is a picker offering a 403) and
+`GET /api/sms/templates`. The second is the unavoidable cost of letting a head
+choose a birthday message: picking from a list of ids nobody can read is not
+picking. **`POST /api/sms/send` still refuses a leader** — `canSendSmsCategory`
+has no `leader` entry.
+
+`assignableBacentas` on `headEditScope()` is optional and defaults to NONE, so a
+caller that forgets it refuses every move rather than permitting every one.
+There is a test for that default specifically, because it is the direction this
+has to fail in.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **354 passed**, 4 skipped (was 342): 12 new, covering both
+  halves of every newly-opened field, the destination check, the forgotten-
+  parameter default, and all five `headDeleteScope` cases.
+- `npm run build` — compiles.
+
+### Not verified
+
+**No browser pass, and no live-API proof.** The `elevated` form controls and the
+head's Danger zone are type-checked and built, not clicked; `scripts/e2e-groups.mjs`
+has no coverage of any of this and cannot run anyway until the stale
+`SEED_ADMIN_*` pair is fixed. The enforcement is server-side and unit-tested, so
+what is unproven is the wiring, not the rule — but a Delete button is the last
+place to assume wiring works.
+
 ## Bacenta and Basonta, split — 2026-08-30
 
 `bacentas` was one collection doing two unrelated jobs, and the church could not

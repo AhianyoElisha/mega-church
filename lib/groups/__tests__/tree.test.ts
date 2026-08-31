@@ -3,6 +3,7 @@ import {
   buildBacentaTree,
   diffMembership,
   headBasontaMerge,
+  headDeleteScope,
   headEditScope,
   headRegistrationScope,
   headsAnything,
@@ -362,13 +363,59 @@ describe('headEditScope', () => {
     expect(out).toMatchObject({ ok: false, status: 403 })
   })
 
-  it('refuses MOVING the member to another bacenta, and says so', () => {
-    // The same rule as constituency_id one level down: where somebody LIVES is
-    // an administrator's to change.
+  it('lets a CONSTITUENCY head move a member between places in their own constituency', () => {
+    const out = headEditScope(
+      { fields: { bacenta_id: 'p2' }, basonta_ids: undefined },
+      member,
+      { ...heads, assignableBacentas: ['p1', 'p2'] },
+    )
+    expect(out).toEqual({ ok: true, fields: { bacenta_id: 'p2' }, basonta_ids: undefined })
+  })
+
+  it('lets a constituency head UNFILE a member from their bacenta', () => {
+    // `null` takes them out of a place without taking them out of the
+    // constituency, which is a different act from a move and must not be
+    // caught by the destination check.
+    const out = headEditScope(
+      { fields: { bacenta_id: null }, basonta_ids: undefined },
+      member,
+      { ...heads, assignableBacentas: ['p1', 'p2'] },
+    )
+    expect(out).toEqual({ ok: true, fields: { bacenta_id: null }, basonta_ids: undefined })
+  })
+
+  it('refuses a move to a bacenta in someone ELSE’s constituency', () => {
+    // Assigning a bacenta MOVES, so an unchecked destination is the
+    // constituency_id refusal arriving through a different door.
+    const out = headEditScope(
+      { fields: { bacenta_id: 'p9' }, basonta_ids: undefined },
+      member,
+      { ...heads, assignableBacentas: ['p1', 'p2'] },
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toMatch(/not in a constituency you head/i)
+  })
+
+  it('refuses every move when assignableBacentas is not supplied at all', () => {
+    // The parameter is optional, and a caller that forgets it must refuse every
+    // move rather than permit every move. This is the direction it has to fail
+    // in, and it is the whole reason the default is an empty list.
     const out = headEditScope(
       { fields: { bacenta_id: 'p2' }, basonta_ids: undefined },
       member,
       heads,
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('refuses a move by a BACENTA head who does not run the constituency', () => {
+    // Reachable for an ordinary correction (they head p1), and still refused
+    // this one — the narrowing is per FIELD, not per member.
+    const out = headEditScope(
+      { fields: { bacenta_id: 'p2' }, basonta_ids: undefined },
+      { constituency_id: 'somewhere-else', bacenta_id: 'p1', basonta_ids: [] },
+      { ...heads, assignableBacentas: ['p1', 'p2'] },
     )
     expect(out).toMatchObject({ ok: false, status: 403 })
     if (out.ok) throw new Error('expected a refusal')
@@ -401,17 +448,76 @@ describe('headEditScope', () => {
     })
   })
 
-  // Named, not silently dropped — a head who is told nothing assumes it saved.
-  it('refuses a status change and says so', () => {
-    const out = headEditScope({ fields: { status: 'inactive' }, basonta_ids: undefined }, member, heads)
+  it('lets a CONSTITUENCY head make one of their own members inactive', () => {
+    const out = headEditScope(
+      { fields: { status: 'inactive' }, basonta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toEqual({ ok: true, fields: { status: 'inactive' }, basonta_ids: undefined })
+  })
+
+  it('lets a constituency head change which birthday message a member is sent', () => {
+    const out = headEditScope(
+      { fields: { sms_template_id: 't1' }, basonta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toEqual({ ok: true, fields: { sms_template_id: 't1' }, basonta_ids: undefined })
+  })
+
+  /*
+   * The other half of the same rule, and the half worth keeping if this block
+   * is ever trimmed.
+   *
+   * `status` and `sms_template_id` opened to the head of the member's OWN
+   * constituency. A bacenta or basonta head reaches the very same member for an
+   * ordinary correction and must still be refused these — marking somebody
+   * inactive removes them from the matcher's gallery CHURCH-WIDE, which is not
+   * something running one serving group is a basis for.
+   *
+   * Named, not silently dropped: a head told nothing assumes it saved.
+   */
+  const basontaHeadsOnly = {
+    constituencies: [] as string[],
+    bacentas: [] as string[],
+    basontas: ['b1'],
+  }
+  const memberElsewhere = {
+    constituency_id: 'somewhere-else',
+    bacenta_id: null,
+    basonta_ids: ['b1'],
+  }
+
+  it('still refuses a status change by a BASONTA head, and says so', () => {
+    const out = headEditScope(
+      { fields: { status: 'inactive' }, basonta_ids: undefined },
+      memberElsewhere,
+      basontaHeadsOnly,
+    )
     expect(out).toMatchObject({ ok: false, status: 403 })
     if (out.ok) throw new Error('expected a refusal')
     expect(out.error).toMatch(/active or inactive/i)
   })
 
-  it('refuses a birthday-message change', () => {
-    const out = headEditScope({ fields: { sms_template_id: 't1' }, basonta_ids: undefined }, member, heads)
+  it('still refuses a birthday-message change by a basonta head', () => {
+    const out = headEditScope(
+      { fields: { sms_template_id: 't1' }, basonta_ids: undefined },
+      memberElsewhere,
+      basontaHeadsOnly,
+    )
     expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('but that same basonta head can still correct an ordinary field', () => {
+    // Proving the narrowing is per FIELD. If this ever fails, the three fields
+    // were gated by widening the whole scope check instead.
+    const out = headEditScope(
+      { fields: { address: 'x' }, basonta_ids: undefined },
+      memberElsewhere,
+      basontaHeadsOnly,
+    )
+    expect(out.ok).toBe(true)
   })
 
   it('refuses MOVING the member to another constituency', () => {
@@ -453,5 +559,57 @@ describe('headEditScope', () => {
     const out = headEditScope({ fields: { address: 'x' }, basonta_ids: undefined }, member, heads)
     if (!out.ok) throw new Error('expected acceptance')
     expect(out.basonta_ids).toBeUndefined()
+  })
+})
+
+/*
+ * Deleting is the narrowest thing a head can do, and the most expensive.
+ *
+ * `deleteMemberCascade` purges the member's biometric templates, roster rows,
+ * basonta memberships, SMS log entries and ATTENDANCE RECORDS, then releases
+ * everybody in their care. None of it is recoverable and nothing afterwards
+ * reports that it used to exist — so this check is the only thing standing
+ * between a head and an irreversible write, which is exactly why it is pure and
+ * tested here rather than only reachable through a live route.
+ */
+describe('headDeleteScope', () => {
+  const heads = { constituencies: ['c1'] }
+
+  it('lets a constituency head delete a member in their own constituency', () => {
+    expect(headDeleteScope({ constituency_id: 'c1' }, heads)).toEqual({ ok: true })
+  })
+
+  it('refuses a member in a constituency they do not head', () => {
+    const out = headDeleteScope({ constituency_id: 'c2' }, heads)
+    expect(out).toMatchObject({ ok: false, status: 403 })
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toMatch(/not in a constituency you head/i)
+  })
+
+  it('refuses an UNASSIGNED member rather than treating them as everybody’s', () => {
+    // Nobody heads "unassigned". Reading an empty field as open season is how a
+    // record with no owner gets deleted by whoever finds it first.
+    const out = headDeleteScope({ constituency_id: null }, heads)
+    expect(out).toMatchObject({ ok: false, status: 403 })
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toMatch(/not filed into any constituency/i)
+  })
+
+  it('refuses everything for a head with no constituencies at all', () => {
+    // A leader who heads only a basonta. They may correct this member; they may
+    // not delete them, and an empty list must not read as a wildcard.
+    expect(headDeleteScope({ constituency_id: 'c1' }, { constituencies: [] })).toMatchObject({
+      ok: false,
+      status: 403,
+    })
+  })
+
+  it('is not satisfied by heading the member’s BACENTA or BASONTA', () => {
+    // The signature is the enforcement: nothing but constituencies is passed
+    // in, so no future edit can widen this by accident. If somebody adds a
+    // `bacentas` field to the heads argument, this test is where they should
+    // have to argue for it.
+    const out = headDeleteScope({ constituency_id: 'somewhere-else' }, heads)
+    expect(out).toMatchObject({ ok: false, status: 403 })
   })
 })

@@ -39,6 +39,21 @@ import type { Member, MemberInput } from '@/lib/members/types'
 export type MemberFormRestriction = {
   constituency: { id: string; name: string }
   basontas: { $id: string; name: string; category_name: string | null }[]
+  /**
+   * This head runs the member's OWN constituency, so `status`, `bacenta_id`
+   * and the birthday template are theirs to set after all.
+   *
+   * A restriction with a raised floor rather than a second component. The head
+   * is still fixed to one constituency and still ticks only the basontas they
+   * head — those never open — so the alternative was a near-copy of this form
+   * differing in three controls, and two forms drift.
+   *
+   * It is a claim about the CALLER, so only a page that knows both the member's
+   * constituency and the head's own groups may set it, and the server does not
+   * take its word for anything: `headEditScope` re-derives the same fact from
+   * `leaderScope` and refuses each field by name (PRD §2.5).
+   */
+  elevated?: boolean
 }
 
 type BasontaSection = {
@@ -102,10 +117,23 @@ export default function MemberForm({
   // them: the 403 would cache as an error and put a failure on their screen
   // that has nothing to do with anything they did.
   const restricted = !!restrict
+  /**
+   * A head editing somebody in a constituency they run.
+   *
+   * `restricted && elevated` is a real combination and the interesting one: the
+   * constituency stays a fact and the basonta ticks stay narrowed, while the
+   * three formerly admin-only controls appear.
+   */
+  const elevated = !!restrict?.elevated
   const constituencyQuery = useConstituencies({ enabled: !restricted })
-  const birthdayTemplates = useSmsTemplates('birthday', { enabled: !restricted })
+  // Both of these now serve a leader too — `/api/sms/templates` GET and
+  // `/api/bacentas` GET admit one, the latter narrowed server-side to the
+  // places inside constituencies they head. Still not fired for a head who is
+  // NOT elevated: the 403 would cache as an error and put a failure on their
+  // screen that has nothing to do with anything they did.
+  const birthdayTemplates = useSmsTemplates('birthday', { enabled: !restricted || elevated })
   const basontaQuery = useBasontas({ enabled: !restricted })
-  const bacentaQuery = useBacentas({ enabled: !restricted })
+  const bacentaQuery = useBacentas({ enabled: !restricted || elevated })
 
   const constituencies = constituencyQuery.data?.ok
     ? constituencyQuery.data.constituencies
@@ -220,7 +248,7 @@ export default function MemberForm({
       // `bacenta_id` rides with the admin-only fields for the same reason
       // `constituency_id` is fixed for a head: where somebody LIVES is not a
       // registration-desk decision, and `headEditScope` refuses it by name.
-      ...(restricted
+      ...(restricted && !elevated
         ? {}
         : { sms_template_id: smsTemplate || null, status, bacenta_id: bacenta || null }),
     })
@@ -341,7 +369,7 @@ export default function MemberForm({
                 marked present at either service.
               </Description>
             </Field>
-            {!restricted && (
+            {(!restricted || elevated) && (
               <Field>
                 <Label>Status</Label>
                 <Select
@@ -385,9 +413,12 @@ export default function MemberForm({
         <FieldGroup>
           <Legend>Constituency</Legend>
           {restrict ? (
-            // A statement, not a disabled <Select>. A greyed-out dropdown reads
-            // as "this is broken"; a sentence reads as "this is settled", which
-            // is what it is — they came here from that constituency's own page.
+            <>
+            {/* A statement, not a disabled <Select>. A greyed-out dropdown reads
+                as "this is broken"; a sentence reads as "this is settled", which
+                is what it is — they came here from that constituency's own page.
+                The constituency stays a statement even when elevated: moving
+                somebody OUT is refused to every head, elevated or not. */}
             <div className="rounded-xl bg-neutral-50 px-4 py-3 ring-1 ring-neutral-900/5 dark:bg-neutral-900/40 dark:ring-white/10">
               <p className="text-sm text-neutral-500 dark:text-neutral-400">Where they live</p>
               <p className="font-semibold text-neutral-950 dark:text-white">
@@ -399,6 +430,29 @@ export default function MemberForm({
                   : 'You are registering into the constituency you head. To file somebody into a different one, ask an administrator.'}
               </p>
             </div>
+            {elevated && (
+              <Field className="mt-4">
+                <Label>Bacenta</Label>
+                <Select
+                  value={bacenta}
+                  onChange={(e) => setBacenta(e.target.value)}
+                  disabled={bacentaQuery.isLoading}
+                >
+                  <option value="">— not in one yet —</option>
+                  {(bacentaQuery.data?.ok ? bacentaQuery.data.bacentas : []).map((b) => (
+                    <option key={b.$id} value={b.$id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </Select>
+                <Description>
+                  The place inside your constituency where they live. Only your own places are
+                  listed. Moving somebody here TAKES THEM OUT of wherever they were — a member
+                  lives in exactly one — and it releases whoever was looking after them.
+                </Description>
+              </Field>
+            )}
+            </>
           ) : (
             <>
               <Field>
@@ -449,7 +503,7 @@ export default function MemberForm({
           )}
         </FieldGroup>
 
-        {!restricted && (
+        {(!restricted || elevated) && (
           <FieldGroup>
             <Legend>Birthday message</Legend>
             <Field>

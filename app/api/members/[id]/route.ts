@@ -13,11 +13,12 @@ import {
   constituencyExists,
   getConstituency,
   leaderScope,
+  listBacentas,
   setMemberBasontas,
   unknownBasontaIds,
   careCandidates,
 } from '@/lib/groups/server'
-import { headEditScope } from '@/lib/groups/tree'
+import { headDeleteScope, headEditScope } from '@/lib/groups/tree'
 import { careAssignmentProblem } from '@/lib/groups/care'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 import { fullName, type Member, type MemberResponse } from '@/lib/members/types'
@@ -159,6 +160,30 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   if (!isAdmin) {
 
     const heads = await leaderScope(databases, auth.user.id)
+    const headedConstituencies = heads.constituencies.map((c) => c.$id)
+
+    /**
+     * The places a constituency head may move somebody TO.
+     *
+     * Every bacenta sitting in a constituency they run — deliberately NOT the
+     * bacentas they personally head. A constituency head is answerable for all
+     * the places in their constituency, including the ones with their own head,
+     * and restricting the move to `heads.bacentas` would make the common case
+     * (a head who runs the constituency but no individual place) unable to move
+     * anybody anywhere.
+     *
+     * Fetched only when a head actually sends a `bacenta_id`, because the vast
+     * majority of head edits are a phone number and this is a whole-collection
+     * read.
+     */
+    let assignableBacentas: string[] = []
+    if ('bacenta_id' in fields && fields.bacenta_id !== current.member.bacenta_id) {
+      const all = await listBacentas(databases)
+      assignableBacentas = all
+        .filter((b) => b.constituency_id !== null && headedConstituencies.includes(b.constituency_id))
+        .map((b) => b.$id)
+    }
+
     const narrowed = headEditScope(
       { fields, basonta_ids: bacentaIds },
       {
@@ -167,9 +192,10 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
         basonta_ids: current.basonta_ids,
       },
       {
-        constituencies: heads.constituencies.map((c) => c.$id),
+        constituencies: headedConstituencies,
         bacentas: heads.bacentas.map((b) => b.$id),
         basontas: heads.basontas.map((b) => b.$id),
+        assignableBacentas,
       },
     )
     if (!narrowed.ok) {
@@ -292,14 +318,57 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
  * This destroys attendance history. The UI asks twice and suggests marking the
  * member inactive instead, which is almost always what is actually wanted.
  */
+/**
+ * DELETE a member, and everything hanging off them.
+ *
+ * Open to an admin and to the head of the member's own CONSTITUENCY — narrower
+ * than PATCH, which a bacenta or basonta head may also call. `headDeleteScope`
+ * is where that narrowing lives and why it is pure.
+ *
+ * This is the most destructive write in the application. `deleteMemberCascade`
+ * purges biometric templates, roster rows, basonta memberships, SMS log rows
+ * and ATTENDANCE RECORDS, and `releaseCharges` frees anybody left in this
+ * member's pastoral care. Appwrite has no cascade and no undo, the attendance
+ * rows are the church's own account of who was in the building, and nothing
+ * anywhere afterwards reports that they used to exist.
+ *
+ * The member is LOADED BEFORE ANYTHING IS DELETED, for two reasons that are
+ * easy to collapse into one and are not the same: the scope check needs to know
+ * which constituency they are in, and a 404 for a member who was never there
+ * has to be distinguishable from a 403 for one a head may not touch. Deleting
+ * first and checking after would be a scope check that runs too late to matter.
+ */
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
-  const auth = await requireRole('admin')
+  const auth = await requireRole(['admin', 'leader'])
   if ('error' in auth) return auth.error
+  const isAdmin = auth.user.label === 'admin'
 
   const { id } = await params
   const { databases } = createAdminClient()
+
+  let member: Member
+  try {
+    const doc = await databases.getDocument(DATABASE_ID, COLLECTIONS.members, id)
+    member = memberDocToMember(doc as Models.Document & Record<string, unknown>)
+  } catch {
+    return NextResponse.json({ ok: false, error: 'No such member.' }, { status: 404 })
+  }
+
+  if (!isAdmin) {
+    const heads = await leaderScope(databases, auth.user.id)
+    const allowed = headDeleteScope(
+      { constituency_id: member.constituency_id },
+      { constituencies: heads.constituencies.map((c) => c.$id) },
+    )
+    if (!allowed.ok) {
+      return NextResponse.json({ ok: false, error: allowed.error }, { status: allowed.status })
+    }
+  }
+
   try {
     const removed = await deleteMemberCascade(databases, id)
+    // The gallery is rebuilt from active members, and a deleted member must not
+    // still match on the very next press.
     invalidateCandidateCache()
     return NextResponse.json({ ok: true, removed })
   } catch {
