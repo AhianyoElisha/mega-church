@@ -295,6 +295,52 @@ large type; body text is black. Never yellow text on white below 18pt.
   half the devices reject is not safer than none, it is the same silent failure
   with nothing to report it. **Verify push on BOTH an Android and an iPhone** —
   one of the two providers checks things the other does not.
+- **A member's TITLE is a code, and it is never a placeholder on its own.**
+  `members.title` stores `'lady_reverend'`, not the words — see
+  `lib/members/titles.ts`, which owns the closed list and the display forms, so
+  a change of house style is one line and not a migration across the
+  congregation. **There is deliberately no `{{title}}`.** Most of the church has
+  none, and `"Dear {{title}},"` renders `"Dear ,"` for them — the same
+  unrecallable failure as `{{name}}`, arriving through a field that legitimately
+  exists. Only COMPOSED placeholders are offered, each falling back to the bare
+  name: `{{salutation}}` (title + surname, else first name),
+  `{{title_first_name}}`, `{{titled_full_name}}`. The empty case is impossible
+  to express rather than merely discouraged.
+- **`{{salutation}}` drops to the FIRST name when untitled, not the surname.**
+  A bare surname reads as a summons. Titled is formal and untitled is warm,
+  which is how the church addresses the two groups out loud.
+- **The existing name placeholders stay title-BLIND.** `{{first_name}}`,
+  `{{full_name}}` and the rest render exactly what they always did. Making them
+  title-aware would rewrite the meaning of every template already written
+  without anybody editing one.
+- **A title is not in `full_name`.** That column is what search matches and what
+  a roster shows; a title in it makes "Pastor" match every pastor in the church
+  when an usher types it looking for a surname.
+- **An unrecognised title code reads as NO title, and is refused on write.**
+  `memberDocToMember` narrows with `isMemberTitle` rather than casting, so a
+  code hand-edited in the console never reaches a phone as raw text; the
+  validator refuses it outright rather than coercing, the same posture as
+  `benmp_partner`.
+- **A title is priced, not just rendered.** The church is billed per
+  160-character part and the title is prepended inside that budget, so the same
+  template is one part for most of the congregation and two for anybody
+  addressed "Lady Reverend". The template editor prices `longestTitle()`, NOT
+  the previewed sample — quoting high is the safe direction, the same rule
+  `isUnicode` follows. There is a test that a 140-character body crosses the
+  boundary on a long title.
+- **Setting a title is CONSTITUENCY-head tier, with `status`.** It resembles
+  `benmp_partner` — both record something the member stated — but the harm
+  differs: a wrong `benmp_partner` texts one person about a campaign, a wrong
+  title addresses a whole congregation's message to "Bishop" somebody who is
+  not one. Refused by name to a bacenta or basonta head.
+- **Never put a literal control byte in a source file.** `lib/sms/render.ts`
+  carried a NUL inside `isUnicode`'s character class — `/[^<NUL>-ÿ]/`, which
+  LOOKS like `/[^ -ÿ]/` in every editor and terminal. Git classified the whole
+  file as binary, so every diff of the SMS renderer showed `Bin 5900 -> 8880
+  bytes` and no change to the code that decides what the congregation receives
+  was ever reviewable. It is now written `\x00`, which is the same regex and
+  is text.
+
 - **An unknown `{{placeholder}}` REFUSES the send and names the token.**
   Substituting an empty string mails "Happy birthday !" to the congregation, at
   cost, with no recall. The placeholder set is closed (`PLACEHOLDERS` in

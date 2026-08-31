@@ -14,6 +14,7 @@ import { useBacentas, useBasontas, useConstituencies } from '@/lib/queries/group
 import { useSmsTemplates } from '@/lib/queries/sms'
 import { buildBasontaTree } from '@/lib/groups/tree'
 import type { Member, MemberInput } from '@/lib/members/types'
+import { MEMBER_TITLES, TITLES, isMemberTitle } from '@/lib/members/titles'
 
 /**
  * The form a constituency HEAD fills in, expressed as what they are NOT asked.
@@ -94,6 +95,7 @@ export default function MemberForm({
   onSubmit: (values: MemberFormValues) => void
   onCancel?: () => void
 }) {
+  const [title, setTitle] = useState<string>(initial?.title ?? '')
   const [first, setFirst] = useState(initial?.first_name ?? '')
   const [last, setLast] = useState(initial?.last_name ?? '')
   const [other, setOther] = useState(initial?.other_names ?? '')
@@ -248,9 +250,21 @@ export default function MemberForm({
       // `bacenta_id` rides with the admin-only fields for the same reason
       // `constituency_id` is fixed for a head: where somebody LIVES is not a
       // registration-desk decision, and `headEditScope` refuses it by name.
+      // Title rides with the elevated fields, not with the ordinary ones. A
+      // head who cannot set it must not SEND it either: `headEditScope` refuses
+      // the key's presence, so posting it unchanged would 403 an edit that only
+      // touched a phone number.
       ...(restricted && !elevated
         ? {}
-        : { sms_template_id: smsTemplate || null, status, bacenta_id: bacenta || null }),
+        : {
+            // Narrowed at the boundary rather than cast. The <select> can only
+            // produce valid codes, but the state is a string and the server
+            // refuses an unknown one — so agree with it here.
+            title: isMemberTitle(title) ? title : null,
+            sms_template_id: smsTemplate || null,
+            status,
+            bacenta_id: bacenta || null,
+          }),
     })
   }
 
@@ -369,6 +383,32 @@ export default function MemberForm({
                 marked present at either service.
               </Description>
             </Field>
+            {(!restricted || elevated) && (
+              <Field>
+                <Label>How they are addressed</Label>
+                <Select value={title} onChange={(e) => setTitle(e.target.value)}>
+                  <option value="">No title — addressed by first name</option>
+                  <optgroup label="Ministry">
+                    {MEMBER_TITLES.filter((t) => TITLES[t].group === 'ministry').map((t) => (
+                      <option key={t} value={t}>
+                        {TITLES[t].label}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Courtesy">
+                    {MEMBER_TITLES.filter((t) => TITLES[t].group === 'courtesy').map((t) => (
+                      <option key={t} value={t}>
+                        {TITLES[t].label}
+                      </option>
+                    ))}
+                  </optgroup>
+                </Select>
+                <Description>
+                  Used in bulk SMS, so a leader is addressed by their position and everybody
+                  else by their first name. It never affects attendance, search or rosters.
+                </Description>
+              </Field>
+            )}
             {(!restricted || elevated) && (
               <Field>
                 <Label>Status</Label>

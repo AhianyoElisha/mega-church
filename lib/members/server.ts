@@ -10,6 +10,7 @@ import { memberDocToMember } from '@/lib/attendance/server'
 import { nextMemberNo } from './numbering'
 import { looksLikeMemberNo } from './search'
 import { releaseCharges } from '@/lib/groups/server'
+import { isMemberTitle } from './titles'
 
 const PAGE = 100
 
@@ -61,6 +62,34 @@ export function validateMemberInput(
     if (last.length > 64) return { ok: false, error: 'Last name is too long (max 64).' }
     out.last_name = last
   }
+  /*
+   * Title. Refused rather than coerced when it is not one of ours — the same
+   * posture as `benmp_partner`. An unrecognised code stored here would either
+   * render as nothing (silently demoting a Reverend in a message the church
+   * paid to send) or render raw. Neither is something to learn about from the
+   * congregation.
+   *
+   * `null` and `''` are real, ordinary values and clear the title.
+   */
+  if (body.title !== undefined) {
+    // Compared as `unknown`: the form sends '' for "no title" and the declared
+    // input type does not admit it, so a narrow comparison would not compile
+    // while the value still arrives at runtime.
+    const rawTitle = body.title as unknown
+    if (rawTitle === null || rawTitle === '') {
+      out.title = null
+    } else if (!isMemberTitle(rawTitle)) {
+      return {
+        ok: false,
+        error: `"${String(rawTitle)}" is not a title the system knows. Choose one from the list.`,
+      }
+    } else {
+      out.title = rawTitle
+    }
+  } else if (need) {
+    out.title = null
+  }
+
   if (body.other_names !== undefined) {
     const other = typeof body.other_names === 'string' ? body.other_names.trim() : ''
     if (other.length > 96) return { ok: false, error: 'Other names are too long (max 96).' }
@@ -353,6 +382,7 @@ async function createMemberWithNumber(
   const doc = await databases.createDocument(DATABASE_ID, COLLECTIONS.members, ID.unique(), {
     ...withFullName(fields),
     member_no: memberNo,
+    title: fields.title ?? null,
     other_names: fields.other_names ?? null,
     photo_file_id: null,
     birth_month: fields.birth_month ?? null,

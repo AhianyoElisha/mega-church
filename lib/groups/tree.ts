@@ -404,6 +404,25 @@ export function headEditScope(
         'a member active or inactive. An inactive member stops being recognised by the scanner.',
     }
   }
+  /*
+   * A title is a claim of OFFICE, not a detail like a phone number.
+   *
+   * So it sits with `status` rather than with `benmp_partner`, which it
+   * otherwise resembles — both record something the member stated. The
+   * difference is who is harmed by a wrong one: a mistaken `benmp_partner`
+   * texts somebody about a campaign, and a mistaken title addresses a whole
+   * congregation's message to "Bishop" somebody who is not one. The head of
+   * the constituency they live in is the person who actually knows.
+   */
+  if ('title' in fields && !runsTheirConstituency) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        'Only an administrator, or the head of this member’s own constituency, can change ' +
+        'how a member is addressed.',
+    }
+  }
   if ('sms_template_id' in fields && !runsTheirConstituency) {
     return {
       ok: false,

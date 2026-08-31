@@ -2,6 +2,7 @@
 // is safe to pull into a browser bundle.
 
 import type { ServiceSlot } from '@/lib/appwrite/config'
+import type { MemberTitle } from './titles'
 
 export type MemberStatus = 'active' | 'inactive'
 
@@ -16,6 +17,17 @@ export type Member = {
    * hex id is not something anyone reads down a phone.
    */
   member_no: string | null
+  /**
+   * How the church addresses them — a CODE from `lib/members/titles.ts`
+   * (`'pastor'`), never the words. Null for most of the congregation, which is
+   * the ordinary case and not a missing value to be filled in.
+   *
+   * It is deliberately NOT part of `full_name`: that column is what search
+   * matches and what a roster shows, and a title in it would make "Pastor"
+   * match every pastor in the church when an usher typed it looking for a
+   * surname.
+   */
+  title: MemberTitle | null
   first_name: string
   last_name: string
   other_names: string | null
@@ -108,6 +120,7 @@ export function birthdayLabel(m: Pick<Member, 'birth_month' | 'birth_day'>): str
 }
 
 export type MemberInput = {
+  title?: MemberTitle | null
   first_name: string
   last_name: string
   other_names?: string | null
