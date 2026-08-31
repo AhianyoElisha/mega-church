@@ -17,7 +17,7 @@ for the phase breakdowns.
 | I | Constituencies + bacentas | ✅ done — Plan 2, verified live |
 | J | Head accounts (`leader`) | ✅ done — Plan 2, scoping proven server-side |
 | K | Birthday lead-time + `celebrations` role | ✅ done — Plan 2 |
-| L | PWA + Web Push | ✅ done — Plan 2. **Needs a scheduler wired; see below** |
+| L | PWA + Web Push | ✅ done — Plan 2. Scheduler wired; delivery observed on Android AND iPhone 2026-08-31 |
 | M | Head accounts created in-app | ✅ done — Plan 3 |
 | N | Per-constituency attendance exports | ✅ done — Plan 3 |
 | O | Bulk SMS (mNotify) | ✅ done — Plan 3, verified against a real handset |
@@ -1571,31 +1571,44 @@ why that page reports notifications off *on this device*.
 
 So the chain is verified end to end except its last link. Environment: set and
 read back per environment. Deployment: built after the override, and confirmed
-serving a key rather than `null`. Delivery: not yet observed.
+serving a key rather than `null`. Delivery: not yet observed **as of that
+writing** — closed the following morning, below.
 
-### What is still not proven
+### Proven — 2026-08-31
 
-**No push has been observed delivered from production since the change.** What
-remains is only the delivery itself — everything upstream of it is now checked.
+**Production push is now correct-by-OBSERVATION, on both providers.** The
+`birthday` run of 2026-08-31 06:00 UTC — the first morning that could answer
+this, because it is the first with celebrants since the `VAPID_SUBJECT` fix —
+landed and stamped every device:
 
-The evidence will be the `birthday` run stamping `last_success_at` in
-`push_subscriptions`. The Android row has been stamped since 2026-08-27; the
-iPhone row is the one that answers this. Until that read, production push is
-correct-by-construction and not correct-by-observation, which is precisely the
-distinction that let this bug live for months.
+    notification_runs  2026-08-31 / birthday
+      triggered_by  scheduler
+      ran_at        2026-08-31T06:21:13.025Z
+      celebrants    2          (Anthonia Okafor, Comfort Zowornu — 09-01)
+      sent          2
+      failed        0
+      status        sent
 
-**Most mornings cannot answer it.** `birthday` fires at lead 1 and exits
-`nobody_celebrating` when nobody has a birthday tomorrow — 2026-08-28, 08-29
-and 08-30 were all such days and stamped no device. Pressing "Send notification
-now" on one of them sends nothing either, for the same reason. **The first run
-that can answer it is 2026-08-31 06:00 UTC** (landing 06:21–06:29 on the Hobby
-flexible window), for the two celebrants on 09-01. After that: 09-03, 09-07,
-09-08, 09-09.
+| device | last_success_at | row updated |
+|---|---|---|
+| Android phone | 2026-08-31T06:21:13.982Z | 06:21:14.148Z |
+| **iPhone** | **2026-08-31T06:21:13.982Z** | 06:21:14.488Z |
 
-And when reading it, the iPhone's `2026-08-27T07:44:15.540Z` is **not** the
-answer — that stamp came from the local manual `sendToAll` test during the fix,
-while production still held the placeholder. Proof is that timestamp advancing,
-on a run row that says `triggered_by=scheduler`.
+That is the read the paragraph above was waiting for, and it satisfies every
+condition it set: the stamp ADVANCED off the old manual-test value, on a run row
+that says `triggered_by=scheduler`, with `failed: 0`. Apple's push service
+accepted the JWT, which is the one thing FCM could never have told us — an
+unreachable `sub` is a `403 BadJwtToken` from Apple and a shrug from Google, and
+that asymmetry is exactly how the placeholder survived for months.
+
+One detail worth writing down rather than discovering later: the iPhone's
+`push_subscriptions` row was CREATED `2026-08-30T12:36`, so it is a
+re-subscription and not the row that carried the 08-27 manual-test stamp. The
+proof is unaffected — the run reports `sent: 2, failed: 0` against exactly the
+two rows that exist, so both were delivered to whatever their history.
+
+`vapidSubjectProblem()` and the no-default rule stay. What was silently broken
+is now silently working, and only the observation could tell the two apart.
 
 ## Bacenta and Basonta, split — 2026-08-30
 
