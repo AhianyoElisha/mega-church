@@ -304,21 +304,43 @@ export function headRegistrationScope(
  * them in full. (Registering stays constituency-only, because neither a place
  * head nor a choir head has a basis for saying where somebody LIVES.)
  *
- * Four refusals, each naming the field rather than quietly dropping it. A
- * silent strip is how a head comes away believing they changed something:
+ * ## What a CONSTITUENCY head may now change, and what stays refused
  *
- *   status             flipping somebody `inactive` removes them from the
- *                      matcher's gallery church-wide.
- *   sms_template_id    picks which text the church pays to send.
- *   constituency_id    MOVING a member is an admin's job — it is the write
- *                      `onlyUnassigned` blocks on the bulk assigner, arriving
- *                      through a different door. Resending the value it already
- *                      has is not a move and is accepted, because the shared
- *                      form always sends the field.
- *   bacenta_id         same rule as constituency_id, one level down. A bacenta
- *                      is where somebody LIVES, and moving them between places
- *                      is the same kind of decision as moving them between
- *                      constituencies. Resent unchanged, it is accepted.
+ * `status`, `sms_template_id` and `bacenta_id` were refused to every head.
+ * They are now allowed to the head of the member's OWN CONSTITUENCY, and still
+ * refused to a bacenta or basonta head editing the same person.
+ *
+ * The split is the point, and it is the same asymmetry `headRegistrationScope`
+ * already draws. A constituency head runs the place a member LIVES and is
+ * answerable for that record; a choir head knows they sing on Sundays. Opening
+ * these three to every head would let a basonta head mark somebody inactive —
+ * removing them from the matcher's gallery CHURCH-WIDE — on the strength of
+ * running one serving group, which nobody asked for and which would be
+ * invisible afterwards.
+ *
+ * So the refusals now depend on WHICH group the head runs:
+ *
+ *   status             constituency head only. Flipping somebody `inactive`
+ *                      removes them from the matcher's gallery church-wide.
+ *   sms_template_id    constituency head only. Picks which text the church
+ *                      pays to send, in the church's own voice.
+ *   bacenta_id         constituency head only, and the DESTINATION must be a
+ *                      bacenta inside a constituency they head — otherwise a
+ *                      head could post somebody into a neighbour's place.
+ *                      Resent unchanged it is a no-op and dropped, because the
+ *                      shared form always sends the field.
+ *   constituency_id    still refused to everyone. MOVING a member out of a
+ *                      constituency is the write `onlyUnassigned` blocks on the
+ *                      bulk assigner, arriving through a different door — and
+ *                      the head of the constituency they are LEAVING is exactly
+ *                      the person with an interest in the answer. Resending the
+ *                      value it already has is not a move and is accepted.
+ *
+ * `assignableBacentas` is what makes the `bacenta_id` check possible without
+ * this function touching Appwrite: the route passes the bacentas that sit in
+ * constituencies this head runs. It is OPTIONAL and defaults to none, so a
+ * caller that forgets it refuses every move rather than permitting every move —
+ * the direction this has to fail in.
  *
  * `care_of_member_id` is deliberately NOT refused, and that is written down
  * because an absent entry in this list is invisible. Recording who looks after
@@ -341,6 +363,16 @@ export function headEditScope(
     constituencies: readonly string[]
     bacentas: readonly string[]
     basontas: readonly string[]
+    /**
+     * Bacentas sitting INSIDE a constituency this head runs — the places they
+     * may move somebody to. Not the bacentas they head: a constituency head
+     * moves members between all the places in their constituency, whether or
+     * not they personally run each one.
+     *
+     * Optional, defaulting to none, so a caller that forgets it refuses every
+     * move rather than allowing every move.
+     */
+    assignableBacentas?: readonly string[]
   },
 ): HeadEditScope {
   const inScope =
@@ -353,20 +385,32 @@ export function headEditScope(
 
   const fields = { ...input.fields }
 
-  if ('status' in fields) {
+  /**
+   * Does this head run the constituency the member LIVES in?
+   *
+   * Not "is this member in scope at all" — that is `inScope` above and is
+   * satisfied by heading any one of their three kinds of group. This is the
+   * narrower question the three newly-permitted fields turn on.
+   */
+  const runsTheirConstituency =
+    member.constituency_id !== null && heads.constituencies.includes(member.constituency_id)
+
+  if ('status' in fields && !runsTheirConstituency) {
     return {
       ok: false,
       status: 403,
       error:
-        'Only an administrator can make a member active or inactive. ' +
-        'An inactive member stops being recognised by the scanner.',
+        'Only an administrator, or the head of this member’s own constituency, can make ' +
+        'a member active or inactive. An inactive member stops being recognised by the scanner.',
     }
   }
-  if ('sms_template_id' in fields) {
+  if ('sms_template_id' in fields && !runsTheirConstituency) {
     return {
       ok: false,
       status: 403,
-      error: 'Only an administrator can change which birthday message a member is sent.',
+      error:
+        'Only an administrator, or the head of this member’s own constituency, can change ' +
+        'which birthday message a member is sent.',
     }
   }
   /*
@@ -402,16 +446,43 @@ export function headEditScope(
     delete fields.constituency_id
   }
   if ('bacenta_id' in fields) {
-    if (fields.bacenta_id !== member.bacenta_id) {
+    if (fields.bacenta_id === member.bacenta_id) {
+      // A no-op the form sent because it always sends it. Dropped rather than
+      // written, so an edit of a phone number is a one-field update.
+      delete fields.bacenta_id
+    } else if (!runsTheirConstituency) {
       return {
         ok: false,
         status: 403,
         error:
-          'Moving a member to a different bacenta is an administrator’s job. ' +
-          'You can still record who looks after them inside their own bacenta.',
+          'Moving a member to a different bacenta is for an administrator or the head of ' +
+          'their constituency. You can still record who looks after them inside their own bacenta.',
+      }
+    } else {
+      /*
+       * A constituency head may move somebody between the places in their OWN
+       * constituency, and `null` unfiles them without moving them out of it.
+       *
+       * The destination is checked against the places this head actually runs,
+       * because assigning a bacenta MOVES — an unchecked id here would let a
+       * head post one of their members into a neighbouring constituency's
+       * bacenta, which is the `constituency_id` refusal above arriving through
+       * a different door.
+       */
+      const destination = fields.bacenta_id
+      if (
+        destination !== null &&
+        !(heads.assignableBacentas ?? []).includes(destination as string)
+      ) {
+        return {
+          ok: false,
+          status: 403,
+          error:
+            'That bacenta is not in a constituency you head. You can only move a member ' +
+            'between the places in your own constituency.',
+        }
       }
     }
-    delete fields.bacenta_id
   }
 
   return {
@@ -422,6 +493,56 @@ export function headEditScope(
         ? undefined
         : headBasontaMerge(input.basonta_ids, member.basonta_ids, heads.basontas),
   }
+}
+
+/**
+ * May this head DELETE this member outright?
+ *
+ * Deleting is deliberately narrower than editing, and narrower than the rest of
+ * this file: a CONSTITUENCY head only, and only for a member filed into a
+ * constituency they run. A bacenta or basonta head may correct the same
+ * member's phone number and may not delete them.
+ *
+ * The reason is what a delete costs. `deleteMemberCascade` purges the member's
+ * biometric templates, roster rows, basonta memberships, SMS log entries and
+ * **attendance records**, and releases everybody left in their care. The
+ * attendance rows are the church's own account of who was in the building, they
+ * are not recoverable, and nothing anywhere reports that they used to exist. A
+ * head of one serving group has no basis for spending that, and the blast
+ * radius does not shrink just because the person deleting knows the member.
+ *
+ * A member with NO constituency is refused to every head rather than being
+ * open to all of them: nobody heads "unassigned", and treating an empty field
+ * as everybody's is how a record with no owner gets deleted by whoever finds it
+ * first. An administrator deletes those.
+ *
+ * Pure and unit-tested, for the same reason `headRegistrationScope` is: this is
+ * the check standing between a head and an irreversible write, and a check that
+ * can only be exercised through a live route is a check nobody runs.
+ */
+export type HeadDeleteScope = { ok: true } | { ok: false; error: string; status: 403 }
+
+export function headDeleteScope(
+  member: { constituency_id: string | null },
+  heads: { constituencies: readonly string[] },
+): HeadDeleteScope {
+  if (member.constituency_id === null) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        'This member is not filed into any constituency, so no head owns their record. ' +
+        'An administrator removes an unassigned member.',
+    }
+  }
+  if (!heads.constituencies.includes(member.constituency_id)) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'That member is not in a constituency you head.',
+    }
+  }
+  return { ok: true }
 }
 
 export function headBasontaMerge(

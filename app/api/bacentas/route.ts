@@ -3,6 +3,7 @@ import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import {
   bacentaNameTaken,
   createBacenta,
+  leaderScope,
   listBacentasWithCounts,
   listConstituencies,
   validateGroupName,
@@ -18,7 +19,7 @@ import type { BacentaResponse, ListBacentasResponse } from '@/lib/groups/types'
  * and the member detail page without three shapes of the same data.
  */
 export async function GET() {
-  const auth = await requireRole(['admin', 'usher', 'shepherd', 'treasurer'])
+  const auth = await requireRole(['admin', 'usher', 'shepherd', 'treasurer', 'leader'])
   if ('error' in auth) return auth.error
 
   const { databases } = createAdminClient()
@@ -26,6 +27,33 @@ export async function GET() {
     listConstituencies(databases),
     listBacentasWithCounts(databases),
   ])
+
+  /**
+   * A leader gets the places inside constituencies THEY head, and nothing else.
+   *
+   * They are here because a constituency head may now move a member between the
+   * places in their own constituency, and a picker needs a list. That is the
+   * only reason, so the list is narrowed to exactly what the move is allowed to
+   * target — `headEditScope` refuses any other destination anyway, and offering
+   * a neighbour's bacenta would be offering a button that 403s.
+   *
+   * Narrowed HERE rather than in the page, because a path prefix cannot express
+   * "only the places in constituencies this person heads" and the client is not
+   * where scope decisions belong (PRD §2.5).
+   */
+  if (auth.user.label === 'leader') {
+    const heads = await leaderScope(databases, auth.user.id)
+    const mine = new Set(heads.constituencies.map((c) => c.$id))
+    return NextResponse.json<ListBacentasResponse>(
+      {
+        ok: true,
+        constituencies: constituencies.filter((c) => mine.has(c.$id)),
+        bacentas: bacentas.filter((b) => b.constituency_id !== null && mine.has(b.constituency_id)),
+      },
+      { headers: { 'Cache-Control': 'private, no-store' } },
+    )
+  }
+
   return NextResponse.json<ListBacentasResponse>(
     { ok: true, constituencies, bacentas },
     { headers: { 'Cache-Control': 'private, no-store' } },

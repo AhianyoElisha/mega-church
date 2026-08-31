@@ -23,7 +23,19 @@ export async function GET(request: NextRequest) {
   // Reading the wordings, not writing them: POST below stays admin-only, so a
   // treasurer picks from the church's tithe messages and cannot compose a new
   // one. Without this they would have a Send button and nothing to send.
-  const auth = await requireRole(['admin', 'treasurer'])
+  /*
+   * `leader` reads this list, and ONLY this handler.
+   *
+   * A constituency head may now set a member's birthday template, and picking
+   * one from a list of ids nobody can read is not picking. Seeing the wordings
+   * is the unavoidable consequence of being allowed to choose between them.
+   *
+   * It is a GET and it stays a GET. Everything that SENDS or that writes a
+   * template still refuses a leader — `canSendSmsCategory` has no `leader`
+   * entry, and the POST below asks for admin or treasurer. Reading which
+   * message a member gets is not the same as spending the church's credit.
+   */
+  const auth = await requireRole(['admin', 'treasurer', 'leader'])
   if ('error' in auth) return auth.error
 
   const categoryRaw = request.nextUrl.searchParams.get('category')

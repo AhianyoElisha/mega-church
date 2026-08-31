@@ -604,7 +604,7 @@ Appwrite User Labels, exactly one per user.
 | `admin` | everything: members, meetings, rosters, groups, activate/end, reports |
 | `usher` | live monitor, manual check-in, read-only member lookup |
 | `kiosk` | `/kiosk` only — POST scans, read the active occurrence |
-| `leader` | a constituency head, a bacenta head, a basonta head, or any combination. Read-only, and only the groups that name them as head |
+| `leader` | a constituency head, a bacenta head, a basonta head, or any combination. Only the groups that name them as head. Mostly read; a CONSTITUENCY head also registers, corrects, moves within their own constituency and DELETES their own members |
 | `celebrations` | the birthday team: the celebrant list and push notifications, nothing else |
 | `shepherd` | reads the whole church, writes nothing at all |
 
@@ -656,7 +656,8 @@ and never a 403 that would read as a broken login.
 
 ### 5.2 What a head can and cannot do
 
-**Read-only, with three named exceptions, all of them inside their own group.**
+**Mostly read, with named exceptions, all of them inside their own group — and
+the exceptions differ by WHICH group they head.**
 
 They see their members' details, birthdays, and how often each has attended.
 They may also:
@@ -708,9 +709,46 @@ rather than dropped — a head told nothing assumes the edit saved. The one
 exception is a `constituency_id` resent unchanged, which the shared form always
 sends and which is not a move.
 
-Still admin-only: moving anyone between groups, removing anyone from a group,
-marking anyone inactive, deleting a member, creating or deleting groups, and
-enrolment.
+### The two tiers, and why the line is drawn at the constituency
+
+Every head who can open a member may correct an ordinary detail. Four further
+writes belong to the head of the member's **own constituency** and to nobody
+else:
+
+| | any head | constituency head |
+|---|---|---|
+| correct name, numbers, address, birthday | yes | yes |
+| record who looks after them | yes | yes |
+| set the photo | yes | yes |
+| `status` — active / inactive | **no** | yes |
+| `sms_template_id` — their birthday message | **no** | yes |
+| `bacenta_id` — move between places | **no** | yes, within their own constituency |
+| **delete the member outright** | **no** | yes |
+
+A constituency head runs the place a member LIVES and is answerable for that
+record. A choir head knows they sing on Sundays. Opening these four to every
+head would let a basonta head mark somebody `inactive` — removing them from the
+matcher's gallery CHURCH-WIDE — on the strength of running one serving group.
+
+**Deleting is the same cascade an administrator's is.** It purges the member's
+biometric templates, roster rows, basonta memberships, SMS log entries and
+**attendance records**, and releases everybody in their care. It cannot be
+undone, and nothing afterwards reports that those rows used to exist. The
+confirm dialog names what is destroyed and points at Inactive, which is now a
+real alternative for the same person rather than a consolation.
+
+A member with **no constituency** is refused to every head. Nobody heads
+"unassigned", and treating an empty field as everybody's is how a record with no
+owner gets deleted by whoever finds it first. An administrator deletes those.
+
+A bacenta **move** is additionally checked against the destination: it must be a
+place inside a constituency they head. Assigning a bacenta MOVES, so an
+unchecked destination would let a head post one of their members into a
+neighbour's constituency — the `constituency_id` refusal arriving through a
+different door.
+
+Still admin-only: moving anyone between CONSTITUENCIES, creating or deleting
+groups, and enrolment.
 
 Enforcement is server-side and absolute: `canReadGroup` is consulted on every
 group read, `headRegistrationScope` narrows every head registration, and the

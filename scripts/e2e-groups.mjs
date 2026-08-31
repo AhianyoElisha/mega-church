@@ -729,23 +729,69 @@ async function main() {
           ? ok('a head corrects a mistyped number on their own member (200)')
           : bad(`head editing their member gave ${fixed.status}: ${JSON.stringify(fixed.body)}`)
 
-        // The three refusals, each of which must NAME the field rather than
-        // drop it — a head told nothing assumes the edit landed.
+        /*
+         * The CONSTITUENCY head's raised tier.
+         *
+         * This leader was appointed to `constituencyId` above and the member
+         * lives in it, so `status`, `sms_template_id` and a bacenta move are
+         * theirs. The mirror of each — the same field refused to a head who
+         * does NOT run the member's constituency — is asserted further down,
+         * and the pair is the whole rule. Either one alone would pass with the
+         * check deleted.
+         */
         const flip = await leader(`/api/members/${m.$id}`, {
           method: 'PATCH',
           body: JSON.stringify({ status: 'inactive' }),
         })
-        flip.status === 403
-          ? ok('a head cannot mark a member inactive (403) — that hides them from the scanner')
-          : bad(`head setting status gave ${flip.status}`)
+        flip.status === 200 && flip.body?.member?.status === 'inactive'
+          ? ok('a CONSTITUENCY head marks their own member inactive (200)')
+          : bad(`constituency head setting status gave ${flip.status}`)
+
+        // Put them back, so nothing downstream is reasoning about an inactive
+        // member by accident.
+        await leader(`/api/members/${m.$id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'active' }),
+        })
 
         const retemplate = await leader(`/api/members/${m.$id}`, {
           method: 'PATCH',
-          body: JSON.stringify({ sms_template_id: 'anything' }),
+          body: JSON.stringify({ sms_template_id: null }),
         })
-        retemplate.status === 403
-          ? ok('a head cannot change which birthday message a member is sent (403)')
-          : bad(`head setting sms_template_id gave ${retemplate.status}`)
+        retemplate.status === 200
+          ? ok('and chooses which birthday message they are sent')
+          : bad(`constituency head setting sms_template_id gave ${retemplate.status}`)
+
+        // The two reads that had to open for those controls to be usable. A
+        // picker fed by a 403 is a picker with nothing in it.
+        const headBacentas = await leader('/api/bacentas')
+        const headSeesOnlyOwn =
+          headBacentas.status === 200 &&
+          (headBacentas.body?.bacentas ?? []).every(
+            (b) => b.constituency_id === constituencyId,
+          )
+        headSeesOnlyOwn
+          ? ok('a head lists bacentas, narrowed to constituencies they head')
+          : bad(
+              `head listing bacentas gave ${headBacentas.status} / ${JSON.stringify(
+                (headBacentas.body?.bacentas ?? []).map((b) => b.constituency_id),
+              )}`,
+            )
+
+        const headTemplates = await leader('/api/sms/templates?category=birthday')
+        headTemplates.status === 200
+          ? ok('and reads the birthday wordings, which is what makes choosing one possible')
+          : bad(`head listing sms templates gave ${headTemplates.status}`)
+
+        // Reading a wording is not spending the credit, and that boundary is
+        // the reason opening the GET was acceptable at all.
+        const headSend = await leader('/api/sms/send', {
+          method: 'POST',
+          body: JSON.stringify({ category: 'birthday', template_id: 'x', member_ids: [] }),
+        })
+        headSend.status === 403
+          ? ok('but STILL cannot send one — reading a message is not spending the credit')
+          : bad(`head sending SMS gave ${headSend.status}`)
 
         const move = await leader(`/api/members/${m.$id}`, {
           method: 'PATCH',
@@ -762,6 +808,41 @@ async function main() {
         resend.status === 200
           ? ok('resending the constituency they already have is not a move')
           : bad(`head resending the same constituency gave ${resend.status}`)
+
+        // --- the bacenta move, and its destination check --------------------
+        //
+        // Assigning a bacenta MOVES, so the destination is checked: a head may
+        // shuffle members between the places in their OWN constituency and may
+        // not post one into a neighbour's. Without the second half, the first
+        // is the `constituency_id` refusal arriving through a different door.
+        if (anloga.status === 201 && susu.status === 201) {
+          const intoOwn = await leader(`/api/members/${m.$id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ bacenta_id: anloga.body.bacenta.$id }),
+          })
+          intoOwn.status === 200
+            ? ok('a constituency head moves a member between places in their own constituency')
+            : bad(`head moving within their constituency gave ${intoOwn.status}: ${JSON.stringify(intoOwn.body)}`)
+        }
+
+        // A bacenta in a constituency this head does NOT run.
+        const elsewhereBacenta = await admin('/api/bacentas', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: `E2E Elsewhere Place ${stamp}`,
+            constituency_id: otherC.body?.constituency?.$id,
+          }),
+        })
+        if (elsewhereBacenta.status === 201) {
+          created.bacentas.push(elsewhereBacenta.body.bacenta.$id)
+          const intoTheirs = await leader(`/api/members/${m.$id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ bacenta_id: elsewhereBacenta.body.bacenta.$id }),
+          })
+          intoTheirs.status === 403
+            ? ok('but NOT into a bacenta in a constituency they do not head (403)')
+            : bad(`head moving into a foreign bacenta gave ${intoTheirs.status}`)
+        }
 
         // The merge, and the reason it exists. An admin puts the member into a
         // basonta the head does NOT head; the head then saves a form that only
@@ -942,6 +1023,102 @@ async function main() {
       )
     }
   } finally {
+    // --- a head DELETING a member --------------------------------------------
+    //
+    // The most destructive write a head can now make, and the one whose
+    // boundary is least visible afterwards: a wrongly permitted delete leaves
+    // nothing behind to notice.
+    //
+    // Every member created here is thrown away at cleanup anyway, so the
+    // positive case costs nothing — which is exactly why it is worth asserting
+    // rather than assuming.
+    console.log('\nhead deletes')
+    if (leaderUser) {
+      // Self-contained: the `otherC` created during head scoping lives inside
+      // that block and is not in scope here. This is a constituency the leader
+      // demonstrably does not head.
+      const otherHome = await admin('/api/constituencies', {
+        method: 'POST',
+        body: JSON.stringify({ name: `E2E NotMine ${stamp}` }),
+      })
+      const otherConstituencyId =
+        otherHome.status === 201 ? otherHome.body.constituency.$id : null
+      if (otherConstituencyId) created.constituencies.push(otherConstituencyId)
+
+      // Somebody in a constituency this leader does NOT head.
+      const foreign = await admin('/api/members', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name: 'Foreign',
+          last_name: `E2E ${stamp}`,
+          call_number: '0240000031',
+          constituency_id: otherConstituencyId,
+          status: 'active',
+        }),
+      })
+      if (otherConstituencyId && foreign.status === 201) {
+        created.members.push(foreign.body.member.$id)
+        const refused = await leader(`/api/members/${foreign.body.member.$id}`, {
+          method: 'DELETE',
+        })
+        refused.status === 403
+          ? ok('a head cannot delete a member of a constituency they do not head (403)')
+          : bad(`head deleting a foreign member gave ${refused.status}`)
+      }
+
+      // Somebody in NO constituency. Nobody heads "unassigned", and an empty
+      // field read as a wildcard is how a record with no owner gets deleted by
+      // whoever finds it first.
+      const orphan = await admin('/api/members', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name: 'Unassigned',
+          last_name: `E2E ${stamp}`,
+          call_number: '0240000032',
+          status: 'active',
+        }),
+      })
+      if (orphan.status === 201) {
+        created.members.push(orphan.body.member.$id)
+        const refusedOrphan = await leader(`/api/members/${orphan.body.member.$id}`, {
+          method: 'DELETE',
+        })
+        refusedOrphan.status === 403
+          ? ok('nor an UNASSIGNED member — nobody heads "unassigned"')
+          : bad(`head deleting an unassigned member gave ${refusedOrphan.status}`)
+      }
+
+      // And the positive case: their own, which really does go.
+      const doomed = await admin('/api/members', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name: 'Doomed',
+          last_name: `E2E ${stamp}`,
+          call_number: '0240000033',
+          constituency_id: constituencyId,
+          status: 'active',
+        }),
+      })
+      if (doomed.status !== 201) {
+        bad(`could not create a member for the head to delete (${doomed.status})`)
+      } else {
+        const doomedId = doomed.body.member.$id
+        const gone = await leader(`/api/members/${doomedId}`, { method: 'DELETE' })
+        gone.status === 200
+          ? ok('a constituency head DELETES a member of their own constituency (200)')
+          : bad(`head deleting their own member gave ${gone.status}: ${JSON.stringify(gone.body)}`)
+
+        // Confirmed by reading, not by trusting the 200. A delete that reports
+        // success and leaves the row is the failure this cannot afford.
+        const after = await admin(`/api/members/${doomedId}`)
+        after.status === 404
+          ? ok('and the member is really gone, read back independently')
+          : bad(`the deleted member still reads back as ${after.status}`)
+
+        if (gone.status !== 200) created.members.push(doomedId)
+      }
+    }
+
     // --- the treasurer -------------------------------------------------------
     //
     // NOTHING HERE SENDS AN SMS. Every positive path stops at the refusal or at

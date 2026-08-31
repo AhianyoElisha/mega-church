@@ -160,7 +160,7 @@ large type; body text is black. Never yellow text on white below 18pt.
   mean separate logins.
   The label grants nothing; scope comes from `leaderScope()` per request, and
   every group read goes through `canReadGroup()`.
-- **A head writes in exactly FOUR places, and every one is inside their own
+- **A head writes in exactly FIVE places, and every one is inside their own
   group.** The exceptions are enumerated rather than described, because "mostly
   read-only" is not a rule anyone can check code against:
 
@@ -169,11 +169,51 @@ large type; body text is black. Never yellow text on white below 18pt.
   2. registering a NEW member into it (`POST /api/members`)
   3. correcting an existing member's details (`PATCH /api/members/[id]`)
   4. setting a member's photo (`POST /api/members/[id]/photo`)
+  5. **deleting a member of a constituency they head**
+     (`DELETE /api/members/[id]`, `headDeleteScope`)
 
-  Everything else — moving anyone between groups, marking anyone inactive,
-  creating or deleting groups, deleting a member, and **all biometric
-  enrolment** — stays admin-only. A head registers and corrects the person; an
-  admin enrols the fingerprints, on the machine the scanner is plugged into.
+  Everything else — moving anyone between CONSTITUENCIES, creating or deleting
+  groups, and **all biometric enrolment** — stays admin-only. A head registers,
+  corrects and can now remove the person; an admin enrols the fingerprints, on
+  the machine the scanner is plugged into.
+- **The head tiers are CONSTITUENCY vs the rest, and the line is per FIELD.**
+  Every head who can open a member may correct an ordinary detail. Only the head
+  of the member's **own constituency** may set `status`, set `sms_template_id`,
+  move them between bacentas, or DELETE them. A bacenta or basonta head reaches
+  the very same member and is refused all four, by name.
+  `runsTheirConstituency` in `headEditScope()` is that test, and it is separate
+  from `inScope` on purpose: being able to edit somebody at all is a different
+  question from being able to spend these four. Never collapse them — heading
+  one serving group would then be enough to remove somebody from the matcher's
+  gallery church-wide.
+- **A head's delete is the SAME cascade an admin's is, and there is no soft
+  option behind it.** `deleteMemberCascade` purges the member's
+  `biometric_templates`, `meeting_members`, `basonta_members`, `sms_messages`
+  and **`attendance_records`**, then `releaseCharges` frees anybody in their
+  care. Appwrite has no undo. The attendance rows are the church's own account
+  of who was in the building and nothing afterwards reports that they used to
+  exist — so the confirm dialog NAMES what is destroyed and points at Inactive,
+  which a constituency head can now also set. `headDeleteScope()` refuses an
+  UNASSIGNED member to every head rather than treating `constituency_id: null`
+  as everybody's: nobody heads "unassigned", and an empty field read as a
+  wildcard is how a record with no owner gets deleted by whoever finds it first.
+- **`headDeleteScope()` takes ONLY constituencies, and that signature is the
+  enforcement.** Not a `heads` object with three lists and two of them ignored —
+  the argument cannot express a bacenta head, so no later edit can widen this
+  by accident. There is a test that says so.
+- **`elevated` on `MemberFormRestriction` is a UI HINT and never an
+  authorisation.** It says "this head runs the member's constituency", so the
+  three controls appear. The server re-derives the same fact from
+  `leaderScope()` and refuses each field by name regardless of what the form
+  sent. A page setting it wrongly gets a 403, not a privilege.
+- **`GET /api/bacentas` and `GET /api/sms/templates` admit a `leader`; nothing
+  else in either file does.** The first is narrowed server-side to places inside
+  constituencies they head, because a picker offering a neighbour's bacenta is a
+  picker offering a 403. The second is the unavoidable cost of letting them
+  choose a birthday message: picking from a list of ids nobody can read is not
+  picking. **`POST /api/sms/send` still refuses a leader** — `canSendSmsCategory`
+  has no `leader` entry, and reading which message a member gets is not the same
+  as spending the church's credit.
 - **REGISTERING is constituency-scoped; EDITING is group-scoped.** The two
   scopes differ on purpose. A basonta head has no basis for saying where
   somebody LIVES, so `headRegistrationScope()` demands a constituency they
@@ -187,11 +227,17 @@ large type; body text is black. Never yellow text on white below 18pt.
   somebody out of the choir. It is the `undefined`/`[]` hazard one level deeper,
   and the same bug wearing a different hat.
 - **A head's refused field is refused BY NAME, never silently dropped.** A
-  `PATCH` carrying `status`, `sms_template_id` or `bacenta_id` is a 403 that
-  says which one and why. Stripping it would return 200 and leave the head
-  believing the edit landed. The exceptions are `constituency_id` and
-  `bacenta_id` resent UNCHANGED: the shared form always sends both, and
-  resending what is already stored is not a move. `care_of_member_id` is
+  `PATCH` carrying `constituency_id` is a 403 that says why, and so is one
+  carrying `status`, `sms_template_id` or `bacenta_id` **from a head who does
+  not run that member's constituency**. Stripping any of them would return 200
+  and leave the head believing the edit landed. The exceptions are
+  `constituency_id` and `bacenta_id` resent UNCHANGED: the shared form always
+  sends both, and resending what is already stored is not a move. A bacenta MOVE
+  by a constituency head is additionally checked against the destination —
+  `assignableBacentas` — because assigning a bacenta MOVES, and an unchecked id
+  is the `constituency_id` refusal arriving through a different door. That
+  parameter is OPTIONAL and defaults to NONE, so a caller who forgets it refuses
+  every move rather than permitting every move. `care_of_member_id` is
   deliberately NOT refused — recording who looks after whom inside a bacenta is
   the head's own pastoral work, and the decision is written down at both
   refusal lists because an absent entry is invisible.
