@@ -197,13 +197,23 @@ async function main() {
     created.categories.push(categoryId)
     ok(`created category "${cat.body.category.name}"`)
 
+    /*
+     * STAMPED, like everything else this suite writes.
+     *
+     * These two were once plain 'Biazo' and 'Living Waters' — the church's real
+     * choir groups. An aborted run left rows with those exact names in the live
+     * project, `/basontas` showed two "Biazo" entries, and the stamp-keyed
+     * cleanup could not tell the copies from the originals, so it refused to
+     * touch either. Never name a fixture after real data.
+     */
+    const biazoName = `E2E Biazo ${stamp}`
     const biazo = await admin('/api/basontas', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Biazo', category_id: categoryId }),
+      body: JSON.stringify({ name: biazoName, category_id: categoryId }),
     })
     const living = await admin('/api/basontas', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Living Waters', category_id: categoryId }),
+      body: JSON.stringify({ name: `E2E Living Waters ${stamp}`, category_id: categoryId }),
     })
     const tech = await admin('/api/basontas', {
       method: 'POST',
@@ -227,7 +237,7 @@ async function main() {
     // Same name, different category, is two different real groups.
     const sameNameOtherCategory = await admin('/api/basontas', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Biazo' }),
+      body: JSON.stringify({ name: biazoName }),
     })
     if (sameNameOtherCategory.status === 201) {
       created.basontas.push(sameNameOtherCategory.body.basonta.$id)
@@ -236,9 +246,12 @@ async function main() {
       bad(`same name in another category refused (${sameNameOtherCategory.status})`)
     }
 
+    // Derived from the name it is meant to duplicate, never hardcoded: when
+    // `biazoName` was stamped, a literal here silently stopped colliding and
+    // the test began CREATING the row it was written to prove impossible.
     const dupeInCategory = await admin('/api/basontas', {
       method: 'POST',
-      body: JSON.stringify({ name: '  biazo ', category_id: categoryId }),
+      body: JSON.stringify({ name: `  ${biazoName.toLowerCase()} `, category_id: categoryId }),
     })
     dupeInCategory.status === 400
       ? ok('a duplicate name WITHIN a category is refused')
@@ -787,7 +800,11 @@ async function main() {
         // the reason opening the GET was acceptable at all.
         const headSend = await leader('/api/sms/send', {
           method: 'POST',
-          body: JSON.stringify({ category: 'birthday', template_id: 'x', member_ids: [] }),
+          body: JSON.stringify({
+            category: 'birthday',
+            template_id: 'x',
+            member_ids: [m.$id],
+          }),
         })
         headSend.status === 403
           ? ok('but STILL cannot send one — reading a message is not spending the credit')
@@ -871,10 +888,13 @@ async function main() {
           ? ok('a head still cannot enrol fingerprints (403) — that stays with an admin')
           : bad(`leader enrolling gave ${enrolAttempt.status}`)
 
-        const deleteAttempt = await leader(`/api/members/${m.$id}`, { method: 'DELETE' })
-        deleteAttempt.status === 403
-          ? ok('and cannot delete a member (403)')
-          : bad(`leader deleting a member gave ${deleteAttempt.status}`)
+        // Deleting is NOT asserted here any more. A constituency head may now
+        // delete their own members, so this member — registered into the
+        // constituency this leader heads — is exactly the case that succeeds,
+        // and asserting it here would destroy the member that every later
+        // assertion and the cleanup still refer to. The three delete
+        // boundaries have their own section, on members created to be thrown
+        // away.
 
         // Somebody outside every group they head, to prove the scope is a
         // scope and not "any member the head knows the id of".
@@ -1022,7 +1042,6 @@ async function main() {
         '  · birthday-run send skipped (set E2E_ALLOW_NOTIFY=1 to claim today’s run)',
       )
     }
-  } finally {
     // --- a head DELETING a member --------------------------------------------
     //
     // The most destructive write a head can now make, and the one whose
@@ -1147,9 +1166,13 @@ async function main() {
       // The refusal, with no template id and no member ids: the category gate
       // runs BEFORE anything is looked up, so this cannot send even if it
       // somehow passed.
+      // A NON-EMPTY list on purpose. An empty one is refused by "Pick at least
+      // one member" before the category gate is reached, which proves nothing
+      // about who may send what. Nothing can actually go out: `template_id: 'x'`
+      // does not exist, so a gate failure dies at the template lookup.
       const birthdaySend = await treasurer('/api/sms/send', {
         method: 'POST',
-        body: JSON.stringify({ category: 'birthday', template_id: 'x', member_ids: [] }),
+        body: JSON.stringify({ category: 'birthday', template_id: 'x', member_ids: [memberId] }),
       })
       const namesTheCategory = /birthday/i.test(birthdaySend.body?.error ?? '')
       birthdaySend.status === 403 && namesTheCategory
@@ -1160,7 +1183,7 @@ async function main() {
 
       const generalSend = await treasurer('/api/sms/send', {
         method: 'POST',
-        body: JSON.stringify({ category: 'general', template_id: 'x', member_ids: [] }),
+        body: JSON.stringify({ category: 'general', template_id: 'x', member_ids: [memberId] }),
       })
       generalSend.status === 403
         ? ok('and GENERAL too — an open cheque against the credit is an administrator’s')
@@ -1260,6 +1283,7 @@ async function main() {
         : bad(`shepherd reading the SMS log gave ${smsLog.status}`)
     }
 
+  } finally {
     // --- cleanup ------------------------------------------------------------
     // In `finally` so a failed assertion above does not leave throwaway groups
     // in a live project. Members first: deleting one cascades to its basonta
