@@ -1610,6 +1610,80 @@ two rows that exist, so both were delivered to whatever their history.
 `vapidSubjectProblem()` and the no-default rule stay. What was silently broken
 is now silently working, and only the observation could tell the two apart.
 
+## Members are addressed by their title in SMS — 2026-09-01
+
+The church's leaders raised it: a bulk message that calls a Reverend by their
+first name is not how the church addresses them. Pastors, Reverends, Lady
+Reverends and the Mr./Mrs./Miss cases all needed to come out right in the same
+broadcast, while everybody else stayed as they were.
+
+### Nothing about SENDING had to change
+
+`lib/sms/server.ts` already calls `render(template.body, member)` once per
+recipient, not once per batch. A mixed broadcast was therefore a data problem
+and a placeholder problem, and no part of the send path was touched.
+
+### The decision that mattered: there is no `{{title}}`
+
+Most of the congregation has none, so a bare title placeholder recreates the
+exact failure this file already refuses:
+
+    "Dear {{title}} {{last_name}},"  ->  "Dear  Serwaa,"   survivable
+    "Dear {{title}},"                ->  "Dear ,"          not survivable
+
+The second goes to hundreds of people, costs money and cannot be recalled. So
+the title is never offered alone. Three COMPOSED placeholders were added, each
+falling back to the bare name, which makes the broken message impossible to
+write rather than merely discouraged:
+
+|  | Reverend Ama Serwaa | Ama Serwaa |
+|---|---|---|
+| `{{salutation}}` | Reverend Serwaa | Ama |
+| `{{title_first_name}}` | Reverend Ama | Ama |
+| `{{titled_full_name}}` | Reverend Ama Serwaa | Ama Serwaa |
+
+`{{salutation}}` drops to the FIRST name when untitled, not the surname — a
+surname alone reads as a summons. Existing placeholders stay title-blind, so no
+template already written changed meaning.
+
+### The cost was real, and measured
+
+A title is prepended to a name inside a message billed per 160-character part.
+A 140-character body is **1 part** for an untitled member and **2 parts** for
+`Lady Reverend` — asserted in a test, not estimated. The template editor now
+prices `longestTitle()` rather than its preview sample, the same "quote high"
+posture `isUnicode` already takes.
+
+### A latent hazard found on the way
+
+`lib/sms/render.ts` contained a literal NUL inside `isUnicode`'s character
+class — `/[^<NUL>-ÿ]/`, which renders as `/[^ -ÿ]/` in every editor and
+terminal. **Git classified the whole file as binary**, so every diff of the code
+that decides what the congregation receives showed `Bin 5900 -> 8880 bytes` and
+was never reviewable. It predates this change; it is now written ` `, which
+is the same regex and is text.
+
+### Applied to the live project
+
+`npm run setup:appwrite` — `attributes created 1` (`members.title`), everything
+else existing. A second run reports `created 0` across the board, so idempotency
+is confirmed rather than assumed, and `npm run verify:appwrite` passes every
+check with 123 attributes.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **365 passed**, 4 skipped (was 354). 11 new, weighted at
+  the untitled fallback, since that is the case that reaches most of the
+  congregation.
+- `npm run build` — compiles.
+
+### Not verified
+
+No browser pass on the title picker, and no live send with a titled member. The
+renderer is pure and unit-tested so the wording is proven; what is unproven is
+the form wiring and what mNotify actually delivers.
+
 ## Constituency heads may now delete — 2026-08-31
 
 The church asked for heads to create, edit and delete members. Two of the three

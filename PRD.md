@@ -47,6 +47,52 @@ member has one home and one place inside it — is the whole design; see §1.7a.
 uses out loud and on paper. It is **claimed by the INSERT**: the highest issued
 plus one, written, and a unique index refuses a loser under a race.
 
+### 1.1a How a member is addressed
+
+The church's leaders are not addressed the way its members are, and a bulk
+message that calls a Reverend by their first name is the complaint that
+produced this section.
+
+`members.title` holds a CODE — `pastor`, `reverend`, `lady_reverend`, `bishop`,
+`apostle`, `prophet`, `evangelist`, `dr`, `mr`, `mrs`, `miss`, `ms` — or null,
+which is the ordinary case for most of the congregation and not a missing value
+to be filled in. The words each code renders as live in `lib/members/titles.ts`,
+so house style changes in one place. Extending the list is a line of code: the
+attribute is a plain string, not an enum, so no migration is involved.
+
+**There is no `{{title}}` placeholder, and that is the design.** A placeholder
+that renders empty for most of the church is the failure §1.13's refusal rule
+exists to prevent — `"Dear {{title}},"` becomes `"Dear ,"` for hundreds of
+people, at the church's cost, with no recall. Only composed forms are offered,
+and each falls back to the plain name:
+
+| | Reverend Ama Serwaa | Ama Serwaa |
+|---|---|---|
+| `{{salutation}}` | Reverend Serwaa | Ama |
+| `{{title_first_name}}` | Reverend Ama | Ama |
+| `{{titled_full_name}}` | Reverend Ama Serwaa | Ama Serwaa |
+
+So one template serves a mixed broadcast: `"Dear {{salutation}}, ..."` is
+formal for a leader and warm for everyone else, and nobody has to maintain two
+lists. Messages are already rendered per recipient, so nothing about sending
+changes.
+
+`{{salutation}}` falls back to the FIRST name rather than the surname, because
+a surname alone reads as a summons.
+
+The title is **not** part of `full_name`: that column is what search matches,
+and a title in it would make "Pastor" match every pastor when an usher types it
+looking for a surname.
+
+A title costs money as well as courtesy. It is prepended to a name inside a
+message billed per 160-character part, so a template that is one part for most
+of the congregation can be two for anybody addressed "Lady Reverend". The
+template editor prices the longest title rather than its preview sample.
+
+Setting one is an administrator's or the member's own **constituency head's**
+(§5.2). It reads like `benmp_partner`, but a wrong title misaddresses a whole
+congregation's message rather than texting one person.
+
 ### 1.2 Biometric templates
 
 Four fingers × three scan variations each = **12 templates per fully-enrolled

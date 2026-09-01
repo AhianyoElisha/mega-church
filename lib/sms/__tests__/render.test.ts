@@ -148,3 +148,99 @@ describe('toProviderNumber', () => {
     expect(toProviderNumber('+2332412345678901')).toBeNull()
   })
 })
+
+
+/*
+ * Titles.
+ *
+ * The whole point of composing the title with a name, rather than offering a
+ * bare {{title}}, is that the UNTITLED case cannot produce a fragment. Most of
+ * the congregation has no title, so the untitled assertions below are the ones
+ * that actually protect a broadcast — a stranded comma or a leading space here
+ * goes to hundreds of people at the church's expense and cannot be recalled.
+ */
+describe('titles in a message', () => {
+  const reverend = {
+    first_name: 'Ama',
+    last_name: 'Serwaa',
+    other_names: null,
+    title: 'reverend',
+  }
+  const plain = { first_name: 'Kwame', last_name: 'Mensah', other_names: null, title: null }
+
+  it('addresses a titled member by title and surname', () => {
+    const out = render('Dear {{salutation}}, welcome.', reverend)
+    expect(out).toEqual({ ok: true, text: 'Dear Reverend Serwaa, welcome.' })
+  })
+
+  it('addresses an untitled member by first name, with no gap and no stranded comma', () => {
+    const out = render('Dear {{salutation}}, welcome.', plain)
+    expect(out).toEqual({ ok: true, text: 'Dear Kwame, welcome.' })
+  })
+
+  it('title_first_name gives the warmer form, and still falls back cleanly', () => {
+    expect(render('Hello {{title_first_name}}!', reverend)).toEqual({
+      ok: true,
+      text: 'Hello Reverend Ama!',
+    })
+    expect(render('Hello {{title_first_name}}!', plain)).toEqual({
+      ok: true,
+      text: 'Hello Kwame!',
+    })
+  })
+
+  it('titled_full_name prefixes the whole name, or leaves it alone', () => {
+    expect(render('{{titled_full_name}}', reverend)).toEqual({ ok: true, text: 'Reverend Ama Serwaa' })
+    expect(render('{{titled_full_name}}', plain)).toEqual({ ok: true, text: 'Kwame Mensah' })
+  })
+
+  it('never emits a leading space for an untitled member at the START of a message', () => {
+    // The double-space collapse would hide this mid-sentence; at position 0
+    // there is nothing to collapse against, so only `.trim()` or a correct
+    // join saves it. Worth its own test for that reason.
+    const out = render('{{title_first_name}} — your envelope is ready.', plain)
+    expect(out.ok && out.text.startsWith('Kwame')).toBe(true)
+  })
+
+  it('an unknown title code renders as no title rather than raw', () => {
+    // A code hand-edited in the console, or left behind by a title since
+    // removed. It must not reach a member's phone as the word "overseer".
+    const out = render('Dear {{salutation}},', { ...plain, title: 'overseer' })
+    expect(out).toEqual({ ok: true, text: 'Dear Kwame,' })
+  })
+
+  it('leaves the existing name placeholders title-BLIND', () => {
+    // Making these title-aware would rewrite every template already written
+    // without anybody editing one.
+    expect(render('{{first_name}} {{last_name}} {{full_name}}', reverend)).toEqual({
+      ok: true,
+      text: 'Ama Serwaa Ama Serwaa',
+    })
+  })
+
+  it('still refuses a bare {{title}} — it is not a placeholder', () => {
+    // The refusal is the feature: "Dear {{title}}," would render "Dear ," for
+    // most of the congregation.
+    const out = render('Dear {{title}},', reverend)
+    expect(out.ok).toBe(false)
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toMatch(/\{\{title\}\}/)
+  })
+})
+
+describe('what a title costs', () => {
+  it('a long title can push the same template into a second part', () => {
+    // The church is billed per part. This is why the editor prices the worst
+    // case rather than the previewed sample.
+    const body = `${'x'.repeat(140)} {{salutation}}`
+    const short = render(body, { first_name: 'Ama', last_name: 'Serwaa', title: null })
+    const long = render(body, {
+      first_name: 'Ama',
+      last_name: 'Serwaa',
+      title: 'lady_reverend',
+    })
+    if (!short.ok || !long.ok) throw new Error('render failed')
+    expect(countParts(short.text).parts).toBe(1)
+    expect(countParts(long.text).parts).toBe(2)
+  })
+})

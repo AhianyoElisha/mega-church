@@ -343,6 +343,12 @@ async function setupMembers() {
   await ensureStringAttribute(COLLECTIONS.members, 'first_name', 64, true)
   await ensureStringAttribute(COLLECTIONS.members, 'last_name', 64, true)
   await ensureStringAttribute(COLLECTIONS.members, 'other_names', 96, false)
+  // How the church addresses them. A stored CODE ('lady_reverend'), not the
+  // words — see lib/members/titles.ts. A plain string and not an enum, so
+  // adding "Overseer" next year is a line of code and not a migration.
+  // Never required and never defaulted: most of the congregation has none,
+  // and an attribute cannot be both required and defaulted anyway.
+  await ensureStringAttribute(COLLECTIONS.members, 'title', 32, false)
   // Denormalised so search can hit ONE fulltext index instead of three, and so
   // list responses do not have to recompute it per row.
   await ensureStringAttribute(COLLECTIONS.members, 'full_name', 224, true)

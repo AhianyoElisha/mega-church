@@ -448,6 +448,15 @@ describe('headEditScope', () => {
     })
   })
 
+  it('lets a CONSTITUENCY head set how a member is addressed', () => {
+    const out = headEditScope(
+      { fields: { title: 'pastor' }, basonta_ids: undefined },
+      member,
+      heads,
+    )
+    expect(out).toEqual({ ok: true, fields: { title: 'pastor' }, basonta_ids: undefined })
+  })
+
   it('lets a CONSTITUENCY head make one of their own members inactive', () => {
     const out = headEditScope(
       { fields: { status: 'inactive' }, basonta_ids: undefined },
@@ -498,6 +507,19 @@ describe('headEditScope', () => {
     expect(out).toMatchObject({ ok: false, status: 403 })
     if (out.ok) throw new Error('expected a refusal')
     expect(out.error).toMatch(/active or inactive/i)
+  })
+
+  it('still refuses a TITLE change by a basonta head', () => {
+    // A title is a claim of office. A wrong one addresses a whole
+    // congregation's message to "Bishop" somebody who is not one.
+    const out = headEditScope(
+      { fields: { title: 'bishop' }, basonta_ids: undefined },
+      memberElsewhere,
+      basontaHeadsOnly,
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toMatch(/how a member is addressed/i)
   })
 
   it('still refuses a birthday-message change by a basonta head', () => {

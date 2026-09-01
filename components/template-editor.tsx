@@ -18,11 +18,45 @@ import { Banner } from '@/components/ui'
 import { PLACEHOLDERS, PLACEHOLDER_HINT, countParts, render } from '@/lib/sms/render'
 import type { SmsCategory } from '@/lib/appwrite/config'
 import type { SmsTemplate } from '@/lib/sms/types'
+import { MEMBER_TITLES, TITLES } from '@/lib/members/titles'
 
 /** Previewed against a plausible member, not a blank one. "Happy birthday
  *  {{first_name}}" reads fine as a template and only shows its length once a
  *  real name is in it. */
-const SAMPLE = { first_name: 'Ama', last_name: 'Serwaa', other_names: null }
+/*
+ * The preview member.
+ *
+ * Given a TITLE on purpose, so an author writing "Dear {{salutation}}," sees
+ * what a leader receives rather than what an untitled member does. The
+ * untitled rendering is the one that needs no checking — it is just the first
+ * name — while the titled one is where the extra words and the extra cost are.
+ */
+/** The CODE of the longest title, for pricing. */
+function longestTitleCode(): string {
+  return MEMBER_TITLES.reduce((a, b) => (TITLES[b].label.length > TITLES[a].label.length ? b : a))
+}
+
+const SAMPLE = {
+  first_name: 'Ama',
+  last_name: 'Serwaa',
+  other_names: null,
+  title: 'reverend' as const,
+}
+
+/**
+ * The same member wearing the LONGEST title the church has.
+ *
+ * The church is billed per 160-character part, and a title is prepended to a
+ * name inside that budget. A template sitting at 150 characters is one part for
+ * most of the congregation and two for anybody addressed "Lady Reverend" — the
+ * same message, a different bill, discovered from the mNotify balance rather
+ * than from this screen where it is still free to shorten.
+ *
+ * So the cost shown is the WORST case, not the sample's. Quoting a higher price
+ * than you are charged is the safe direction to be wrong in, which is the rule
+ * `isUnicode` already follows in the same file it comes from.
+ */
+const WORST_CASE = { ...SAMPLE, title: longestTitleCode() }
 
 export default function TemplateEditor({
   category,
@@ -43,9 +77,11 @@ export default function TemplateEditor({
   const [error, setError] = useState<string | null>(null)
 
   const preview = useMemo(() => render(body, SAMPLE), [body])
+  // Priced against the longest title, not the previewed one — see WORST_CASE.
+  const worst = useMemo(() => render(body, WORST_CASE), [body])
   const parts = useMemo(
-    () => countParts(preview.ok ? preview.text : body),
-    [preview, body],
+    () => countParts(worst.ok ? worst.text : preview.ok ? preview.text : body),
+    [worst, preview, body],
   )
 
   const insert = (token: string) => setBody((b) => `${b}{{${token}}}`)
