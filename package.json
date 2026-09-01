@@ -19,6 +19,8 @@
     "verify:appwrite": "tsx --conditions=react-server scripts/verify-setup.ts",
     "e2e": "node scripts/e2e-smoke.mjs",
     "e2e:groups": "node scripts/e2e-groups.mjs",
+    "e2e:clean": "tsx --conditions=react-server scripts/clean-e2e-leftovers.ts",
+    "e2e:clean-smoke": "tsx --conditions=react-server scripts/clean-smoke-occurrence.ts",
     "seed:users": "tsx scripts/seed-users.ts",
     "seed:sms": "tsx --conditions=react-server scripts/seed-sms-templates.ts",
     "backfill:member-numbers": "tsx --conditions=react-server scripts/backfill-member-numbers.ts",
