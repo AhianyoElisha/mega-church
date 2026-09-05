@@ -325,6 +325,38 @@ update accumulates a second row and its owner is notified twice.
 A 404 or 410 from the push service means the subscription is permanently gone.
 Those rows are **deleted**, not retried.
 
+### 1.10a BENMP contributions
+
+BENMP partners pay a monthly commitment towards the Global Healing Jesus
+Campaign. This is the record of who paid which month, and the reason the
+reminder SMS does not reach the whole congregation.
+
+One row per `(member_id, period)`, written **only when somebody pays**.
+
+| Field | Type | Notes |
+|---|---|---|
+| `member_id` | string(64) | required |
+| `period` | string(7) | required, `2026-09`. One field, never year + month |
+| `recorded_by` | string(128) | the email that ticked it |
+
+**Presence is the payment.** There is no `paid: false` — absence is how this
+collection spells "not paid", and a second way to spell it is a second thing
+that can disagree with the first. It is `attendance_records` again, and it is
+why a member registered in July has no January row rather than six falses.
+
+`period` is zero-padded so it sorts lexically in the order it sorts
+chronologically. Unique on `(member_id, period)`, so recording the same month
+twice is impossible at the database rather than guarded in a handler.
+
+The month is computed in **Accra** (`currentPeriod()`), never from a bare
+`Date`. A server rolling over at its own midnight disagrees with the church
+about which month it is, which is a whole month of people dunned early or
+missed.
+
+Deliberately **no amount**. The church asked for paid/not-paid, and an amount
+column nobody fills in is worse than no column. A nullable `amount` can be added
+later without a migration, on a row whose presence already means "paid".
+
 ### 1.11 Notification runs
 
 One row per (`run_date`, `kind`) of scheduled notification, **unique**.
@@ -560,6 +592,40 @@ they are precisely the people who most need assigning.
 call sites filtering independently is how a head's sheet and the admin's
 headcount end up disagreeing about the same Sunday with no way to tell which is
 right.
+
+---
+
+### 2.10 A BENMP reminder reaches only the unpaid
+
+The whole point of §1.10a. A `benmp` send **resolves its own recipients**: the
+route re-reads who is outstanding for the current month and drops everybody
+else, whatever ids arrived in the request.
+
+Three people never receive it:
+
+| | why |
+|---|---|
+| not a BENMP partner | never signed up to the campaign |
+| inactive | has left, or is hidden from the church's systems |
+| already paid this month | the entire reason the feature exists |
+
+They are **skipped and reported**, not refused. Refusing the batch would mean
+the other seventeen partners get no reminder because one person paid while the
+tab was open; skipping fails in the direction where nobody is dunned who should
+not be. The response carries `excluded` and a reason, and the screen shows it —
+somebody who picked forty names and reached twenty-one has to be told why.
+
+`excluded` is deliberately not `skipped`, which already means the dedupe index
+refusing a second identical send today.
+
+The `/sms` picker additionally offers only outstanding partners, so nobody is
+presented with a choice the server will discard. That is a courtesy; the server
+is the enforcement (§2.5).
+
+**A `leader` may send this one category**, which is the first send any leader
+has ever been granted (§5.2). It is narrowed twice: the category by
+`canSendSmsCategory`, and the recipients to partners in constituencies they
+head. The map decides what and cannot express who.
 
 ---
 

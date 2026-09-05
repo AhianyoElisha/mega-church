@@ -10,6 +10,7 @@ import {
   UserGroupIcon,
   CakeIcon,
   ChatBubbleLeftRightIcon,
+  BanknotesIcon,
 } from '@heroicons/react/24/outline'
 import type { UserLabel } from '@/lib/auth/types'
 
@@ -105,6 +106,16 @@ export const NAVIGATION: NavItem[] = [
     href: '/sms',
     icon: ChatBubbleLeftRightIcon,
     roles: ['admin', 'treasurer'],
+    group: 'people',
+  },
+  {
+    // Beside Messages under `people`, and for the same reason: a contribution
+    // is a fact about a member, and this is the screen the reminder SMS is
+    // built on top of.
+    name: 'BENMP dues',
+    href: '/benmp',
+    icon: BanknotesIcon,
+    roles: ['admin', 'treasurer', 'leader', 'shepherd'],
     group: 'people',
   },
   {

@@ -211,9 +211,10 @@ large type; body text is black. Never yellow text on white below 18pt.
   constituencies they head, because a picker offering a neighbour's bacenta is a
   picker offering a 403. The second is the unavoidable cost of letting them
   choose a birthday message: picking from a list of ids nobody can read is not
-  picking. **`POST /api/sms/send` still refuses a leader** — `canSendSmsCategory`
-  has no `leader` entry, and reading which message a member gets is not the same
-  as spending the church's credit.
+  picking. **`POST /api/sms/send` refuses a leader every category but `benmp`** —
+  see the BENMP rules below. Reading which message a member gets is still not the
+  same as spending the church's credit, and birthday, tithe and general are all
+  refused to them by name.
 - **REGISTERING is constituency-scoped; EDITING is group-scoped.** The two
   scopes differ on purpose. A basonta head has no basis for saying where
   somebody LIVES, so `headRegistrationScope()` demands a constituency they
@@ -345,6 +346,58 @@ large type; body text is black. Never yellow text on white below 18pt.
   Substituting an empty string mails "Happy birthday !" to the congregation, at
   cost, with no recall. The placeholder set is closed (`PLACEHOLDERS` in
   `lib/sms/render.ts`) so a template cannot reference an arbitrary member field.
+- **A BENMP contribution is a ROW, and its presence IS the payment.**
+  `benmp_contributions` holds one row per `(member_id, period)` and is written
+  only when somebody pays. There is no `paid: false` to write, to forget to
+  write, or to disagree with a row saying otherwise — the same shape as
+  `attendance_records`, and why a member registered in July has no January row
+  rather than six falses. Undoing DELETES the row; never add a boolean beside it.
+- **`period` is ONE field, `2026-09`.** Not a year int beside a month int: two
+  fields encoding one instant are two fields that can disagree, and zero-padded
+  `YYYY-MM` sorts lexically in the order it sorts chronologically. `month = 9`
+  puts September after October in every list the church reads. The unique index
+  on `(member_id, period)` makes double-recording impossible at the database,
+  not merely guarded in a handler.
+- **The month is computed in ACCRA** — `currentPeriod()` reads `todayInAccra()`,
+  never a bare `Date`. A server rolling over at its own midnight would disagree
+  with the congregation about which month it is, and that is not an edge case:
+  it is a whole month of people either dunned early or missed entirely.
+- **A `benmp` send RESOLVES ITS OWN recipients and does not trust the ids it is
+  given.** The route re-reads who is outstanding and drops everyone else. A list
+  of ids is a snapshot of what one browser tab believed some minutes ago, and
+  between opening the page and pressing send another treasurer may have recorded
+  half of them. The UI narrowing on `/sms` is a courtesy so nobody is offered a
+  doomed choice; the server is the enforcement.
+- **Ineligible recipients are SKIPPED and REPORTED, never refused.** Refusing
+  the batch means the other seventeen partners get no reminder because one
+  person paid while the tab was open. Skipping fails in the direction where
+  nobody is dunned who should not be. The count comes back as `excluded` with a
+  reason, and the screen says so — a treasurer who picked forty names and
+  reached twenty-one has to be told why.
+- **`excluded` is NOT `skipped`.** `skipped` is the dedupe index refusing a
+  second identical send today; `excluded` is somebody dropped before sending
+  because they should not receive this message at all. One field carrying both
+  reasons is a field nobody can act on.
+- **A `leader` may send `benmp` and NOTHING else, to their OWN constituency.**
+  This is the first send any leader has ever been granted, and it is narrowed
+  twice: `canSendSmsCategory` grants the one category, and the send route
+  additionally intersects the recipients with partners in constituencies they
+  head, from `leaderScope()`. The map decides WHAT and cannot express WHO — a
+  category grant alone would let any head remind the whole congregation.
+- **Recording a payment is admin, treasurer or the member's own CONSTITUENCY
+  head.** The treasurer is the point of the feature; the head is who is standing
+  in front of the partner. A bacenta or basonta head is not enough — being able
+  to record somebody's money is not a lesser act than correcting their phone
+  number, and `benmp_partner` is already a constituency-tier field.
+- **Setting `benmp_partner` stays where it is** — admin and constituency head,
+  on the member's own page. A treasurer records payments and does not decide who
+  is a partner. Most of the congregation predates the checkbox, so the field is
+  ABSENT on the majority of live rows and `isPartner()` reads that as "no",
+  which is why the grid can be trusted to list only real partners.
+- **A future month cannot be recorded.** The grid renders all twelve cells, so
+  December is on screen and one row from the mouse in January; a tick there
+  would quietly excuse somebody eleven months early and nothing on the page
+  would look wrong.
 - **Exactly one default template per category**, enforced on write. Two
   defaults is a coin toss over which message the congregation receives, decided
   by whichever row Appwrite returns first.

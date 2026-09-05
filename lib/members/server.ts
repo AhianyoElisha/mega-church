@@ -503,6 +503,7 @@ export async function deleteMemberCascade(
   /** How many members were looked after by this one, and are now released. */
   released: number
   messages: number
+  contributions: number
 }> {
   const dbAny = databases as unknown as {
     deleteDocuments?: (db: string, coll: string, queries?: string[]) => Promise<unknown>
@@ -553,7 +554,11 @@ export async function deleteMemberCascade(
   // and the text of everything ever sent to them — which is the kind of thing
   // a church deleting somebody at their own request means to be rid of.
   const messages = await purge(COLLECTIONS.sms_messages, 'member_id')
+  // BENMP contributions. Left behind, they point at a member who no longer
+  // exists, and the only thing that would ever notice is a year total nobody
+  // can account for.
+  const contributions = await purge(COLLECTIONS.benmp_contributions, 'member_id')
 
   await databases.deleteDocument(DATABASE_ID, COLLECTIONS.members, id)
-  return { templates, roster, records, basontas, released, messages }
+  return { templates, roster, records, basontas, released, messages, contributions }
 }

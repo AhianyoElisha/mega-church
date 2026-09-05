@@ -630,6 +630,40 @@ async function setupBasontaMembers() {
   ])
 }
 
+async function setupBenmpContributions() {
+  console.log('\nbenmp_contributions')
+  await ensureCollection(COLLECTIONS.benmp_contributions, 'BENMP Contributions')
+  await ensureStringAttribute(COLLECTIONS.benmp_contributions, 'member_id', 64, true)
+  /*
+   * `2026-09`. ONE field, not a year int beside a month int.
+   *
+   * Two fields encoding one instant are two fields that can disagree, and a
+   * zero-padded `YYYY-MM` sorts lexically in the order it sorts
+   * chronologically — which `month = 9` does not, putting September after
+   * October in every list the church reads.
+   */
+  await ensureStringAttribute(COLLECTIONS.benmp_contributions, 'period', 7, true)
+  // Who ticked the box. A contribution is a claim about money, and the church
+  // should be able to ask a person about it a year later.
+  await ensureStringAttribute(COLLECTIONS.benmp_contributions, 'recorded_by', 128, false)
+
+  await waitForAttributes(COLLECTIONS.benmp_contributions)
+  // "What has this member paid, ever" — the year grid.
+  await ensureIndex(COLLECTIONS.benmp_contributions, 'by_member', 'key', ['member_id'])
+  // "Who has paid THIS month" — the question the reminder SMS asks.
+  await ensureIndex(COLLECTIONS.benmp_contributions, 'by_period', 'key', ['period'])
+  /*
+   * Recording the same month twice is impossible at the DATABASE, not merely
+   * guarded in a handler — the same posture as `notification_runs` and
+   * `sms_messages.dedupe_key`. Two rows for one month would make a member look
+   * paid twice and, worse, would survive one of them being undone.
+   */
+  await ensureIndex(COLLECTIONS.benmp_contributions, 'member_period_unique', 'unique', [
+    'member_id',
+    'period',
+  ])
+}
+
 async function setupPushSubscriptions() {
   console.log('\npush_subscriptions')
   await ensureCollection(COLLECTIONS.push_subscriptions, 'Push Subscriptions')
@@ -965,6 +999,7 @@ async function main() {
   await setupBasontaCategories()
   await setupBasontas()
   await setupBasontaMembers()
+  await setupBenmpContributions()
   await setupPushSubscriptions()
   await setupNotificationRuns()
   await setupSmsTemplates()

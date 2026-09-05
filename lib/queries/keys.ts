@@ -69,6 +69,10 @@ export const queryKeys = {
   // Under the same prefix as the rest, so a send invalidates it: the balance
   // shown after spending must not be the one read before.
   smsBalance: ['sms', 'balance'] as const,
+  // One key per year: the grid fetches a year at a time, and switching year
+  // must not serve the previous one from cache while the new one loads.
+  benmpYear: (year: number) => ['benmp', 'year', year] as const,
+
   pushStatus: ['push', 'status'] as const,
 
   dashboard: ['dashboard'] as const,

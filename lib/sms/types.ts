@@ -91,6 +91,20 @@ export type SendSmsResponse =
       /** Members skipped because they were already texted for this category
        *  today — the dedupe index doing its job, reported rather than hidden. */
       skipped: number
+      /**
+       * Members dropped BEFORE the send, because they should not receive this
+       * message at all: a BENMP partner who has already paid this month, or
+       * somebody outside a head's own constituency.
+       *
+       * Deliberately NOT folded into `skipped`, which means something else —
+       * the dedupe index refusing a second identical send today. One field
+       * carrying two reasons is a field nobody can act on: "3 skipped" would
+       * leave a treasurer unable to tell a duplicate press from a list that
+       * quietly shrank under them.
+       */
+      excluded: number
+      /** Why, in words, when anything was excluded. */
+      excluded_reason?: string
       /** Members with no usable phone number. Named, so they can be fixed. */
       no_phone: string[]
       provider_message: string | null

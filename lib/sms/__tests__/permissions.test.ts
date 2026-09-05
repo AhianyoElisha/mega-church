@@ -32,7 +32,9 @@ describe('canSendSmsCategory', () => {
   })
 
   it('refuses every label that has no send rights at all', () => {
-    const others: UserLabel[] = ['usher', 'kiosk', 'leader', 'celebrations', 'shepherd']
+    // `leader` is deliberately absent: it sends `benmp` and only `benmp`,
+    // covered in its own block at the foot of this file.
+    const others: UserLabel[] = ['usher', 'kiosk', 'celebrations', 'shepherd']
     for (const label of others) {
       for (const category of SMS_CATEGORIES) {
         expect(canSendSmsCategory(label, category).ok).toBe(false)
@@ -75,7 +77,9 @@ describe('canManageTemplateCategory', () => {
   })
 
   it('refuses every label with no authority at all', () => {
-    const others: UserLabel[] = ['usher', 'kiosk', 'leader', 'celebrations', 'shepherd']
+    // `leader` is deliberately absent: it sends `benmp` and only `benmp`,
+    // covered in its own block at the foot of this file.
+    const others: UserLabel[] = ['usher', 'kiosk', 'celebrations', 'shepherd']
     for (const label of others) {
       for (const category of SMS_CATEGORIES) {
         expect(canManageTemplateCategory(label, category).ok).toBe(false)
@@ -91,7 +95,6 @@ describe('canManageTemplateCategory', () => {
       'admin',
       'usher',
       'kiosk',
-      'leader',
       'celebrations',
       'shepherd',
       'treasurer',
@@ -107,12 +110,12 @@ describe('canManageTemplateCategory', () => {
 })
 
 describe('sendableCategories', () => {
-  it('offers the treasurer exactly tithe', () => {
-    expect(sendableCategories('treasurer')).toEqual(['tithe'])
+  it('offers the treasurer tithe and benmp, and nothing else', () => {
+    expect(sendableCategories('treasurer')).toEqual(['tithe', 'benmp'])
   })
 
-  it('offers an admin all three', () => {
-    expect(sendableCategories('admin')).toEqual(['birthday', 'tithe', 'general'])
+  it('offers an admin every category', () => {
+    expect(sendableCategories('admin')).toEqual(['birthday', 'tithe', 'general', 'benmp'])
   })
 
   it('offers nothing to a label with no send rights, or to nobody', () => {
@@ -128,7 +131,6 @@ describe('sendableCategories', () => {
       'admin',
       'usher',
       'kiosk',
-      'leader',
       'celebrations',
       'shepherd',
       'treasurer',
@@ -140,5 +142,56 @@ describe('sendableCategories', () => {
         )
       }
     }
+  })
+})
+
+/*
+ * `leader` sends for the FIRST time, and only BENMP.
+ *
+ * This file asserted for months that a leader sends nothing at all. The church
+ * asked for constituency heads to chase their own BENMP partners, so the grant
+ * exists — but it is one category, and the tests below are mostly about
+ * everything it is NOT.
+ *
+ * Note what these cannot prove: the map decides WHAT a leader may send and
+ * cannot express WHO. The narrowing to partners in constituencies they head
+ * lives in the send route, because it needs `leaderScope()` and a database.
+ */
+describe('a leader and BENMP', () => {
+  it('may send benmp', () => {
+    expect(canSendSmsCategory('leader', 'benmp').ok).toBe(true)
+  })
+
+  it('may send NOTHING else, and each refusal names the category', () => {
+    for (const category of ['birthday', 'tithe', 'general'] as const) {
+      const out = canSendSmsCategory('leader', category)
+      expect(out.ok).toBe(false)
+      if (out.ok) throw new Error('expected a refusal')
+      expect(out.status).toBe(403)
+      expect(out.error).toMatch(new RegExp(category, 'i'))
+    }
+  })
+
+  it('is offered exactly benmp in the UI', () => {
+    expect(sendableCategories('leader')).toEqual(['benmp'])
+  })
+
+  it('may write a benmp template but no other', () => {
+    // Same map, same reasoning as the treasurer: authority over a category
+    // means both sending it and wording it, or somebody has to type it for you.
+    expect(canManageTemplateCategory('leader', 'benmp').ok).toBe(true)
+    expect(canManageTemplateCategory('leader', 'tithe').ok).toBe(false)
+  })
+
+  it('a shepherd still sends nothing, benmp included', () => {
+    // The new category must not leak to the read-only role. This is the test
+    // that fails if somebody widens the map by pattern-matching on "benmp".
+    expect(canSendSmsCategory('shepherd', 'benmp').ok).toBe(false)
+    expect(sendableCategories('shepherd')).toEqual([])
+  })
+
+  it('an usher and a kiosk still send nothing', () => {
+    expect(canSendSmsCategory('usher', 'benmp').ok).toBe(false)
+    expect(canSendSmsCategory('kiosk', 'benmp').ok).toBe(false)
   })
 })
