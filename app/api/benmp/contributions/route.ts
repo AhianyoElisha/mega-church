@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import type { Models } from 'node-appwrite'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
+import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 import { listMembers } from '@/lib/members/server'
+import { memberDocToMember } from '@/lib/attendance/server'
 import { leaderScope } from '@/lib/groups/server'
 import {
   contributionsForYear,
@@ -191,9 +194,37 @@ export async function POST(request: NextRequest) {
 
   const { databases } = createAdminClient()
 
-  const { members } = await visiblePartners(databases, auth.user.label, auth.user.id)
-  const target = members.find((m) => m.$id === body.member_id)
-  if (!target) {
+  /*
+   * ONE member is fetched, not the registry.
+   *
+   * This used to call `visiblePartners()`, which lists every active member in
+   * the church and filters — to answer a question about a single person. That
+   * made recording one tick take **1,908 ms**, measured in the browser against
+   * the live project. A treasurer entering a month's takings pays that per
+   * click, and the screen exists to be clicked fifty times in a sitting.
+   *
+   * The GET above still reads the whole registry, and should: it renders every
+   * partner. A write does not.
+   */
+  let target: Member | null = null
+  try {
+    const doc = await databases.getDocument(DATABASE_ID, COLLECTIONS.members, body.member_id)
+    target = memberDocToMember(doc as Models.Document & Record<string, unknown>)
+  } catch {
+    target = null
+  }
+
+  // Same three conditions `visiblePartners` applied, checked directly on the
+  // one row: a partner, active, and — for a head — inside their own
+  // constituency. Order does not matter because all three answer alike below.
+  let allowed = target !== null && isPartner(target) && target.status === 'active'
+  if (allowed && auth.user.label === 'leader') {
+    const scope = await leaderScope(databases, auth.user.id)
+    const mine = new Set(scope.constituencies.map((c) => c.$id))
+    allowed = target!.constituency_id !== null && mine.has(target!.constituency_id)
+  }
+
+  if (!allowed || !target) {
     /*
      * One message for three different refusals — not in scope, not a partner,
      * not active — and deliberately so. Distinguishing them would tell a head

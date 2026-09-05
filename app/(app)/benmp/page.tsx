@@ -205,7 +205,23 @@ export default function BenmpPage() {
                               aria-label={`${fullName(p)}, ${periodLabel(period)}: ${
                                 isPaid ? 'paid' : 'not recorded'
                               }`}
-                              disabled={!canRecord || future || toggle.isPending}
+                              /*
+                               * Deliberately NOT disabled while a save is in
+                               * flight. It was, and that made rapid entry
+                               * impossible: a treasurer working down a month
+                               * clicks the next cell long before the previous
+                               * round trip returns, and every one of those
+                               * clicks was swallowed. Measured at ~1s per
+                               * save, that is a screen you cannot type into.
+                               *
+                               * Safe because the cell flips optimistically and
+                               * each click sends the intent for what is on
+                               * screen NOW, and because both writes are
+                               * idempotent server-side — recording an already
+                               * recorded month is `changed: false`, not an
+                               * error.
+                               */
+                              disabled={!canRecord || future}
                               onClick={() => onToggle(p.$id, period, !isPaid)}
                               className={[
                                 'h-8 w-8 rounded-lg text-sm font-semibold transition',
