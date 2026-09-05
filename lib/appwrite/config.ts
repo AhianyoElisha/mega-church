@@ -79,6 +79,15 @@ export const COLLECTIONS = {
    */
   basonta_members: 'basonta_members',
   /** One row per DEVICE that opted into notifications. PRD §1.10. */
+  /**
+   * One row per (member, month) that a BENMP partner has PAID.
+   *
+   * Presence is the payment. There is no `paid: false` to write, to forget to
+   * write, or to disagree with a row that says otherwise — the same shape as
+   * `attendance_records`, and the reason a member registered in July has no
+   * January row rather than six falses. PRD §1.14.
+   */
+  benmp_contributions: 'benmp_contributions',
   push_subscriptions: 'push_subscriptions',
   /**
    * One row per (date, kind) of scheduled notification actually sent. Its
@@ -275,13 +284,14 @@ export const BIRTHDAY_HORIZON_DAYS = 30
  * What an SMS is FOR. The category decides which templates are offered and, for
  * `birthday`, which one the automatic run reaches for.
  */
-export const SMS_CATEGORIES = ['birthday', 'tithe', 'general'] as const
+export const SMS_CATEGORIES = ['birthday', 'tithe', 'general', 'benmp'] as const
 export type SmsCategory = (typeof SMS_CATEGORIES)[number]
 
 export const SMS_CATEGORY_LABEL: Record<SmsCategory, string> = {
   birthday: 'Birthday',
   tithe: 'Tithe',
   general: 'General',
+  benmp: 'BENMP dues',
 }
 
 /**

@@ -1610,6 +1610,101 @@ two rows that exist, so both were delivered to whatever their history.
 `vapidSubjectProblem()` and the no-default rule stay. What was silently broken
 is now silently working, and only the observation could tell the two apart.
 
+## BENMP dues, and a reminder that only reaches the unpaid — 2026-09-05
+
+BENMP partners pay a monthly commitment towards the Global Healing Jesus
+Campaign. The church had no record of who had paid, so a BENMP broadcast went to
+every partner including the ones who paid weeks ago.
+
+### The shape
+
+`benmp_contributions`: one row per `(member_id, period)`, written only when
+somebody pays. **Presence is the payment** — there is no `paid: false` to write,
+to forget to write, or to disagree with a row saying otherwise. It is
+`attendance_records` again, and it is why a member registered in July has no
+January row rather than six falses.
+
+`period` is one zero-padded `YYYY-MM` string rather than a year int beside a
+month int, so it sorts lexically in the order it sorts chronologically. Unique
+on `(member_id, period)`.
+
+The month comes from `todayInAccra()`. A server rolling over at its own midnight
+would disagree with the congregation about which month it is — a whole month of
+people dunned early or missed.
+
+### The rule, proven rather than asserted
+
+A `benmp` send **resolves its own recipients** and does not trust the ids it is
+handed. Against the running app, with `SMS_STUB=1` so nothing reached a carrier:
+
+    THREE picked, ONE messaged — only the partner who still owes
+    the paid partner and the non-partner are both excluded
+    reason: "already paid for September 2026, or are not BENMP partners"
+    reminding ONLY somebody who has paid sends nothing at all
+    and so does reminding a NON-partner
+    undo a payment -> they are owing again immediately
+
+Ineligible recipients are SKIPPED and REPORTED, never refused: refusing the
+batch means the other seventeen partners get no reminder because one person paid
+while the tab was open.
+
+`excluded` is a new field and deliberately not `skipped`, which already means
+the dedupe index refusing a second identical send today. One field carrying two
+reasons is a field nobody can act on.
+
+### The first send a leader has ever been granted
+
+`canSendSmsCategory` had no `leader` entry and CLAUDE.md said so plainly. The
+church asked for constituency heads to chase their own partners, so `benmp` is
+granted — narrowed twice: the category by the allow-map, and the recipients to
+partners in constituencies they head, from `leaderScope()`. The map decides WHAT
+and cannot express WHO; a category grant alone would let any head remind the
+whole congregation. A leader is still refused tithe by name, and that is
+asserted live.
+
+### The grid
+
+`/benmp` — partners down, Jan–Dec across, click a cell to record or undo. One
+screen that is both the report and the entry surface, so backfilling last March
+is the same gesture as recording this September. The church has a lot of
+backfilling to do: the partner checkbox arrived after most of the congregation
+was already registered, which is also why `isPartner()` reading a MISSING field
+as "not a partner" matters more here than anywhere else.
+
+A future month is refused. The grid renders all twelve cells, so December is on
+screen and one row from the mouse in January.
+
+### The test caught its own weakness first
+
+The first live run used a template id that did not exist, for safety. It passed
+the mixed case and failed two others — because the template lookup runs BEFORE
+the eligibility filter, so it had proved nothing whatsoever about the filter.
+Rewritten against a real template under `SMS_STUB=1`, which is what the
+"three picked, one messaged" result above actually rests on.
+
+### Applied to the live project
+
+    npm run setup:appwrite   collections +1, attributes +3, indexes +3
+    npm run setup:appwrite   created 0 across the board — idempotent
+    npm run verify:appwrite  all checks passed
+
+18 collections, 126 attributes, 60 indexes. The live registry reads back at 167
+members with zero test residue and an empty contributions table.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — **395 passed**, 4 skipped (was 365). 30 new, weighted at
+  the untitled/absent `benmp_partner` field and the Accra month boundary.
+- `npm run build` — compiles, `/benmp` and `/api/benmp/contributions` present.
+- Live API check — every assertion above, cleaning up after itself.
+
+### Not verified
+
+**No browser pass on the grid.** The cells, the year switch and the search box
+are type-checked, built and exercised through the API, but not clicked. The same
+gap the title picker still has.
+
 ## Members are addressed by their title in SMS — 2026-09-01
 
 The church's leaders raised it: a bulk message that calls a Reverend by their

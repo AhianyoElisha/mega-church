@@ -78,7 +78,7 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
   // `/constituencies` and `/bacentas` are admin data; their APIs refuse a
   // leader with a 403, and the pages themselves bounce one to /my-groups
   // rather than rendering an error.
-  leader: ['/my-groups', '/constituencies', '/bacentas', '/basontas'],
+  leader: ['/my-groups', '/constituencies', '/bacentas', '/basontas', '/benmp', '/sms'],
   // The birthday team. Deliberately narrow: they prepare flyers and shoutouts,
   // so they need the celebrant list and nothing else in the registry.
   celebrations: ['/birthdays'],
@@ -110,6 +110,10 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
     '/services',
     '/monitor',
     '/reports',
+    // Reads the ledger like everything else, and writes none of it: the POST
+    // asks for admin, treasurer or leader, so the page renders its cells
+    // disabled rather than offering a tick that 403s.
+    '/benmp',
   ],
   /**
    * A shepherd's reach plus `/sms`, which is the difference between the two
@@ -132,6 +136,9 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
     '/monitor',
     '/reports',
     '/sms',
+    // The ledger a treasurer actually keeps. This and `/sms` are the two
+    // screens the role exists for.
+    '/benmp',
   ],
 }
 

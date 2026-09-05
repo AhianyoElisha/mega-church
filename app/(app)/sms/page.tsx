@@ -8,7 +8,7 @@
 // automatically on the morning of, tithe is an admin ticking the people who
 // paid — and that difference is in the copy, not in a second implementation.
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
@@ -41,6 +41,8 @@ import {
   useUpdateTemplate,
 } from '@/lib/queries/sms'
 import { useMembers } from '@/lib/queries/members'
+import { useBenmpYear } from '@/lib/queries/benmp'
+import { currentYear, periodLabel } from '@/lib/benmp/period'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { fullName, initials } from '@/lib/members/types'
 import { matchesMemberSearch } from '@/lib/members/search'
@@ -65,11 +67,12 @@ type Tab = 'send' | 'templates' | 'log'
  * would write a `birthday:<member>:<today>` dedupe key and silently suppress
  * the real message that morning.
  */
-const MANUAL_CATEGORIES: readonly SmsCategory[] = ['tithe', 'general']
+const MANUAL_CATEGORIES: readonly SmsCategory[] = ['tithe', 'benmp', 'general']
 
 const MANUAL_CATEGORY_LABEL: Record<SmsCategory, string> = {
   birthday: 'Birthday',
   tithe: 'Tithe — thank somebody who paid',
+  benmp: 'BENMP dues — remind whoever has not paid this month',
   general: 'General — anything else',
 }
 
@@ -246,11 +249,58 @@ function SendTab({ canSend }: { canSend: boolean }) {
   const template =
     available.find((t) => t.$id === templateId) ?? available.find((t) => t.is_default) ?? null
 
-  const all = useMemo(() => (members.data?.ok ? members.data.members : []), [members.data])
+  /*
+   * A BENMP send is offered ONLY the partners who still owe this month.
+   *
+   * The server enforces this — it re-resolves the outstanding list and drops
+   * anything else, whatever ids arrive — so this is not the safety mechanism.
+   * It is here so nobody is presented with a choice the server will discard:
+   * ticking forty names and being told nineteen of them were excluded is a
+   * worse screen than being shown twenty-one names in the first place.
+   *
+   * The grid and this list therefore cannot disagree, because both read the
+   * same endpoint, and recording a payment invalidates the `benmp` prefix that
+   * this query lives under.
+   */
+  const benmpYear = useBenmpYear(currentYear())
+  const benmp = benmpYear.data?.ok ? benmpYear.data : null
+
+  const everyone = useMemo(() => (members.data?.ok ? members.data.members : []), [members.data])
+
+  const all = useMemo(() => {
+    if (category !== 'benmp') return everyone
+    if (!benmp) return []
+    const paidThisMonth = new Set(
+      benmp.contributions.filter((c) => c.period === benmp.current_period).map((c) => c.member_id),
+    )
+    const outstanding = new Set(
+      benmp.partners.map((p) => p.$id).filter((id) => !paidThisMonth.has(id)),
+    )
+    // Intersected with the real member records rather than rebuilt from the
+    // grid's trimmed rows: the send needs phone numbers and titles, and this
+    // list is what the cost preview renders against.
+    return everyone.filter((m) => outstanding.has(m.$id))
+  }, [category, everyone, benmp])
+
   const visible = useMemo(() => {
     if (!search.trim()) return all
     return all.filter((m) => matchesMemberSearch(m, search, { phone: true }))
   }, [all, search])
+
+  /*
+   * Anybody picked who is no longer eligible is dropped from the selection.
+   *
+   * Without this, switching from `general` to `benmp` keeps a selection made
+   * against the whole registry, and the count under the button promises a send
+   * to people the server is about to exclude.
+   */
+  useEffect(() => {
+    setPicked((prev) => {
+      const allowed = new Set(all.map((m) => m.$id))
+      const next = new Set([...prev].filter((id) => allowed.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [all])
 
   const toggle = (id: string) =>
     setPicked((prev) => {
@@ -336,6 +386,9 @@ function SendTab({ canSend }: { canSend: boolean }) {
     const bits = [`${res.sent} sent`]
     if (res.failed) bits.push(`${res.failed} failed`)
     if (res.skipped) bits.push(`${res.skipped} already had one today`)
+    // Reported, never silent. Somebody who picked forty names and reached
+    // twenty-one has to be told why, or the count reads as a bug in the send.
+    if (res.excluded) bits.push(`${res.excluded} skipped — ${res.excluded_reason ?? 'not eligible'}`)
     if (res.no_phone.length) bits.push(`no usable number for ${res.no_phone.join(', ')}`)
     // mNotify's own figure, from the send response itself — the most current
     // reading there is, and it cost nothing to obtain.

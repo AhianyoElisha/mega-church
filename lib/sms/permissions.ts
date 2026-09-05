@@ -16,7 +16,7 @@ import type { UserLabel } from '@/lib/auth/types'
  * is refusal, and a new thing does not have to be remembered.
  */
 const SENDABLE: Partial<Record<UserLabel, readonly SmsCategory[]>> = {
-  admin: ['birthday', 'tithe', 'general'],
+  admin: ['birthday', 'tithe', 'general', 'benmp'],
   /**
    * The treasurer's whole job, and their whole reach.
    *
@@ -25,7 +25,23 @@ const SENDABLE: Partial<Record<UserLabel, readonly SmsCategory[]>> = {
    * against the SMS credit — neither is the treasurer's to spend, and both are
    * an administrator's.
    */
-  treasurer: ['tithe'],
+  treasurer: ['tithe', 'benmp'],
+  /**
+   * The FIRST thing a leader may send, and the only one.
+   *
+   * This file said for months that a leader sends nothing — reading which
+   * message a member gets is not the same as spending the church's credit —
+   * and that is still the rule everywhere else. BENMP is the exception the
+   * church asked for, because a constituency head is who actually chases their
+   * own partners for the monthly commitment.
+   *
+   * It is narrowed twice, and the second narrowing is NOT here: the send route
+   * additionally intersects the recipients with the partners in constituencies
+   * they head, from `leaderScope()`. This map decides WHAT they may send; it
+   * cannot express WHO, and a category grant on its own would let a head
+   * remind the whole congregation.
+   */
+  leader: ['benmp'],
 }
 
 export type SmsSendCheck = { ok: true } | { ok: false; error: string; status: 403 }
