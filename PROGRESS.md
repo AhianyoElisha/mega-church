@@ -2148,10 +2148,13 @@ Things noticed on the way, none of them Plan 6 regressions:
   2026-08-30) while the place field just above was also "Bacenta" — the
   exact confusion the split existed to end. **Fixed on this branch:** the
   legend, the detail term and every hint sentence now say basonta.
-- `deleteMemberCascade` does not remove `photo_file_id`'s file from the
-  `member-photos` bucket, so every deleted member leaves an orphan file
-  behind. The photo route does bin the PREVIOUS file on replace, so this is
-  only the delete path.
+- `deleteMemberCascade` did not remove `photo_file_id`'s file from the
+  `member-photos` bucket, so every deleted member left an orphan file
+  behind (the photo route already binned the PREVIOUS file on replace).
+  **Fixed on this branch:** the cascade now takes `storage` as a required
+  argument, reads the file id before anything goes, and bins the file after
+  the row. Unit-tested in `lib/members/__tests__/deleteCascade.test.ts` and
+  proved live: register → upload → delete → `getFile` 404.
 - Two earlier First Service + Save Church pairs from 2026-10-01 02:41 and
   02:45 UTC are in the live history with `present_count` 1 and no
   attendance rows left (their members were deleted). Not created by this

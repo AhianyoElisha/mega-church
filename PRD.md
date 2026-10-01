@@ -994,8 +994,8 @@ head would let a basonta head mark somebody `inactive` — removing them from th
 matcher's gallery CHURCH-WIDE — on the strength of running one serving group.
 
 **Deleting is the same cascade an administrator's is.** It purges the member's
-biometric templates, roster rows, basonta memberships, SMS log entries and
-**attendance records**, and releases everybody in their care. It cannot be
+biometric templates, roster rows, basonta memberships, SMS log entries, photo
+file and **attendance records**, and releases everybody in their care. It cannot be
 undone, and nothing afterwards reports that those rows used to exist. The
 confirm dialog names what is destroyed and points at Inactive, which is now a
 real alternative for the same person rather than a consolation.

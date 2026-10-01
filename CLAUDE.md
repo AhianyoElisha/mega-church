@@ -673,11 +673,14 @@ large type; body text is black. Never yellow text on white below 18pt.
   actually refuses them.
 - **Cascades are manual.** Deleting a member means deleting their
   `biometric_templates`, `meeting_members`, `basonta_members`,
-  `sms_messages` and `attendance_records`, and calling `releaseCharges()` so
-  nobody is left looked after by somebody who is gone. Deleting a constituency
-  means clearing `constituency_id` off its members BEFORE the row goes, or they
-  are left pointing at a home that no longer exists; deleting a bacenta clears
-  the care links first and `bacenta_id` second.
+  `sms_messages` and `attendance_records`, their photo file in
+  `member-photos`, and calling `releaseCharges()` so nobody is left looked
+  after by somebody who is gone. `deleteMemberCascade` takes `storage` as a
+  REQUIRED argument for the photo: it is the one reference that is not a row,
+  and once the member row is gone nothing can find the file again. Deleting a
+  constituency means clearing `constituency_id` off its members BEFORE the row
+  goes, or they are left pointing at a home that no longer exists; deleting a
+  bacenta clears the care links first and `bacenta_id` second.
 - **Idempotent setup:** `scripts/setup-appwrite.ts` is the single source of
   truth for schema and must be safe to re-run. New attributes go there, not
   into the console by hand. `npm run verify:appwrite` reads the live project

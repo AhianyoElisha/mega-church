@@ -3,8 +3,9 @@ import 'server-only'
 // Member registry reads/writes. Validation lives here rather than in the route
 // so the same rules apply to a script or a future import path.
 
-import { ID, Query, type Databases, type Models } from 'node-appwrite'
+import { ID, Query, type Databases, type Models, type Storage } from 'node-appwrite'
 import {
+  BUCKETS,
   CHURCH_TIMEZONE,
   COLLECTIONS,
   DATABASE_ID,
@@ -724,9 +725,23 @@ export async function listMembers(
  * matters: templates first, because a member whose row is gone but whose
  * fingerprints remain is a member the matcher can still "identify" into a
  * dangling id.
+ *
+ * `storage` is REQUIRED, not optional, because the photo is the one thing
+ * here that does not live in the database. Every other reference is a row
+ * `purge` can find by `member_id`; the photo is a file in `member-photos`
+ * that only the member's own `photo_file_id` points at, and once the row is
+ * gone nothing can find it again. An optional parameter would let a caller
+ * forget it, and a forgotten photo is exactly the failure this fixes: the
+ * browser pass of 2026-10-01 deleted five test members and left two faces
+ * in the bucket. The file is read off the document BEFORE anything is
+ * deleted and binned LAST, after the row — the same order the photo route
+ * uses when replacing one — so a storage failure leaves a stray file (cheap,
+ * and nothing references it) rather than a member whose card shows a broken
+ * image.
  */
 export async function deleteMemberCascade(
   databases: Databases,
+  storage: Storage,
   id: string,
 ): Promise<{
   templates: number
@@ -737,7 +752,21 @@ export async function deleteMemberCascade(
   released: number
   messages: number
   contributions: number
+  /** Whether a photo file was removed from the bucket. */
+  photo: boolean
 }> {
+  // Read the photo id first: it is only recoverable while the row exists.
+  // A missing member throws here, before anything is touched, which is what
+  // the route turns into its 404.
+  const doc = (await databases.getDocument(DATABASE_ID, COLLECTIONS.members, id)) as Record<
+    string,
+    unknown
+  >
+  const photoFileId =
+    typeof doc.photo_file_id === 'string' && doc.photo_file_id.length > 0
+      ? doc.photo_file_id
+      : null
+
   const dbAny = databases as unknown as {
     deleteDocuments?: (db: string, coll: string, queries?: string[]) => Promise<unknown>
   }
@@ -793,7 +822,23 @@ export async function deleteMemberCascade(
   const contributions = await purge(COLLECTIONS.benmp_contributions, 'member_id')
 
   await databases.deleteDocument(DATABASE_ID, COLLECTIONS.members, id)
-  return { templates, roster, records, basontas, released, messages, contributions }
+
+  // The photo goes LAST. Nothing references the file once the row is gone, so
+  // a failure here costs a stray file in the bucket and nothing on screen; the
+  // other order would, on a failure, leave a member whose kiosk card points at
+  // a file that no longer exists.
+  let photo = false
+  if (photoFileId) {
+    try {
+      await storage.deleteFile(BUCKETS.member_photos, photoFileId)
+      photo = true
+    } catch {
+      // Already gone, or storage hiccuped. The member is deleted either way,
+      // and failing the request now would report a delete that happened as
+      // one that did not.
+    }
+  }
+  return { templates, roster, records, basontas, released, messages, contributions, photo }
 }
 
 /**

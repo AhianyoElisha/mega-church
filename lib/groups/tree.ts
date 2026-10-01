@@ -546,8 +546,8 @@ export function headEditScope(
  * member's phone number and may not delete them.
  *
  * The reason is what a delete costs. `deleteMemberCascade` purges the member's
- * biometric templates, roster rows, basonta memberships, SMS log entries and
- * **attendance records**, and releases everybody left in their care. The
+ * biometric templates, roster rows, basonta memberships, SMS log entries, photo
+ * file and **attendance records**, and releases everybody left in their care. The
  * attendance rows are the church's own account of who was in the building, they
  * are not recoverable, and nothing anywhere reports that they used to exist. A
  * head of one serving group has no basis for spending that, and the blast
