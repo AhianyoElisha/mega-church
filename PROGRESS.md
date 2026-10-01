@@ -2083,8 +2083,15 @@ and CLAUDE.md carry the rules.
    Pro, or an external scheduler calling each `/api/notifications/*` route
    with the bearer token (GET, `User-Agent: vercel-cron/1.0`).
 6. ~~Browser pass~~ — **done 2026-10-01**, see below.
-7. `E2E_ALLOW_LIVE=1 npm run e2e` — extended to assert the companion is
-   created on activate and closed on close.
+7. ~~`E2E_ALLOW_LIVE=1 npm run e2e`~~ — **run 2026-10-01** against the dev
+   server and the live project: all checks passed, including the companion
+   opened on activate, attached on `/api/attendance/active`, refused on its
+   own, refused a close by its own id, and closed with its parent. One stale
+   assertion was fixed on the way: the kiosk search allow-list predated
+   `member_no` joining the hit (6f61f7c) and failed on it; the number is the
+   church's own reference and the kiosk shows it on purpose. The phantom
+   First Service + Save Church pairs the suite leaves were removed with
+   `e2e:clean-smoke`.
 
 ### Browser pass, 2026-10-01
 

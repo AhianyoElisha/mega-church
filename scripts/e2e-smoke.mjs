@@ -434,11 +434,15 @@ async function main() {
       bad(`kiosk name search gave ${kioskSearch.status} — manual check-in is broken`)
     } else {
       ok('kiosk CAN search by name (manual check-in fallback works)')
+      // `member_no` is the human reference the church uses out loud, and the
+      // kiosk shows it beside the name so an usher can tell two members with
+      // the same name apart (6f61f7c). It is not a phone number, a status or
+      // an address — those are what this guard exists to keep off the kiosk.
       const leaked = Object.keys(kioskSearch.body?.members?.[0] ?? {}).filter(
-        (k) => !['$id', 'full_name'].includes(k),
+        (k) => !['$id', 'full_name', 'member_no'].includes(k),
       )
       leaked.length === 0
-        ? ok('  and the search returns only an id and a name')
+        ? ok('  and the search returns only an id, a name and a member number')
         : bad(`  search leaks fields to the kiosk: ${leaked.join(', ')}`)
     }
   } else {
