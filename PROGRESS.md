@@ -21,10 +21,10 @@ for the phase breakdowns.
 | M | Head accounts created in-app | ✅ done — Plan 3 |
 | N | Per-constituency attendance exports | ✅ done — Plan 3 |
 | O | Bulk SMS (mNotify) | ✅ done — Plan 3, verified against a real handset |
-| P | Save Church (companion occurrence + kiosk redirect) | ⚠️ built — Plan 6; tsc/vitest/build green, schema + backfill applied live 2026-10-01, **no browser pass** |
-| Q | Students (programme, level, yearly rollover) | ⚠️ built — Plan 6; same caveat |
-| R | Photos that render + crop step | ⚠️ built — Plan 6; same caveat |
-| S | Scheduled service SMS + audiences | ⚠️ built — Plan 6; same caveat, and the Vercel plan must allow 5 crons |
+| P | Save Church (companion occurrence + kiosk redirect) | ✅ done — Plan 6; browser pass 2026-10-01 against the live project (PR #52) |
+| Q | Students (programme, level, yearly rollover) | ✅ done — Plan 6; browser pass 2026-10-01 |
+| R | Photos that render + crop step | ✅ done — Plan 6; browser pass 2026-10-01, both doors |
+| S | Scheduled service SMS + audiences | ⚠️ built — Plan 6; audiences verified in the browser 2026-10-01, no real send, and the Vercel plan must allow 5 crons |
 
 ## Verified
 
@@ -2082,14 +2082,80 @@ and CLAUDE.md carry the rules.
 5. **Vercel plan.** `vercel.json` now declares five crons; Hobby runs two.
    Pro, or an external scheduler calling each `/api/notifications/*` route
    with the bearer token (GET, `User-Agent: vercel-cron/1.0`).
-6. Browser pass: register a child (name only), scan one during First Service
-   and read "Marked present — Save Church"; Services and Monitor show
-   "Save Church: N"; `/students` promote/repeat/graduate and the shepherd's
-   read-only view; `/members` bulk "Move to Save Church"; photos render on
-   members, kiosk, sms, birthdays; crop from file and from camera; `/sms`
-   audience select and the excluded-children count.
+6. ~~Browser pass~~ — **done 2026-10-01**, see below.
 7. `E2E_ALLOW_LIVE=1 npm run e2e` — extended to assert the companion is
    created on activate and closed on close.
+
+### Browser pass, 2026-10-01
+
+Driven through Chrome against the running dev server and the LIVE project
+(a Thursday, nothing open on the scanner). Five `Browserpass` test members
+were registered, exercised and deleted; the First Service + companion rows
+the pass opened were removed afterwards (they had no marks left), and the
+two photo files it uploaded were binned. Nothing of the church's own data
+was touched.
+
+The scanner was stood in for by a stub on `127.0.0.1:7788` answering
+`/health` and `/scan` with a `sim:<member_id>` template, so the kiosk ran
+its REAL capture loop and scan route — not a hand-crafted `curl`.
+
+- **Register a child, name only.** `/members/new` reshapes on
+  "Save Church (under 12)": guardian fields appear, title and birthday
+  message disappear, "Usual service" becomes "Parents' service". Submits
+  with no number; detail page reads `2026203 · Save Church`.
+- **Kiosk redirect.** Activating First Service says "Save Church is open
+  alongside it". A child's scan renders **✓ MARKED PRESENT — SAVE CHURCH**
+  with the "Save Church · children's service" badge and "Number 1 at Save
+  Church today" under a *First Service* header pill. A second scan renders
+  **✓ ALREADY MARKED AT SAVE CHURCH**.
+- **Counts.** Services shows the "Save Church 1 — closes with this one"
+  tile and the Save Church card as "Open · Running with First Service";
+  Monitor shows "Save Church: 1" in the subtitle and its own tile. Expected
+  excludes children (192 → 195 after three adults/students were added).
+- **Close.** Ending First Service closed the companion in the same call
+  (both rows `closed`, companion `present_count` 1).
+- **Students.** Three students, two due (`level_year` 2025). Promote → Level
+  300, 2026, Up to date; Graduate → adult, off the roll; Repeat → "1
+  confirmed", 2026. Each is a confirm dialog that names what it does. A
+  shepherd sees the roll with no checkboxes, no action bar, no Edit, no
+  "Add students" and the sentence saying so; the shepherd's `/members` has
+  no "Change categories" either.
+- **Bulk move.** `/members` → Change categories → tick → Move to Save Church
+  → dialog → "1 moved to Save Church (under 12)." Row badge updates.
+- **Photos.** Render on `/members`, the kiosk confirm-identity card (manual
+  dry run, nothing marked), `/birthdays` and `/sms`. Served by
+  `/api/photos/<id>` with `cache-control: private, max-age=31536000,
+  immutable`. Both uploads stored as **800×800 JPEG**.
+- **Crop from file.** File input → cropper (drag + zoom) → Use photo →
+  new `photo_file_id`.
+- **Crop from camera.** `getUserMedia` stubbed with a canvas stream. The
+  `<video>` has `playsInline` and `muted`, no CSS transform (not mirrored).
+  The shutter stops the track immediately (`readyState: ended`, no `<video>`
+  left in the DOM); review → Use this photo → the SAME cropper → saved.
+  Replacing a photo deleted the previous file from the bucket.
+- **SMS audiences.** Everyone / University students only / Everyone except
+  students each narrow the list and swap the hint sentence; both children
+  (one registered, one bulk-moved) are absent from all three. **Not
+  exercised:** an actual send, so the post-send "N skipped — reason" line
+  with `excluded_children` was not seen on screen (it is unit-tested in
+  `lib/sms/__tests__/sendToMembers.test.ts`). A real send costs credit and
+  needs a human decision.
+
+Things noticed on the way, none of them Plan 6 regressions:
+
+- `components/member-form.tsx` and `app/(app)/members/[id]/page.tsx` label
+  the SERVING-GROUP section "Bacentas" (since 482c4b4, 2026-08-30). Per
+  CLAUDE.md those are basontas; the place field just above is also called
+  "Bacenta". Wording only, but it is the exact confusion the split existed
+  to end.
+- `deleteMemberCascade` does not remove `photo_file_id`'s file from the
+  `member-photos` bucket, so every deleted member leaves an orphan file
+  behind. The photo route does bin the PREVIOUS file on replace, so this is
+  only the delete path.
+- Two earlier First Service + Save Church pairs from 2026-10-01 02:41 and
+  02:45 UTC are in the live history with `present_count` 1 and no
+  attendance rows left (their members were deleted). Not created by this
+  pass; `npm run e2e:clean-smoke -- 2026-10-01` will list them.
 
 ### Decisions worth knowing before touching it
 
@@ -2101,5 +2167,5 @@ and CLAUDE.md carry the rules.
   person); a non-elevated head EDITING may not.
 - `/api/occurrences` history now lists companion rows as "Save Church"; if
   that reads as noise, filter on `parent_occurrence_id` there.
-- Nothing is committed. The changed set is 67 modified and 19 new files;
-  the church's habit is one PR per plan.
+- Committed as 8637b7b on `feat/save-church-students-photos-scheduled-sms`,
+  open as PR #52.
