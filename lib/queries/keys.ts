@@ -43,6 +43,11 @@ export const queryKeys = {
   attendanceRecords: (occurrenceId: string) =>
     ['attendance', 'records', occurrenceId] as const,
   memberAttendance: (memberId: string) => ['attendance', 'member', memberId] as const,
+  // Under `attendance`, not `occurrences`: a manual check-in invalidates the
+  // whole `attendance` prefix, and a register open in another tab during a
+  // service must pick the new mark up with the rest.
+  occurrenceRegister: (occurrenceId: string) =>
+    ['attendance', 'register', occurrenceId] as const,
 
   biometricsEnrolled: ['biometrics', 'enrolled'] as const,
   biometricsMember: (memberId: string) => ['biometrics', 'member', memberId] as const,

@@ -25,6 +25,7 @@ for the phase breakdowns.
 | Q | Students (programme, level, yearly rollover) | ✅ done — Plan 6; browser pass 2026-10-01 |
 | R | Photos that render + crop step | ✅ done — Plan 6; browser pass 2026-10-01, both doors |
 | S | Scheduled service SMS + audiences | ✅ done — Plan 6; audiences verified in the browser 2026-10-01, five crons fit the plan (checked 2026-10-01). First real firings to be read off `notification_runs` / `sms_messages` after merge |
+| T | Session register in the app (`/reports/[id]`) | ⚠️ built — Plan 7, 2026-10-01; see the section at the end |
 
 ## Verified
 
@@ -2188,3 +2189,38 @@ Things noticed on the way, none of them Plan 6 regressions:
   that reads as noise, filter on `parent_occurrence_id` there.
 - Committed as 8637b7b on `feat/save-church-students-photos-scheduled-sms`,
   open as PR #52.
+
+## Plan 7 — the register, readable in the app (2026-10-01)
+
+The admin could see every session's headcount on `/reports` and had to
+download a spreadsheet to see WHO it was. Now each row opens `/reports/[id]`.
+
+- `lib/reports/register.ts` (pure): `expectedBasis(meeting)` — roster /
+  adults / children / everyone — is the ONE definition of who a session
+  expects, and `expectedFor()` behind the live monitor now reads it, so the
+  monitor and the register cannot disagree. (One consequence: a Save Church
+  occurrence's live "Expected" is now active children, not every active
+  member; nothing on screen showed the old number.) `buildRegister()` gives
+  one row per expected member, present or absent, PLUS a labelled row for any
+  mark whose member is no longer on the list — inactive since, moved to Save
+  Church, off the roster, deleted. A mark is never dropped to tidy the list.
+- `lib/reports/server.ts`: `loadRegister()` — records, the expected members
+  (roster ids or active members filtered by basis), the stray members by id,
+  the companion (any status) or parent, the constituency names.
+- `GET /api/occurrences/[id]/register` — admin, usher, shepherd, treasurer.
+  Not a `leader`: their one report stays the per-constituency download.
+- `/reports/[id]`: stat cards, Present / Absent / Everyone tabs, search by
+  name or member number, constituency filter (with "No constituency"), rows
+  link to the member, Export kept, Live view offered while the session is
+  open, companion and parent registers linked. Times are Accra; a close on a
+  later day says so ("closed 02:25 on 2026-10-01" for a Second Service
+  nobody ended until Thursday).
+
+Verified: `tsc` clean; `vitest` 527 passed (17 new in
+`lib/reports/__tests__/register.test.ts`); in the browser against the live
+project, Second Service 2026-09-27 — 61 present, 189 expected, 130 absent,
+two marks labelled "since moved to Save Church"; the Absent tab, the Tsalack
+filter (63 rows), member-number search on Everyone (one row, Yes, linking to
+the member). NOT seen in the browser: the companion / parent links, because
+no Save Church companion exists in the live history yet (every test pair was
+cleaned up); the first real Sunday after merge will show one.

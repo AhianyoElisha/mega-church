@@ -422,6 +422,17 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **Exactly one default template per category**, enforced on write. Two
   defaults is a coin toss over which message the congregation receives, decided
   by whichever row Appwrite returns first.
+- **`expectedBasis()` is the ONE definition of who a session expects.** The
+  live monitor's "Expected" (`expectedFor` in `lib/attendance/server.ts`) and
+  the in-app register (`/reports/[id]`, `lib/reports/register.ts`) both read
+  it: roster for a restricted meeting, active adults and students for First or
+  Second Service, active children for Save Church, every active member
+  otherwise. Two definitions is how the monitor and the register end up
+  disagreeing about the same Sunday.
+- **The register never DROPS a mark.** A mark for somebody no longer on the
+  expected list — inactive since, off the roster, deleted — is shown and
+  labelled, with `expected: false`, the same rule as the record log. Tidying
+  it away silently shrinks a historical count.
 - **A `leader` may hit `/api/reports/export`, scoped.** A download is a read, so
   this does not break the read-only rule (PRD §5.2). What makes it safe:
   `canReadGroup()` runs before any row loads, and a head who OMITS
