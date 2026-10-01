@@ -441,12 +441,16 @@ large type; body text is black. Never yellow text on white below 18pt.
   `vercel-cron/1.0`, method GET — not the way it is convenient to call by
   hand. Never add `dynamic = 'force-static'` to these: a cached 200 would
   report success forever while sending nothing.
-- **There are FIVE crons now, and Vercel's Hobby plan runs two.** Birthday
+- **There are FIVE crons, and the plan is not the constraint.** Birthday
   push 06:00, birthday SMS 06:00, Sunday reminder Sat 18:00, midweek reminder
-  Wed 08:00, thanks Sun 14:00 — all in `vercel.json`, all UTC = Accra. On
-  Hobby the last three silently never fire; the project needs Pro or an
-  external scheduler calling each route with the bearer token. Check the plan
-  before assuming a quiet Saturday means nobody needed reminding.
+  Wed 08:00, thanks Sun 14:00 — all in `vercel.json`, all UTC = Accra. Vercel
+  lifted the per-project limit to 100 on EVERY plan on 2026-01-20; the "Hobby
+  runs two" rule this project was built around was already stale when it was
+  written. What Hobby DOES still impose: a cron may run at most once per day
+  (an expression that runs more often FAILS THE DEPLOYMENT), and timing is
+  ±59 minutes — `0 14 * * 0` lands anywhere between 14:00 and 14:59. Every
+  schedule above is daily or weekly, so all five deploy; never add one that
+  runs more than once a day without moving to Pro first.
 - **`/api/notifications/*` is exempt from the proxy's session gate** because a
   cron has no cookie jar. It is not unauthenticated — the route requires a
   constant-time-compared bearer token or an admin session. Gating it in

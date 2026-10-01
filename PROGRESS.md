@@ -24,7 +24,7 @@ for the phase breakdowns.
 | P | Save Church (companion occurrence + kiosk redirect) | ✅ done — Plan 6; browser pass 2026-10-01 against the live project (PR #52) |
 | Q | Students (programme, level, yearly rollover) | ✅ done — Plan 6; browser pass 2026-10-01 |
 | R | Photos that render + crop step | ✅ done — Plan 6; browser pass 2026-10-01, both doors |
-| S | Scheduled service SMS + audiences | ⚠️ built — Plan 6; audiences verified in the browser 2026-10-01, no real send, and the Vercel plan must allow 5 crons |
+| S | Scheduled service SMS + audiences | ✅ done — Plan 6; audiences verified in the browser 2026-10-01, five crons fit the plan (checked 2026-10-01). First real firings to be read off `notification_runs` / `sms_messages` after merge |
 
 ## Verified
 
@@ -2079,9 +2079,18 @@ and CLAUDE.md carry the rules.
 
 ### NOT verified — what the next session must do, in order
 
-5. **Vercel plan.** `vercel.json` now declares five crons; Hobby runs two.
-   Pro, or an external scheduler calling each `/api/notifications/*` route
-   with the bearer token (GET, `User-Agent: vercel-cron/1.0`).
+5. ~~**Vercel plan.**~~ — **checked 2026-10-01, no action needed.** The
+   "Hobby runs two" rule was stale before this project existed: Vercel's
+   changelog of 2026-01-20 lifted the per-project limit to 100 on every plan
+   (docs, usage-and-pricing, last updated 2026-07-15: Hobby 100 / Pro 100 /
+   Enterprise 100). The account is Hobby (the OIDC token in `.env.local`
+   carries `plan: hobby`). What Hobby still imposes is a once-per-day minimum
+   interval — a more frequent expression fails the deployment — and ±59 min
+   timing. All five schedules are daily or weekly, and PR #52's preview
+   deployment with all five declared built clean. Expect the thanks text
+   anywhere in 14:00–14:59 and the birthday jobs anywhere in 06:00–06:59.
+   The stale sentence was corrected in CLAUDE.md, README.md, the three
+   newer route comments and the plan.
 6. ~~Browser pass~~ — **done 2026-10-01**, see below.
 7. ~~`E2E_ALLOW_LIVE=1 npm run e2e`~~ — **run 2026-10-01** against the dev
    server and the live project: all checks passed, including the companion
