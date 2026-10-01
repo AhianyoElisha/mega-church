@@ -994,8 +994,8 @@ head would let a basonta head mark somebody `inactive` — removing them from th
 matcher's gallery CHURCH-WIDE — on the strength of running one serving group.
 
 **Deleting is the same cascade an administrator's is.** It purges the member's
-biometric templates, roster rows, basonta memberships, SMS log entries and
-**attendance records**, and releases everybody in their care. It cannot be
+biometric templates, roster rows, basonta memberships, SMS log entries, photo
+file and **attendance records**, and releases everybody in their care. It cannot be
 undone, and nothing afterwards reports that those rows used to exist. The
 confirm dialog names what is destroyed and points at Inactive, which is now a
 real alternative for the same person rather than a consolation.
@@ -1029,7 +1029,10 @@ putting somebody else's group id in a URL gets a 403.
 5. **Session lifecycle** — activate / end, single-active enforcement.
 6. **Kiosk** — capture loop, offline queue, manual fallback, result panels.
 7. **Live monitor** — Appwrite Realtime over `attendance_records`.
-8. **Reports** — per-occurrence and per-member history, Excel export.
+8. **Reports** — per-occurrence and per-member history, Excel export, and
+   the register of any session readable in the app: everyone expected,
+   present or absent, with a search and a constituency filter. "Expected" has
+   one definition (`expectedBasis`), shared with the live monitor.
 9. **Constituencies** — CRUD, head appointment, and a bulk assigner that files
    many already-registered members in one action.
 10. **Bacentas and basontas** — bacentas are places under a constituency,

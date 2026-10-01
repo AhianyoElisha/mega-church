@@ -10,11 +10,13 @@ import { runServiceSms } from '@/lib/notifications/serviceSms'
  * Scheduled in `vercel.json` as `0 18 * * 6`. Accra is UTC+0 all year, so the
  * cron expression IS the church's clock and no offset is applied anywhere.
  *
- * ⚠ Vercel's Hobby plan allows TWO cron jobs; this project declares five.
- * The church must be on Pro, or point an external scheduler at this path with
- * `Authorization: Bearer <NOTIFICATIONS_CRON_SECRET>`. That cannot be verified
- * from the code, so it is written here where the next person will look when
- * Saturday's reminder does not arrive.
+ * Vercel allows 100 cron jobs per project on EVERY plan (changelog,
+ * 2026-01-20 — the old Hobby limit of two is gone). What Hobby still imposes
+ * is a once-per-day minimum interval, which this schedule meets, and ±59 min
+ * timing: an invocation lands anywhere inside the scheduled hour. An external
+ * scheduler can also call this path with
+ * `Authorization: Bearer <NOTIFICATIONS_CRON_SECRET>`. Written here where the next person
+ * will look when Saturday's reminder arrives at 18:45 rather than 18:00.
  *
  * Recipients: everyone active who is not a Save Church child. The runner
  * drops children and reports them; the default `sunday_reminder` template is

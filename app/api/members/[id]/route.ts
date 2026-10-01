@@ -340,9 +340,9 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
  * is where that narrowing lives and why it is pure.
  *
  * This is the most destructive write in the application. `deleteMemberCascade`
- * purges biometric templates, roster rows, basonta memberships, SMS log rows
- * and ATTENDANCE RECORDS, and `releaseCharges` frees anybody left in this
- * member's pastoral care. Appwrite has no cascade and no undo, the attendance
+ * purges biometric templates, roster rows, basonta memberships, SMS log rows,
+ * the photo file and ATTENDANCE RECORDS, and `releaseCharges` frees anybody
+ * left in this member's pastoral care. Appwrite has no cascade and no undo, the attendance
  * rows are the church's own account of who was in the building, and nothing
  * anywhere afterwards reports that they used to exist.
  *
@@ -358,7 +358,7 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
   const isAdmin = auth.user.label === 'admin'
 
   const { id } = await params
-  const { databases } = createAdminClient()
+  const { databases, storage } = createAdminClient()
 
   let member: Member
   try {
@@ -380,7 +380,7 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
   }
 
   try {
-    const removed = await deleteMemberCascade(databases, id)
+    const removed = await deleteMemberCascade(databases, storage, id)
     // The gallery is rebuilt from active members, and a deleted member must not
     // still match on the very next press.
     invalidateCandidateCache()

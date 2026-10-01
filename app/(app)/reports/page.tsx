@@ -81,18 +81,26 @@ export default function ReportsPage() {
             </TableHead>
             <TableBody>
               {rows.map((o) => (
-                <TableRow key={o.$id}>
+                // The whole row opens the register — who was there, in the
+                // app — and the two buttons say so for anybody who does not
+                // know a row is clickable.
+                <TableRow key={o.$id} href={`/reports/${o.$id}`}>
                   <TableCell className="font-medium text-neutral-950 dark:text-white">
                     {o.meeting_name}
                   </TableCell>
                   <TableCell className="tabular-nums">{o.occurrence_date}</TableCell>
                   <TableCell className="tabular-nums">{o.present_count}</TableCell>
                   <TableCell>
-                    <Badge color={o.status === 'open' ? 'green' : 'zinc'}>
-                      {o.status === 'open' ? 'Open now' : 'Closed'}
+                    <Badge
+                      color={o.status === 'open' ? 'green' : o.status === 'paused' ? 'yellow' : 'zinc'}
+                    >
+                      {o.status === 'open' ? 'Open now' : o.status === 'paused' ? 'Paused' : 'Closed'}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
+                    <Button plain href={`/reports/${o.$id}`}>
+                      Register
+                    </Button>
                     <Button plain href={`/api/reports/export?occurrence_id=${o.$id}`}>
                       Export
                     </Button>
@@ -103,8 +111,8 @@ export default function ReportsPage() {
           </Table>
 
           <p className="mt-4 text-xs text-neutral-400 dark:text-neutral-500">
-            An export lists every active member with a Yes/No column, not just those who came —
-            the gaps are usually what you are looking for.
+            Open a session to read its register here — present, absent, or everyone, with a
+            search and a constituency filter. An export is the same register as a spreadsheet.
           </p>
         </>
       )}

@@ -53,7 +53,7 @@ async function main() {
     process.exit(1)
   }
 
-  const { databases } = createAdminClient()
+  const { databases, storage } = createAdminClient()
 
   async function findAll(collection: string) {
     const out: Record<string, unknown>[] = []
@@ -107,7 +107,7 @@ async function main() {
     {
       label: 'members',
       collection: COLLECTIONS.members,
-      remove: (id: string) => deleteMemberCascade(databases, id),
+      remove: (id: string) => deleteMemberCascade(databases, storage, id),
     },
     {
       label: 'basontas',

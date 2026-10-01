@@ -422,6 +422,17 @@ large type; body text is black. Never yellow text on white below 18pt.
 - **Exactly one default template per category**, enforced on write. Two
   defaults is a coin toss over which message the congregation receives, decided
   by whichever row Appwrite returns first.
+- **`expectedBasis()` is the ONE definition of who a session expects.** The
+  live monitor's "Expected" (`expectedFor` in `lib/attendance/server.ts`) and
+  the in-app register (`/reports/[id]`, `lib/reports/register.ts`) both read
+  it: roster for a restricted meeting, active adults and students for First or
+  Second Service, active children for Save Church, every active member
+  otherwise. Two definitions is how the monitor and the register end up
+  disagreeing about the same Sunday.
+- **The register never DROPS a mark.** A mark for somebody no longer on the
+  expected list — inactive since, off the roster, deleted — is shown and
+  labelled, with `expected: false`, the same rule as the record log. Tidying
+  it away silently shrinks a historical count.
 - **A `leader` may hit `/api/reports/export`, scoped.** A download is a read, so
   this does not break the read-only rule (PRD §5.2). What makes it safe:
   `canReadGroup()` runs before any row loads, and a head who OMITS
@@ -441,12 +452,16 @@ large type; body text is black. Never yellow text on white below 18pt.
   `vercel-cron/1.0`, method GET — not the way it is convenient to call by
   hand. Never add `dynamic = 'force-static'` to these: a cached 200 would
   report success forever while sending nothing.
-- **There are FIVE crons now, and Vercel's Hobby plan runs two.** Birthday
+- **There are FIVE crons, and the plan is not the constraint.** Birthday
   push 06:00, birthday SMS 06:00, Sunday reminder Sat 18:00, midweek reminder
-  Wed 08:00, thanks Sun 14:00 — all in `vercel.json`, all UTC = Accra. On
-  Hobby the last three silently never fire; the project needs Pro or an
-  external scheduler calling each route with the bearer token. Check the plan
-  before assuming a quiet Saturday means nobody needed reminding.
+  Wed 08:00, thanks Sun 14:00 — all in `vercel.json`, all UTC = Accra. Vercel
+  lifted the per-project limit to 100 on EVERY plan on 2026-01-20; the "Hobby
+  runs two" rule this project was built around was already stale when it was
+  written. What Hobby DOES still impose: a cron may run at most once per day
+  (an expression that runs more often FAILS THE DEPLOYMENT), and timing is
+  ±59 minutes — `0 14 * * 0` lands anywhere between 14:00 and 14:59. Every
+  schedule above is daily or weekly, so all five deploy; never add one that
+  runs more than once a day without moving to Pro first.
 - **`/api/notifications/*` is exempt from the proxy's session gate** because a
   cron has no cookie jar. It is not unauthenticated — the route requires a
   constant-time-compared bearer token or an admin session. Gating it in
@@ -673,11 +688,14 @@ large type; body text is black. Never yellow text on white below 18pt.
   actually refuses them.
 - **Cascades are manual.** Deleting a member means deleting their
   `biometric_templates`, `meeting_members`, `basonta_members`,
-  `sms_messages` and `attendance_records`, and calling `releaseCharges()` so
-  nobody is left looked after by somebody who is gone. Deleting a constituency
-  means clearing `constituency_id` off its members BEFORE the row goes, or they
-  are left pointing at a home that no longer exists; deleting a bacenta clears
-  the care links first and `bacenta_id` second.
+  `sms_messages` and `attendance_records`, their photo file in
+  `member-photos`, and calling `releaseCharges()` so nobody is left looked
+  after by somebody who is gone. `deleteMemberCascade` takes `storage` as a
+  REQUIRED argument for the photo: it is the one reference that is not a row,
+  and once the member row is gone nothing can find the file again. Deleting a
+  constituency means clearing `constituency_id` off its members BEFORE the row
+  goes, or they are left pointing at a home that no longer exists; deleting a
+  bacenta clears the care links first and `bacenta_id` second.
 - **Idempotent setup:** `scripts/setup-appwrite.ts` is the single source of
   truth for schema and must be safe to re-run. New attributes go there, not
   into the console by hand. `npm run verify:appwrite` reads the live project

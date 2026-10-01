@@ -94,8 +94,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     const ok = await dialog.confirm({
       title: `Delete ${name}?`,
       message:
-        'This permanently removes their record, their fingerprints, their place on every ' +
-        'meeting roster, and their entire attendance history. Marking them inactive keeps the ' +
+        'This permanently removes their record, their photo, their fingerprints, their place ' +
+        'on every meeting roster, and their entire attendance history. Marking them inactive keeps the ' +
         'history and stops them being matched — that is usually what you want.',
       confirmText: 'Delete permanently',
       tone: 'danger',
@@ -226,7 +226,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 {constituencyName ?? <span className="text-neutral-400">Not recorded</span>}
               </DescriptionDetails>
 
-              <DescriptionTerm>Bacentas</DescriptionTerm>
+              <DescriptionTerm>Basontas</DescriptionTerm>
               <DescriptionDetails>
                 {memberBasontas.length === 0 ? (
                   <span className="text-neutral-400">None</span>

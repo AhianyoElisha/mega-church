@@ -14,10 +14,13 @@ import { servicesAttendedText, type ServicesAttended } from '@/lib/sms/render'
  * are the same string, and `buildDayReport(databases, runDate)` is the whole
  * lookup.
  *
- * ⚠ Vercel's Hobby plan allows TWO cron jobs; this project declares five.
- * The church must be on Pro, or point an external scheduler at this path with
- * `Authorization: Bearer <NOTIFICATIONS_CRON_SECRET>`. Not verifiable from
- * the code.
+ * Vercel allows 100 cron jobs per project on EVERY plan (changelog,
+ * 2026-01-20 — the old Hobby limit of two is gone). What Hobby still imposes
+ * is a once-per-day minimum interval, which this schedule meets, and ±59 min
+ * timing: an invocation lands anywhere inside the scheduled hour. An external
+ * scheduler can also call this path with
+ * `Authorization: Bearer <NOTIFICATIONS_CRON_SECRET>`. On Hobby this one can therefore run as
+ * late as 14:59; both services are long closed by then.
  *
  * Each recipient carries its OWN `services_attended`, rendered from its row's
  * status: "First Service", "Second Service" or "both First and Second

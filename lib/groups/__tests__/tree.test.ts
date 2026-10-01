@@ -588,8 +588,8 @@ describe('headEditScope', () => {
  * Deleting is the narrowest thing a head can do, and the most expensive.
  *
  * `deleteMemberCascade` purges the member's biometric templates, roster rows,
- * basonta memberships, SMS log entries and ATTENDANCE RECORDS, then releases
- * everybody in their care. None of it is recoverable and nothing afterwards
+ * basonta memberships, SMS log entries, photo file and ATTENDANCE RECORDS, then
+ * releases everybody in their care. None of it is recoverable and nothing afterwards
  * reports that it used to exist — so this check is the only thing standing
  * between a head and an irreversible write, which is exactly why it is pure and
  * tested here rather than only reachable through a live route.

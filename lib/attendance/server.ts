@@ -33,6 +33,7 @@ import {
   type MeetingOccurrence,
 } from '@/lib/meetings/types'
 import { aggregateLive } from './liveStats'
+import { expectedBasis } from '@/lib/reports/register'
 import {
   attendanceTarget,
   canActivate,
@@ -1033,16 +1034,18 @@ async function countMembers(databases: Databases, queries: string[]): Promise<nu
  * where the attribute is absent, which would have counted nobody.
  */
 async function expectedFor(databases: Databases, session: ActiveSession): Promise<number> {
-  if (session.meeting.restricted) return session.roster_size
+  // `expectedBasis` is the ONE definition of who a session expects, shared
+  // with the register page (`lib/reports/register.ts`), so the monitor's
+  // "Expected" and the register's cannot disagree about the same service.
+  const basis = expectedBasis(session.meeting)
+  if (basis === 'roster') return session.roster_size
   const active = [Query.equal('status', 'active')]
-  if (!isAdultServiceSlot(session.meeting.service_slot)) {
-    return countMembers(databases, active)
-  }
+  if (basis === 'everyone') return countMembers(databases, active)
   const [everyone, children] = await Promise.all([
     countMembers(databases, active),
     countMembers(databases, [...active, Query.equal('member_type', 'child')]),
   ])
-  return Math.max(0, everyone - children)
+  return basis === 'children' ? children : Math.max(0, everyone - children)
 }
 
 export async function loadLiveStats(

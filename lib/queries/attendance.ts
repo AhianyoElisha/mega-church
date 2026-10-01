@@ -10,6 +10,7 @@ import type {
   MemberHistoryResponse,
   ScanResponse,
 } from '@/lib/attendance/types'
+import type { SessionRegisterResponse } from '@/lib/reports/register'
 
 export function useLiveStats(occurrenceId: string | null, pollMs = 15_000) {
   return useQuery<LiveStatsResponse>({
@@ -29,6 +30,16 @@ export function useAttendanceRecords(occurrenceId: string | null) {
     queryKey: queryKeys.attendanceRecords(occurrenceId ?? ''),
     queryFn: () =>
       apiFetch(`/api/attendance/records?occurrence_id=${encodeURIComponent(occurrenceId!)}`),
+    enabled: !!occurrenceId,
+  })
+}
+
+/** One session's register — every expected member, present or not. */
+export function useOccurrenceRegister(occurrenceId: string | null) {
+  return useQuery<SessionRegisterResponse>({
+    queryKey: queryKeys.occurrenceRegister(occurrenceId ?? ''),
+    queryFn: () =>
+      apiFetch(`/api/occurrences/${encodeURIComponent(occurrenceId!)}/register`),
     enabled: !!occurrenceId,
   })
 }

@@ -198,8 +198,10 @@ on every scheduled invocation; without it the header is absent and the route
 correctly refuses. `NOTIFICATIONS_CRON_SECRET` is also accepted, so an external
 scheduler can use a different secret from Vercel's — set either, or both.
 
-Vercel's Hobby plan allows **two** cron jobs, triggered once a day. That is
-exactly what is declared here; a third job needs the Pro plan.
+Vercel allows **100** cron jobs per project on every plan (since 20 January
+2026). Five are declared here. On the Hobby plan each may run at most once a
+day — a more frequent expression fails the deployment — and an invocation lands
+anywhere inside its scheduled hour, so `0 6 * * *` means 06:00–06:59.
 
 Both routes are safe to call more than once. The team push is claimed by a row
 in `notification_runs`; each birthday SMS is claimed by a row in `sms_messages`
