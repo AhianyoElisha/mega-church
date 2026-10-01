@@ -16,7 +16,7 @@ export type Celebrant = {
   $id: string
   full_name: string
   photo_file_id: string | null
-  call_number: string
+  call_number: string | null
   whatsapp_number: string | null
   birth_month: number
   birth_day: number
@@ -32,7 +32,7 @@ type MemberLike = {
   other_names?: string | null
   last_name: string
   photo_file_id: string | null
-  call_number: string
+  call_number: string | null
   whatsapp_number: string | null
   birth_month: number | null
   birth_day: number | null

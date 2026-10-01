@@ -25,9 +25,14 @@ attendance — see §2.1.
 | `birth_month` | integer 1-12 | no | **no birth year is ever collected** |
 | `birth_day` | integer 1-31 | no | |
 | `address` | string(256) | no | |
-| `call_number` | string(32) | **yes** | the number you ring |
+| `call_number` | string(32) | **adult / student** | the number you ring. Optional for a `child`, where it is the parent or guardian's number (§1.1b) |
 | `whatsapp_number` | string(32) | no | often identical to `call_number`, but stored independently because some members keep them separate |
-| `home_service` | enum | yes | `first` \| `second` — informational only, **never** an attendance gate |
+| `home_service` | enum | yes | `first` \| `second` — informational only, **never** an attendance gate. For a child it means *the parents' service*, the one their Save Church session runs beside |
+| `member_type` | enum | no (absent ⇒ `adult`) | `adult` \| `student` \| `child` — §1.1b. `child` IS the Save Church gate (§2.11) and the SMS exclusion (§2.13) |
+| `programme` | string(128) | no | students only |
+| `level` | integer 100–800 | no | students only; steps of 100 |
+| `level_year` | integer | no | students only — the academic year `level` was last confirmed in (§2.12) |
+| `guardian_name` | string(128) | no | children only — who `call_number` reaches |
 | `constituency_id` | string(64) | no | where they LIVE — exactly one (§1.7). Informational only; **never** an attendance gate |
 | `bacenta_id` | string(64) | no | the PLACE inside that constituency — exactly one (§1.7a). Never an attendance gate |
 | `care_of_member_id` | string(64) | no | the member who looks after them, inside their bacenta. Needs no account (§1.7a) |
@@ -93,6 +98,36 @@ Setting one is an administrator's or the member's own **constituency head's**
 (§5.2). It reads like `benmp_partner`, but a wrong title misaddresses a whole
 congregation's message rather than texting one person.
 
+### 1.1b Adults, students and children
+
+`member_type` says what KIND of member somebody is. One field, three values,
+and an absent value reads as `adult`: every row registered before the field
+existed was an adult in every way the system cared about, and the wrong
+reading in the other direction would silently stop texting somebody or send
+them to the children's service.
+
+| | `adult` | `student` | `child` |
+|---|---|---|---|
+| who | working adults, the default | at university, nearly always KNUST | Save Church, under 12 |
+| registration needs | name + call number | name + call number | **name only** |
+| extra fields | — | `programme`, `level`, `level_year` | `guardian_name` |
+| scans during First/Second | marked there | marked there | **redirected to Save Church** (§2.11) |
+| receives SMS | yes | yes, and can be targeted alone | **never** (§2.13) |
+
+There is still no birth year. A child is a child because a person said so at
+the desk, and `member_type` is what they said. Setting it is
+**constituency-head tier** beside `status` and `title` (§5.2): it changes what
+the kiosk does with somebody and whether the church spends credit on them.
+`programme`, `level` and `guardian_name` are ordinary details any head in scope
+may correct.
+
+The student-only and child-only fields are **refused by name** on anybody of
+another type, except `null`, which is always a permitted clearing. Changing
+type away from `student` clears the three student fields; away from `child`
+clears `guardian_name`. A `student` with no level yet is legal — the bulk move
+that files existing members as students would otherwise be blocked on a fact
+nobody has collected yet.
+
 ### 1.2 Biometric templates
 
 Four fingers × three scan variations each = **12 templates per fully-enrolled
@@ -116,15 +151,18 @@ A *meeting* is a recurring **definition**, not an occurrence.
 | `name` | string(96) | "First Service (Psalms Chapel)", "Youth Committee" |
 | `description` | string(512) | |
 | `kind` | enum | `service` \| `meeting` |
-| `service_slot` | enum \| null | `first` \| `second`, only when `kind = service` |
+| `service_slot` | enum \| null | `first` \| `second` \| `save`, only when `kind = service` |
 | `restricted` | boolean | true ⇒ attendance limited to the authorised roster |
 | `archived` | boolean | hidden from the activate list, history preserved |
 | `sort_order` | integer | services first |
 
-Two `service` rows are seeded and are **not deletable**:
+Three `service` rows are seeded and are **not deletable**:
 
 - `first-service` — *First Service (Psalms Chapel)*, `restricted = false`
 - `second-service` — *Second Service*, `restricted = false`
+- `save-church` — *Save Church*, the children's service, `restricted = false`.
+  **Never activated on its own**: it opens as a COMPANION of whichever adult
+  service is activated (§1.5, §2.11), and its Activate button is not offered.
 
 Every other row is admin-created, `kind = meeting`, `restricted = true`.
 
@@ -159,6 +197,22 @@ end it.
 | `closed_at` | string(32) \| null | ISO |
 | `opened_by` / `closed_by` | string(128) | admin email |
 | `present_count` | integer | denormalised tally, written on close |
+| `parent_occurrence_id` | string(64) \| null | set ⇒ this is a **companion** — see below |
+
+#### Companions
+
+Activating First or Second Service also creates a Save Church occurrence for
+the same date with `parent_occurrence_id` pointing at the new service
+occurrence. That row is a *companion*: it never holds the scanner, so every
+liveness check (`resolveOpenOccurrence`, the paused list, `canActivate`)
+**ignores rows with `parent_occurrence_id` set**, and the one-open-session
+rule of §2.2 is untouched. It is closed, with its own `present_count`, when
+its parent is closed. Pause and resume leave it alone — the kiosk stops on the
+parent's pause anyway, and a companion has no liveness of its own.
+
+A service that was already open when this shipped has no companion; the
+redirect path creates one on the first child's scan (`ensureCompanion`), so
+nothing has to be re-activated.
 
 ### 1.6 Attendance records
 
@@ -374,7 +428,7 @@ times a year and subtly differently each time.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `name` | string(96) | yes | unique **within its category**, case- and whitespace-insensitively |
-| `category` | enum | yes | `birthday` \| `tithe` \| `general` |
+| `category` | enum | yes | `birthday` \| `tithe` \| `general` \| `benmp` \| `sunday_reminder` \| `midweek_reminder` \| `attendance_thanks` — the last three are the scheduled service texts (§2.13) |
 | `body` | string(1024) | yes | with `{{placeholders}}` |
 | `is_default` | boolean | yes | the one used when nothing more specific is chosen |
 | `sort_order` | integer | yes | |
@@ -386,10 +440,14 @@ untidiness — it is a coin toss over which message the congregation receives,
 resolved by whichever row Appwrite happens to return first.
 
 Placeholders are a **closed set**: `{{first_name}}`, `{{last_name}}`,
-`{{other_names}}`, `{{full_name}}`, `{{church}}`. An unknown one refuses the
-send and names the offending token rather than substituting an empty string —
-the failure being prevented is "Happy birthday !" going to the whole
-congregation, at cost, with no way to recall it.
+`{{other_names}}`, `{{full_name}}`, `{{church}}`, the composed title forms of
+§1.1a, and — **only in `attendance_thanks`** — `{{services_attended}}`, which
+renders *First Service*, *Second Service* or *both First and Second Service*
+for a member who was there. It is refused by name in any other category,
+because there it has nothing to say and would render blank. An unknown one
+refuses the send and names the offending token rather than substituting an
+empty string — the failure being prevented is "Happy birthday !" going to the
+whole congregation, at cost, with no way to recall it.
 
 An open set — "substitute any member field" — was rejected: it would let a
 template text somebody their own phone number, and would start rendering blanks
@@ -451,8 +509,14 @@ Consequences:
 
 - First Service must be **ended or paused** before Second Service can be
   activated.
-- The two services can never run concurrently.
+- The two adult services can never run concurrently.
 - The kiosk never has to ask *which* session it is marking.
+
+The one thing that runs *beside* an open service is its Save Church
+**companion** (§1.5), and it is not an exception to this rule: a companion is
+invisible to every check that asks "who holds the scanner?", and the kiosk
+still never asks — it decides per scan, from `member_type`, which of the two
+rows a mark lands in (§2.11).
 
 #### Pausing
 
@@ -629,6 +693,92 @@ head. The map decides what and cannot express who.
 
 ---
 
+### 2.11 A child who scans during an adult service is marked at Save Church
+
+There is one scanner, and Save Church happens *during* First and Second
+Service. So when First or Second is open and the member identified is a
+`child`, the mark is written into the **Save Church companion occurrence**
+(§1.5) rather than the open service, and the kiosk says so: *"Marked present —
+Save Church"*, by name, with the child's photo. A second scan says *"Already
+marked at Save Church"*. The open service's own tally is untouched.
+
+The decision is `attendanceTarget(session, member)`, pure: `companion` iff the
+member is a `child` **and** the open meeting is a `first`/`second` service.
+Everything else is unchanged — a child at a restricted meeting is judged by
+that meeting's roster like anybody else, and an adult is never redirected.
+Save Church cannot be activated on its own; a request to is refused with 409
+and a sentence saying why.
+
+Reports follow the same split. A day report has three presence sets; a child's
+row is `save` or absent-from-Save-Church, never "absent from First Service",
+and the export has a fourth sheet. The live monitor and the Services page show
+the companion's count beside the service's.
+
+### 2.12 A student's level is confirmed, not incremented
+
+Every student carries `level` and `level_year`, the academic year in which
+that level was last confirmed. The academic year turns over in August
+(`ACADEMIC_YEAR_START_MONTH`, a constant because the church may decide
+September). A student is **due for update** when `level_year` is older than
+the academic year containing today. Nothing runs on a schedule; "due" is
+derived from a stored fact.
+
+`/students` lists the roll, filters to the due, and offers three transitions,
+each stamping `level_year` with the current academic year:
+
+- **Promote** — `level + 100`; refused, by name, at 800.
+- **Repeat** — `level` unchanged. The student who repeated a year is not an
+  exception the admin has to remember; they are one button.
+- **Graduate** — `member_type` becomes `adult`, the three student fields are
+  cleared.
+
+The same page moves existing adults into the student roll with their programme
+and level entered inline, which is how the students already registered as
+plain members get their details without a re-registration.
+
+### 2.13 Scheduled service texts, and who never gets one
+
+Three automatic texts join the birthday one, each its own category with its
+own default template, each recorded in `notification_runs` and idempotent per
+member per day on `sms_messages.dedupe_key`:
+
+| job | when (Accra) | to whom | category |
+|---|---|---|---|
+| `sunday-reminder` | Saturday 18:00 | every active member | `sunday_reminder` — First Service 7:30am, Second 10:30am |
+| `midweek-reminder` | Wednesday 08:00 | every active member | `midweek_reminder` — the 6:00pm service |
+| `attendance-thanks` | Sunday 14:00 | everyone marked present that day | `attendance_thanks`, rendered per member with `{{services_attended}}` |
+| `birthday-sms` | daily 06:00 | the day's celebrants | `birthday` |
+
+One thank-you template serves both wordings: a member at one service reads
+*"…joining us at Second Service today…"*, a member at both reads *"…at both
+First and Second Service today…"*. The placeholder is only ever rendered for
+somebody who was there, so the empty case cannot be expressed.
+
+**Save Church children are never texted.** They come with their parents and
+have no phones; the number on a child's row is a parent's, and a text to it
+about the child's own birthday or a service reminder addressed to the child is
+wrong. The exclusion is enforced at the send chokepoint (`sendToMembers`
+drops them and reports `excluded_children`) *and* at every route, so the
+screen can say how many were left out and why. The birthday PUSH to the
+celebrations team still names them — a flyer for a child is fine.
+
+Manual broadcasts take an **audience**: everyone, students only, or everyone
+except students. It narrows the recipients server-side and reports the drop;
+the picker offers the same three so nobody selects a doomed name.
+
+### 2.14 Photos are served by the app
+
+A member photo is fetched from `/api/photos/[fileId]`, same-origin, by any
+signed-in role, and streamed through the server from the private bucket. The
+browser never holds an Appwrite session — login stores it as an httpOnly
+cookie on the app's own domain — so a direct Storage URL is a 401 and an
+`<img>` that shows its `alt`. The route's response is cached as immutable: a
+new upload is a new file id, so the URL is a content hash.
+
+Uploads are normalised server-side (EXIF-rotated, cover-cropped to 800×800,
+JPEG), and both doors — file and camera — pass through a crop step with a
+rule-of-thirds grid before anything is sent. Nothing is ever mirrored.
+
 ## 3. Biometric pipeline
 
 Ported verbatim from SEMP unless noted. Do not re-derive any of it.
@@ -699,8 +849,8 @@ grows with the number of comparisons.
 
 | kind | Meaning | Writes? |
 |---|---|---|
-| `marked` | identified, authorised, newly present | yes |
-| `already_marked` | identified, already present in this occurrence | **no** |
+| `marked` | identified, authorised, newly present. Carries `meeting_name` and `redirected` — true when a child was marked at Save Church instead of the open service (§2.11) | yes |
+| `already_marked` | identified, already present in the target occurrence; same two fields | **no** |
 | `not_authorised` | identified, but not on this restricted meeting's roster | no |
 | `inactive_member` | identified, but `status = inactive` | no |
 | `no_match` | the matcher ran and nobody matched | no |
@@ -833,6 +983,7 @@ else:
 | record who looks after them | yes | yes |
 | set the photo | yes | yes |
 | `status` — active / inactive | **no** | yes |
+| `member_type` — adult / student / child | **no** | yes |
 | `sms_template_id` — their birthday message | **no** | yes |
 | `bacenta_id` — move between places | **no** | yes, within their own constituency |
 | **delete the member outright** | **no** | yes |
@@ -897,3 +1048,10 @@ putting somebody else's group id in a URL gets a 403.
     that texts a hand-picked set of members.
 15. **Head accounts, created in-app** — an admin creates the `leader` login and
     appoints them from the group's own page, in one flow.
+16. **Save Church** — the children's service as a companion occurrence, the
+    per-scan redirect, the kiosk wording, the fourth report sheet.
+17. **Students** — programme and level on the member, the `/students` roll,
+    and the confirm-not-increment yearly rollover.
+18. **Scheduled service texts** — Saturday and Wednesday reminders, the Sunday
+    thank-you with `{{services_attended}}`, audiences on manual sends, and
+    the never-text-a-child guarantee.

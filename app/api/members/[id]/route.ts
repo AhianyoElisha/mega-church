@@ -3,6 +3,7 @@ import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import {
   deleteMemberCascade,
   readBasontaIds,
+  stampLevelYear,
   updateMember,
   validateMemberInput,
 } from '@/lib/members/server'
@@ -108,37 +109,19 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     )
   }
 
-  const validated = validateMemberInput(body as Record<string, unknown>, { partial: true })
-  if (!validated.ok) {
-    return NextResponse.json<MemberResponse>({ ok: false, error: validated.error }, { status: 400 })
-  }
-
-  // `undefined` means the request never mentioned bacentas and they must be
-  // left alone; `[]` means the form sent an empty tick-list and they must be
-  // cleared. Collapsing the two would make every unrelated edit — a corrected
-  // phone number — silently remove somebody from their choir.
-  const bacentaIds = readBasontaIds(body)
-
-  if (Object.keys(validated.value).length === 0 && bacentaIds === undefined) {
-    return NextResponse.json<MemberResponse>(
-      { ok: false, error: 'Nothing to update.' },
-      { status: 400 },
-    )
-  }
-
   const { databases } = createAdminClient()
 
-  let fields = validated.value
-  let effectiveBacentaIds = bacentaIds
-
   /**
-   * The member as they stand.
+   * The member as they stand — loaded BEFORE validation, not after.
    *
    * Loaded for EVERY caller, not just a head: an edit is only meaningful
-   * against what is already there. A head needs it for the scope check, the
-   * "did you MOVE them" comparison and the basonta merge; an admin needs it for
-   * the care check, which has to know which bacenta the member ends up in when
-   * the request does not mention one.
+   * against what is already there. The validator needs the stored category
+   * and call number, because whether a phone may be blank and whether a level
+   * may be set depend on what the member ENDS UP as, and a partial body that
+   * never mentions `member_type` cannot say. A head needs it for the scope
+   * check, the "did you MOVE them" comparison and the basonta merge; an admin
+   * needs it for the care check, which has to know which bacenta the member
+   * ends up in when the request does not mention one.
    */
   let current: { member: Member; basonta_ids: string[] }
   try {
@@ -156,6 +139,31 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       { status: 404 },
     )
   }
+
+  const validated = validateMemberInput(body as Record<string, unknown>, {
+    partial: true,
+    currentType: current.member.member_type,
+    currentCallNumber: current.member.call_number,
+  })
+  if (!validated.ok) {
+    return NextResponse.json<MemberResponse>({ ok: false, error: validated.error }, { status: 400 })
+  }
+
+  // `undefined` means the request never mentioned bacentas and they must be
+  // left alone; `[]` means the form sent an empty tick-list and they must be
+  // cleared. Collapsing the two would make every unrelated edit — a corrected
+  // phone number — silently remove somebody from their choir.
+  const bacentaIds = readBasontaIds(body)
+
+  if (Object.keys(validated.value).length === 0 && bacentaIds === undefined) {
+    return NextResponse.json<MemberResponse>(
+      { ok: false, error: 'Nothing to update.' },
+      { status: 400 },
+    )
+  }
+
+  let fields = validated.value
+  let effectiveBacentaIds = bacentaIds
 
   if (!isAdmin) {
 
@@ -216,6 +224,10 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       )
     }
   }
+
+  // After the head narrowing, on the fields that will actually be written: a
+  // level typed on the form today is a level confirmed this academic year.
+  stampLevelYear(fields)
 
   const constituencyId = fields.constituency_id
   if (typeof constituencyId === 'string' && !(await constituencyExists(databases, constituencyId))) {
@@ -297,8 +309,10 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       await setMemberBasontas(databases, id, effectiveBacentaIds, auth.user.email)
     }
     // A member flipped to `inactive` must drop out of the matcher's gallery
-    // immediately, not at the next 60s cache expiry.
-    if ('status' in fields) invalidateCandidateCache()
+    // immediately, not at the next cache expiry — and a member made a child
+    // must be redirected to Save Church on the very next press, because the
+    // gallery carries `member_type` alongside the templates.
+    if ('status' in fields || 'member_type' in fields) invalidateCandidateCache()
     return NextResponse.json<MemberResponse>({
       ok: true,
       member,

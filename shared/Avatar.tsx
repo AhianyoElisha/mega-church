@@ -1,6 +1,8 @@
+'use client'
+
 import * as Headless from '@headlessui/react'
 import clsx from 'clsx'
-import React, { forwardRef } from 'react'
+import React, { forwardRef, useEffect, useState } from 'react'
 import { TouchTarget } from './Button'
 import { Link } from './link'
 
@@ -20,6 +22,15 @@ export default function Avatar({
   className,
   ...props
 }: AvatarProps & React.ComponentPropsWithoutRef<'span'>) {
+  // A photo that cannot be loaded shows the initials underneath it instead of
+  // the browser's broken-image glyph and the alt text. A 401 for a signed-out
+  // tab, a 404 for a file the console deleted, a flaky connection — each of
+  // them otherwise renders a name in a box that looks like a failed upload.
+  // Reset when `src` changes, or one bad photo would hide every good one that
+  // followed it in a re-used row.
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [src])
+
   return (
     <span
       data-slot="avatar"
@@ -45,7 +56,10 @@ export default function Avatar({
           </text>
         </svg>
       )}
-      {src && <img className="size-full object-cover" src={src} alt={alt} />}
+      {src && !failed && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="size-full object-cover" src={src} alt={alt} onError={() => setFailed(true)} />
+      )}
     </span>
   )
 }

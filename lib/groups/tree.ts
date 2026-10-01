@@ -433,6 +433,29 @@ export function headEditScope(
     }
   }
   /*
+   * `member_type` sits with `status`, not with the ordinary details, because
+   * of what it DOES rather than what it records. `child` is what sends
+   * somebody to Save Church when they touch the scanner during an adult
+   * service and what stops every text the church would otherwise send them;
+   * `student` is what a broadcast can be narrowed to. A choir head has no
+   * basis for either, and getting it wrong is invisible on their screen and
+   * visible on Sunday at the kiosk.
+   *
+   * `programme` and `level` are deliberately NOT here: they are details in
+   * the phone-number sense, and correcting a level is exactly the kind of
+   * thing a bacenta head knows first.
+   */
+  if ('member_type' in fields && !runsTheirConstituency) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        'Only an administrator, or the head of this member’s own constituency, can change ' +
+        'whether a member is an adult, a university student or a Save Church child. It decides ' +
+        'where the scanner marks them and whether the church texts them.',
+    }
+  }
+  /*
    * `benmp_partner` is deliberately NOT refused, and the decision is written
    * down because an absent refusal is invisible — the next person to read this
    * list cannot tell "considered and allowed" from "never thought about".

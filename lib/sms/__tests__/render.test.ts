@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CATEGORY_EXTRAS,
   PLACEHOLDERS,
+  PLACEHOLDER_HINT,
   countParts,
+  extrasForCategory,
   render,
+  sampleExtras,
+  servicesAttendedText,
   toProviderNumber,
   unknownPlaceholders,
 } from '@/lib/sms/render'
+import { SMS_CATEGORIES } from '@/lib/appwrite/config'
 
 const ama = { first_name: 'Ama', last_name: 'Serwaa', other_names: null }
 const kofi = { first_name: 'Kofi', last_name: 'Mensah', other_names: 'Kwabena' }
@@ -78,6 +84,82 @@ describe('unknownPlaceholders', () => {
   })
   it('reports each unknown token once', () => {
     expect(unknownPlaceholders('{{oops}} {{oops}}')).toEqual(['oops'])
+  })
+  it('knows an allowed extra, and only when told', () => {
+    const body = 'Thanks for joining us at {{services_attended}}'
+    expect(unknownPlaceholders(body)).toEqual(['services_attended'])
+    expect(unknownPlaceholders(body, ['services_attended'])).toEqual([])
+  })
+})
+
+/*
+ * `{{services_attended}}` — the one placeholder that exists in ONE category.
+ *
+ * The property under test is the `{{title}}` rule wearing a different hat: a
+ * token that would render EMPTY for everybody outside a thank-you must be
+ * impossible to save there, not merely discouraged.
+ */
+describe('services_attended', () => {
+  const thanks = 'Thank you, {{first_name}}, for joining us at {{services_attended}} today.'
+
+  it('is an extra for attendance_thanks and for nothing else', () => {
+    expect(extrasForCategory('attendance_thanks')).toEqual(['services_attended'])
+    for (const c of SMS_CATEGORIES) {
+      if (c === 'attendance_thanks') continue
+      expect(extrasForCategory(c)).toEqual([])
+    }
+    // The map and the helper cannot disagree.
+    expect(Object.keys(CATEGORY_EXTRAS)).toEqual(['attendance_thanks'])
+  })
+
+  it('is REFUSED by name outside a thank-you', () => {
+    // A birthday template carrying it: no render has a value for it, so
+    // refusing at save time is the only place this can fail for free.
+    for (const c of SMS_CATEGORIES) {
+      if (c === 'attendance_thanks') continue
+      expect(unknownPlaceholders(thanks, extrasForCategory(c))).toEqual(['services_attended'])
+    }
+    const r = render(thanks, ama)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('{{services_attended}}')
+  })
+
+  it('renders the three wordings, one template each', () => {
+    const at = (s: 'first' | 'second' | 'both') =>
+      render(thanks, ama, { services_attended: servicesAttendedText(s) })
+    expect(at('first')).toEqual({
+      ok: true,
+      text: 'Thank you, Ama, for joining us at First Service today.',
+    })
+    expect(at('second')).toEqual({
+      ok: true,
+      text: 'Thank you, Ama, for joining us at Second Service today.',
+    })
+    expect(at('both')).toEqual({
+      ok: true,
+      text: 'Thank you, Ama, for joining us at both First and Second Service today.',
+    })
+  })
+
+  it('an extra cannot shadow a member field', () => {
+    // `{{first_name}}` means the same thing in every category, whatever a
+    // caller passes alongside it.
+    const r = render('{{first_name}} at {{services_attended}}', ama, {
+      first_name: 'NOT AMA',
+      services_attended: 'First Service',
+    })
+    expect(r).toEqual({ ok: true, text: 'Ama at First Service' })
+  })
+
+  it('previews with the LONGEST wording, so the price quoted is the worst case', () => {
+    expect(sampleExtras('attendance_thanks')).toEqual({
+      services_attended: 'both First and Second Service',
+    })
+    expect(sampleExtras('birthday')).toEqual({})
+  })
+
+  it('has a hint that says it is thanks-only', () => {
+    expect(PLACEHOLDER_HINT.services_attended).toMatch(/thank-you/i)
   })
 })
 

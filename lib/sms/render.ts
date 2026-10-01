@@ -4,7 +4,12 @@
 // function and the sender sends with it, so what an admin approved on screen
 // is byte-for-byte what leaves the building.
 
-import { CHURCH_NAME, SMS_CONCAT_PART_LENGTH, SMS_PART_LENGTH } from '@/lib/appwrite/config'
+import {
+  CHURCH_NAME,
+  SMS_CONCAT_PART_LENGTH,
+  SMS_PART_LENGTH,
+  type SmsCategory,
+} from '@/lib/appwrite/config'
 import { titleLabel } from '@/lib/members/titles'
 
 /** The subset of a member a message can address. Structural, so both the
@@ -42,7 +47,34 @@ export const PLACEHOLDERS = [
 
 export type Placeholder = (typeof PLACEHOLDERS)[number]
 
-export const PLACEHOLDER_HINT: Record<Placeholder, string> = {
+/**
+ * Placeholders that exist in ONE category only.
+ *
+ * `{{services_attended}}` is the whole list. It is not a member field — it is
+ * a fact about one Sunday, computed from the attendance rows at 14:00 — so it
+ * cannot live in `PLACEHOLDERS`, which every category shares. A birthday
+ * template carrying it would have nothing to render and would fall into the
+ * `{{title}}` failure: an empty substitution mailed to the congregation.
+ *
+ * So it is an EXTRA, handed to `render()` per member by the one route that
+ * knows the answer, and `unknownPlaceholders(body, extrasForCategory(c))`
+ * refuses it everywhere else at save time. The empty case is impossible to
+ * express rather than merely discouraged, which is the same posture the
+ * composed title placeholders take.
+ */
+export const CATEGORY_EXTRAS: Partial<Record<SmsCategory, readonly string[]>> = {
+  attendance_thanks: ['services_attended'],
+}
+
+export type ExtraPlaceholder = 'services_attended'
+
+/** The extra placeholders a template of this category may use. Empty for
+ *  most categories, which is the point. */
+export function extrasForCategory(category: SmsCategory): readonly string[] {
+  return CATEGORY_EXTRAS[category] ?? []
+}
+
+export const PLACEHOLDER_HINT: Record<Placeholder | ExtraPlaceholder, string> = {
   first_name: 'Ama',
   last_name: 'Serwaa',
   other_names: 'middle names, or blank',
@@ -51,6 +83,48 @@ export const PLACEHOLDER_HINT: Record<Placeholder, string> = {
   title_first_name: 'Reverend Ama — or just "Ama" for a member with no title',
   titled_full_name: 'Reverend Ama Serwaa — or just "Ama Serwaa"',
   church: CHURCH_NAME,
+  services_attended:
+    '"First Service", "Second Service" or "both First and Second Service" — ' +
+    'thank-you messages only, filled in from the day\'s attendance',
+}
+
+/** The statuses `{{services_attended}}` has words for. A row with any other
+ *  status is not an adult attendee and is never a thank-you target. */
+export type ServicesAttended = 'first' | 'second' | 'both'
+
+/**
+ * The words `{{services_attended}}` renders to.
+ *
+ * "both First and Second Service" rather than "First and Second Service" so
+ * the sentence "thank you for joining us at …" reads naturally either way.
+ * Three wordings, one template: the church writes the thank-you once and the
+ * attendance rows decide which a member receives.
+ */
+export function servicesAttendedText(status: ServicesAttended): string {
+  switch (status) {
+    case 'first':
+      return 'First Service'
+    case 'second':
+      return 'Second Service'
+    case 'both':
+      return 'both First and Second Service'
+  }
+}
+
+/**
+ * Plausible extras for a PREVIEW of a template in this category.
+ *
+ * The editor and the seed script render against these so a thank-you template
+ * previews as words rather than as a refusal. The longest wording is chosen
+ * deliberately: the part count on screen is a price, and quoting high is the
+ * safe direction (the same rule `isUnicode` and the title pricing follow).
+ */
+export function sampleExtras(category: SmsCategory): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const key of extrasForCategory(category)) {
+    if (key === 'services_attended') out[key] = servicesAttendedText('both')
+  }
+  return out
 }
 
 /**
@@ -119,9 +193,17 @@ export function values(member: Addressee): Record<Placeholder, string> {
   }
 }
 
-/** Placeholders used by a body that are not in `PLACEHOLDERS`. */
-export function unknownPlaceholders(body: string): string[] {
-  const known = new Set<string>(PLACEHOLDERS)
+/**
+ * Placeholders used by a body that are not in `PLACEHOLDERS`, nor in
+ * `allowedExtras`.
+ *
+ * Callers validating a template pass `extrasForCategory(category)`, so
+ * `{{services_attended}}` is known inside a thank-you and unknown — refused by
+ * name — inside a birthday message. Omitting the second argument means "no
+ * extras", never "any extras": the default has to be the refusal.
+ */
+export function unknownPlaceholders(body: string, allowedExtras: readonly string[] = []): string[] {
+  const known = new Set<string>([...PLACEHOLDERS, ...allowedExtras])
   const found = new Set<string>()
   for (const m of body.matchAll(TOKEN)) {
     if (!known.has(m[1])) found.add(m[1])
@@ -142,21 +224,34 @@ export type RenderResult =
  * silently sending "Happy birthday !" to the entire congregation, at cost,
  * with no way to recall it. Refusing names the token so it can be fixed in the
  * editor, where it is still free.
+ *
+ * `extras` are placeholders valid for THIS render only — `services_attended`
+ * for one member's thank-you — and are unknown to every other render. They are
+ * supplied by the caller that computed them; nothing here guesses one.
  */
-export function render(body: string, member: Addressee): RenderResult {
-  const unknown = unknownPlaceholders(body)
+export function render(
+  body: string,
+  member: Addressee,
+  extras: Record<string, string> = {},
+): RenderResult {
+  const unknown = unknownPlaceholders(body, Object.keys(extras))
   if (unknown.length > 0) {
+    const offered = [...PLACEHOLDERS, ...Object.keys(extras)]
     return {
       ok: false,
       error:
         `This message uses ${unknown.map((u) => `{{${u}}}`).join(', ')}, which ` +
         `${unknown.length === 1 ? 'is not a placeholder' : 'are not placeholders'} the system knows. ` +
-        `Use one of: ${PLACEHOLDERS.map((p) => `{{${p}}}`).join(', ')}.`,
+        `Use one of: ${offered.map((p) => `{{${p}}}`).join(', ')}.`,
     }
   }
   const v = values(member)
   const text = body
-    .replace(TOKEN, (_, key: string) => v[key as Placeholder])
+    .replace(TOKEN, (_, key: string) =>
+      // A member field first, then the per-render extra. An extra cannot shadow
+      // a member field: `{{first_name}}` means the same thing in every category.
+      key in v ? v[key as Placeholder] : extras[key],
+    )
     // A blank {{other_names}} mid-sentence leaves a double space. Cosmetic,
     // but it is the kind of thing a congregation notices and the church does
     // not want to have explained to them.

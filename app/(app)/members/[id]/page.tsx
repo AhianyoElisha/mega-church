@@ -16,6 +16,8 @@ import { useDeleteMember, useMember, useUpdateMember } from '@/lib/queries/membe
 import { useMemberHistory } from '@/lib/queries/attendance'
 import { useBasontas, useConstituencies } from '@/lib/queries/groups'
 import { birthdayLabel, fullName, initials } from '@/lib/members/types'
+import { MEMBER_TYPE_LABEL } from '@/lib/appwrite/config'
+import { levelLabel } from '@/lib/members/students'
 
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
   // Next 16: route params are a promise, unwrapped with `use()` in a client
@@ -110,7 +112,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       <PageHeader
         back={{ href: '/members', label: 'Members' }}
         title={name}
-        subtitle={member.status === 'active' ? 'Active member' : 'Inactive — cannot be matched by a scanner'}
+        subtitle={`${MEMBER_TYPE_LABEL[member.member_type]} · ${
+          member.status === 'active' ? 'Active member' : 'Inactive — cannot be matched by a scanner'
+        }`}
         actions={
           <>
             {isAdmin && !editing && (
@@ -143,6 +147,42 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 )}
               </DescriptionDetails>
 
+              <DescriptionTerm>Category</DescriptionTerm>
+              <DescriptionDetails>
+                {member.member_type === 'student' ? (
+                  <Badge color="sky">Student</Badge>
+                ) : member.member_type === 'child' ? (
+                  <Badge color="yellow">Save Church</Badge>
+                ) : (
+                  'Adult'
+                )}
+              </DescriptionDetails>
+
+              {member.member_type === 'student' && (
+                <>
+                  <DescriptionTerm>Programme</DescriptionTerm>
+                  <DescriptionDetails>
+                    {member.programme ?? <span className="text-neutral-400">Not given</span>}
+                  </DescriptionDetails>
+                  <DescriptionTerm>Level</DescriptionTerm>
+                  <DescriptionDetails>
+                    {levelLabel(member.level)}
+                    {member.level_year !== null && (
+                      <span className="text-neutral-400"> · confirmed {member.level_year}</span>
+                    )}
+                  </DescriptionDetails>
+                </>
+              )}
+
+              {member.member_type === 'child' && (
+                <>
+                  <DescriptionTerm>Parent or guardian</DescriptionTerm>
+                  <DescriptionDetails>
+                    {member.guardian_name ?? <span className="text-neutral-400">Not given</span>}
+                  </DescriptionDetails>
+                </>
+              )}
+
               <DescriptionTerm>BENMP Partner</DescriptionTerm>
               <DescriptionDetails>
                 {member.benmp_partner ? (
@@ -152,8 +192,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 )}
               </DescriptionDetails>
 
-              <DescriptionTerm>Call number</DescriptionTerm>
-              <DescriptionDetails className="tabular-nums">{member.call_number}</DescriptionDetails>
+              <DescriptionTerm>
+                {member.member_type === 'child' ? 'Parent or guardian’s number' : 'Call number'}
+              </DescriptionTerm>
+              <DescriptionDetails className="tabular-nums">
+                {member.call_number ?? <span className="text-neutral-400">Not given</span>}
+              </DescriptionDetails>
 
               <DescriptionTerm>WhatsApp</DescriptionTerm>
               <DescriptionDetails className="tabular-nums">
@@ -170,7 +214,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 {member.address ?? <span className="text-neutral-400">Not given</span>}
               </DescriptionDetails>
 
-              <DescriptionTerm>Usual service</DescriptionTerm>
+              <DescriptionTerm>
+                {member.member_type === 'child' ? 'Parents’ service' : 'Usual service'}
+              </DescriptionTerm>
               <DescriptionDetails>
                 {member.home_service === 'first' ? 'First Service (Psalms Chapel)' : 'Second Service'}
               </DescriptionDetails>

@@ -15,9 +15,9 @@ import { config as loadEnv } from 'dotenv'
 loadEnv({ path: '.env.local' })
 
 import { createAdminClient } from '../lib/appwrite/server'
-import { type SmsCategory } from '../lib/appwrite/config'
+import { SERVICE_TIMES, SMS_CATEGORIES, type SmsCategory } from '../lib/appwrite/config'
 import { createTemplate, listTemplates, templateNameTaken } from '../lib/sms/server'
-import { countParts, render } from '../lib/sms/render'
+import { countParts, render, sampleExtras } from '../lib/sms/render'
 
 const SAMPLE = { first_name: 'Ama', last_name: 'Serwaa', other_names: null }
 
@@ -74,6 +74,42 @@ const SEEDS: {
     is_default: true,
     body: `Hello {{first_name}}, a message from {{church}}: `,
   },
+  /*
+   * The three scheduled service texts. Each category's DEFAULT is what the
+   * cron reaches for (`defaultTemplate`), so a category with no seed is a cron
+   * that answers `no_template` every week until somebody notices.
+   *
+   * The times come from `SERVICE_TIMES` rather than being typed here, so the
+   * reminder and the Services page cannot disagree about when church starts.
+   */
+  {
+    name: 'Sunday reminder',
+    category: 'sunday_reminder',
+    is_default: true,
+    body:
+      `Hello {{first_name}}, join us tomorrow at {{church}}: First Service at ${SERVICE_TIMES.first} ` +
+      `and Second Service at ${SERVICE_TIMES.second}. Come expecting. God bless you!`,
+  },
+  {
+    name: 'Midweek reminder',
+    category: 'midweek_reminder',
+    is_default: true,
+    body:
+      `Hello {{first_name}}, our midweek service is this evening at ${SERVICE_TIMES.midweek}. ` +
+      `Come and be refreshed in God's presence. - {{church}}`,
+  },
+  {
+    // `{{services_attended}}` is filled per member from the day's attendance:
+    // "First Service", "Second Service" or "both First and Second Service".
+    // One template, three wordings — the seed check below renders the LONGEST
+    // so the one-part rule holds for everybody.
+    name: 'Thank you for coming',
+    category: 'attendance_thanks',
+    is_default: true,
+    body:
+      `Thank you, {{first_name}}, for joining us at {{services_attended}} today. ` +
+      `We were blessed to have you. See you next Sunday! - {{church}}`,
+  },
 ]
 
 async function main() {
@@ -89,7 +125,10 @@ async function main() {
   let existing = 0
 
   for (const seed of SEEDS) {
-    const rendered = render(seed.body, SAMPLE)
+    // Rendered with the category's sample extras — the longest wording of
+    // `{{services_attended}}` for a thank-you — so the part count is the
+    // worst case a member can cost, not the shortest.
+    const rendered = render(seed.body, SAMPLE, sampleExtras(seed.category))
     if (!rendered.ok) {
       // A seed that cannot render is a typo in this file, and it must not reach
       // the database — a broken template only fails on somebody's birthday.
@@ -125,11 +164,13 @@ async function main() {
 
   console.log(`\n─── summary ───`)
   console.log(`  created ${created}   existing ${existing}`)
-  for (const category of ['birthday', 'tithe', 'general'] as SmsCategory[]) {
+  // Every category, from the one list — a category added to `SMS_CATEGORIES`
+  // and forgotten here would be the one whose missing default went unreported.
+  for (const category of SMS_CATEGORIES) {
     const all = await listTemplates(databases, category)
     const defaults = all.filter((t) => t.is_default)
     console.log(
-      `  ${category.padEnd(9)} ${all.length} template(s), ` +
+      `  ${category.padEnd(18)} ${all.length} template(s), ` +
         `default: ${defaults[0]?.name ?? 'NONE'}${defaults.length > 1 ? ` ⚠ ${defaults.length} defaults!` : ''}`,
     )
   }

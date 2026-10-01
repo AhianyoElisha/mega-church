@@ -81,14 +81,28 @@ export type ScanResult =
       kind: 'marked'
       member: MemberSummary
       marked_at: string
-      /** Position in this occurrence — "you are the 84th here today". */
+      /** Position in the occurrence the mark landed in — "you are the 84th
+       *  here today". */
       sequence: number
+      /** The meeting the mark landed in. Usually the open session's; Save
+       *  Church when a child was redirected there. */
+      meeting_name: string
+      /**
+       * True when the mark went to the Save Church COMPANION rather than the
+       * open session. A boolean rather than leaving the kiosk to compare
+       * `meeting_name` against a string: the church may rename Save Church,
+       * and a card that stops saying so the day they do is a silent failure.
+       */
+      redirected: boolean
     }
   | {
-      // Already present in THIS occurrence. No second row, no second write.
+      // Already present in the occurrence the mark would have gone to. No
+      // second row, no second write.
       kind: 'already_marked'
       member: MemberSummary
       marked_at: string
+      meeting_name: string
+      redirected: boolean
     }
   | {
       // Identified, but not on this restricted meeting's roster.
@@ -120,6 +134,13 @@ export type LiveStats = {
   by_method: { biometric: number; manual: number }
   /** Marks per 5-minute bucket since the occurrence opened, for the sparkline. */
   timeline: { at: string; count: number }[]
+  /**
+   * How many are marked at the Save Church companion, or null when this
+   * occurrence has none (a meeting, or a service with no companion yet). Null
+   * and 0 are different answers: "no children's service" and "nobody there
+   * yet" must not render the same.
+   */
+  companion_present: number | null
 }
 
 // === Route response envelopes ==============================================

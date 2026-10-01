@@ -4,13 +4,32 @@ import 'server-only'
 // so the same rules apply to a script or a future import path.
 
 import { ID, Query, type Databases, type Models } from 'node-appwrite'
-import { CHURCH_TIMEZONE, COLLECTIONS, DATABASE_ID, type ServiceSlot } from '@/lib/appwrite/config'
+import {
+  CHURCH_TIMEZONE,
+  COLLECTIONS,
+  DATABASE_ID,
+  LEVEL_MAX,
+  LEVEL_MIN,
+  LEVEL_STEP,
+  MEMBER_TYPES,
+  isMemberType,
+  type MemberType,
+  type ServiceSlot,
+} from '@/lib/appwrite/config'
 import { fullName, type Member, type MemberInput, type MemberStatus } from './types'
 import { memberDocToMember } from '@/lib/attendance/server'
+import { todayInAccra } from '@/lib/attendance/occurrenceResolver'
 import { nextMemberNo } from './numbering'
 import { looksLikeMemberNo } from './search'
 import { releaseCharges } from '@/lib/groups/server'
 import { isMemberTitle } from './titles'
+import {
+  academicYear,
+  applyRollover,
+  isValidLevel,
+  type BulkMemberOutcome,
+  type RolloverAction,
+} from './students'
 
 const PAGE = 100
 
@@ -42,9 +61,30 @@ function isPlausiblePhone(v: string): boolean {
 
 const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
+/** A `level_year` outside this is a typo, not a year anybody studied in. */
+const LEVEL_YEAR_MIN = 2000
+const LEVEL_YEAR_MAX = 2200
+
 export function validateMemberInput(
   body: Partial<MemberInput>,
-  opts: { partial?: boolean } = {},
+  opts: {
+    partial?: boolean
+    /**
+     * The member's STORED type, on a PATCH. The phone rule and the
+     * student/child fields depend on what the member ends up as, and a partial
+     * body that never mentions `member_type` cannot say. A route that omits it
+     * gets `adult` — the strict direction: a phone is demanded and a level is
+     * refused, rather than a child acquiring a level nobody can see.
+     */
+    currentType?: MemberType
+    /**
+     * The stored call number, on a PATCH. Needed for exactly one case: a
+     * child with no number becoming an adult or a student in a body that
+     * does not carry one. Without it the member would cross into a category
+     * the church texts, with nothing to text.
+     */
+    currentCallNumber?: string | null
+  } = {},
 ): ValidationResult<Record<string, unknown>> {
   const out: Record<string, unknown> = {}
   const need = !opts.partial
@@ -96,14 +136,166 @@ export function validateMemberInput(
     out.other_names = other || null
   }
 
-  // Call number is the one contact field the church insists on (PRD §1.1).
-  if (need || body.call_number !== undefined) {
-    const call = typeof body.call_number === 'string' ? normalisePhone(body.call_number) : ''
-    if (!call) return { ok: false, error: 'A call number is required.' }
-    if (!isPlausiblePhone(call)) {
-      return { ok: false, error: `"${body.call_number}" does not look like a phone number.` }
+  /*
+   * What KIND of member. Decided BEFORE the phone and the student/child fields
+   * below, because every one of those rules turns on the type the member ends
+   * up as.
+   *
+   * Refused rather than coerced when it is not one of ours — the `benmp_partner`
+   * posture. `memberDocToMember` reads an unknown stored value as `adult`, so a
+   * coerced write here would be a category that silently changed on the way
+   * back out. Default `adult` on create: what every row was before the field
+   * existed.
+   */
+  if (body.member_type !== undefined) {
+    if (!isMemberType(body.member_type)) {
+      return {
+        ok: false,
+        error: `"${String(body.member_type)}" is not a member category. Choose one of: ${MEMBER_TYPES.join(', ')}.`,
+      }
     }
-    out.call_number = call
+    out.member_type = body.member_type
+  } else if (need) {
+    out.member_type = 'adult'
+  }
+  const resultingType: MemberType =
+    (out.member_type as MemberType | undefined) ?? opts.currentType ?? 'adult'
+  /**
+   * Is the category actually CHANGING in this request? On create it always
+   * is (from nothing). On a PATCH, only when the body names a type that
+   * differs from the stored one — the shared form resends the current type on
+   * every save, and resending what is stored is not a change.
+   */
+  const typeChanges =
+    out.member_type !== undefined && (need || out.member_type !== opts.currentType)
+
+  /*
+   * Call number: the one contact field the church insists on (PRD §1.1) — for
+   * an ADULT or a STUDENT. A child is never texted, so the number on their
+   * row is only ever a way to reach a parent, and a registration with a name
+   * and nothing else is a real registration. There is deliberately no
+   * separate guardian phone: one number cannot disagree with itself.
+   *
+   * The rule is checked when the key is present, on every create, AND when a
+   * member with no stored number is being moved INTO a category that needs
+   * one — otherwise a child could become an adult with nothing to text, and
+   * the first anyone would hear of it is a birthday SMS that went nowhere.
+   */
+  const phoneRequired = resultingType !== 'child'
+  const crossingIntoTexted =
+    typeChanges && phoneRequired && !need && !opts.currentCallNumber
+  if (need || body.call_number !== undefined || crossingIntoTexted) {
+    const raw = typeof body.call_number === 'string' ? body.call_number.trim() : ''
+    if (raw === '') {
+      if (phoneRequired) {
+        return {
+          ok: false,
+          error: crossingIntoTexted
+            ? 'Add a call number before making this member an adult or a student — ' +
+              'the church texts both, and there is nothing to text.'
+            : 'A call number is required for an adult or a student.',
+        }
+      }
+      out.call_number = null
+    } else {
+      const call = normalisePhone(raw)
+      if (!isPlausiblePhone(call)) {
+        return { ok: false, error: `"${raw}" does not look like a phone number.` }
+      }
+      out.call_number = call
+    }
+  }
+
+  /*
+   * The student fields. Refused BY NAME on anybody who is not (ending up) a
+   * student, because a level on an adult is a row the /students roll cannot
+   * see and nobody can explain. `null` is always accepted: clearing is what
+   * leaving university looks like, and it must be possible from any state.
+   *
+   * `member_type: 'student'` WITHOUT a level is accepted. The bulk move on
+   * /members turns forty adults into students in one action, and the level
+   * is filled in afterwards on /students — refusing here would block the move
+   * and leave the roll empty.
+   */
+  const isStudent = resultingType === 'student'
+  if (body.programme !== undefined) {
+    const raw = typeof body.programme === 'string' ? body.programme.trim() : ''
+    if (body.programme === null || raw === '') {
+      out.programme = null
+    } else if (!isStudent) {
+      return { ok: false, error: 'A programme can only be recorded for a university student.' }
+    } else if (raw.length > 128) {
+      return { ok: false, error: 'Programme is too long (max 128).' }
+    } else {
+      out.programme = raw
+    }
+  }
+  if (body.level !== undefined) {
+    const rawLevel = body.level as unknown
+    if (rawLevel === null || rawLevel === '') {
+      out.level = null
+    } else if (!isStudent) {
+      return { ok: false, error: 'A level can only be recorded for a university student.' }
+    } else if (!isValidLevel(rawLevel)) {
+      return {
+        ok: false,
+        error: `Level must be ${LEVEL_MIN}, ${LEVEL_MIN + LEVEL_STEP} … ${LEVEL_MAX}.`,
+      }
+    } else {
+      out.level = rawLevel
+    }
+  }
+  if (body.level_year !== undefined) {
+    const rawYear = body.level_year as unknown
+    if (rawYear === null || rawYear === '') {
+      out.level_year = null
+    } else if (!isStudent) {
+      return { ok: false, error: 'A level year can only be recorded for a university student.' }
+    } else if (
+      typeof rawYear !== 'number' ||
+      !Number.isInteger(rawYear) ||
+      rawYear < LEVEL_YEAR_MIN ||
+      rawYear > LEVEL_YEAR_MAX
+    ) {
+      return { ok: false, error: 'Level year must be a four-digit year.' }
+    } else {
+      out.level_year = rawYear
+    }
+  }
+  /*
+   * Who the call number reaches, for a CHILD. Same posture as the student
+   * fields: refused by name on anyone else, `null` always fine.
+   */
+  if (body.guardian_name !== undefined) {
+    const raw = typeof body.guardian_name === 'string' ? body.guardian_name.trim() : ''
+    if (body.guardian_name === null || raw === '') {
+      out.guardian_name = null
+    } else if (resultingType !== 'child') {
+      return {
+        ok: false,
+        error: 'A parent or guardian is only recorded for a Save Church child.',
+      }
+    } else if (raw.length > 128) {
+      return { ok: false, error: 'Parent or guardian name is too long (max 128).' }
+    } else {
+      out.guardian_name = raw
+    }
+  }
+  /*
+   * Leaving a category clears what only that category carries. A student who
+   * becomes an adult keeps no level, a child who becomes a student keeps no
+   * guardian. Done here, in the validator, so every writer — the form, the
+   * bulk move, a script — clears the same fields the same way, and there is no
+   * route that forgot. Done only on a CHANGE, so a form resending the stored
+   * type is still a one-field update.
+   */
+  if (typeChanges && !isStudent) {
+    out.programme = null
+    out.level = null
+    out.level_year = null
+  }
+  if (typeChanges && resultingType !== 'child') {
+    out.guardian_name = null
   }
 
   // WhatsApp is optional and independent — many members use one number for
@@ -259,6 +451,26 @@ export function validateMemberInput(
 }
 
 /**
+ * A level that arrives without a year is a level confirmed TODAY.
+ *
+ * Whenever a validated body carries a numeric `level` and says nothing about
+ * `level_year`, stamp the current academic year (Accra's, not the server's).
+ * Shared by POST and PATCH so the two cannot disagree about what "setting a
+ * level" means for the rollover: an admin who types "300" on the form has
+ * just confirmed it, and leaving `level_year` null would list that student as
+ * due for update the moment they were saved.
+ *
+ * A body that carries `level_year` explicitly (the rollover route, a script
+ * backfilling last year's roll) is left alone. Mutates the VALIDATED fields in
+ * place, never the raw request.
+ */
+export function stampLevelYear(fields: Record<string, unknown>): void {
+  if (typeof fields.level === 'number' && !('level_year' in fields)) {
+    fields.level_year = academicYear(todayInAccra())
+  }
+}
+
+/**
  * Pull `basonta_ids` out of a request body.
  *
  * Kept apart from `validateMemberInput` because it is NOT a member column —
@@ -384,6 +596,18 @@ async function createMemberWithNumber(
     member_no: memberNo,
     title: fields.title ?? null,
     other_names: fields.other_names ?? null,
+    // Null for a child registered with a name alone. Never `''`: the schema
+    // attribute is optional, not empty-able, and `''` is what a phone lookup
+    // would then match against.
+    call_number: fields.call_number ?? null,
+    // Written explicitly on every create, like `benmp_partner`, so a
+    // server-side `Query.equal('member_type', …)` sees every row registered
+    // from today on. The validator has already supplied it.
+    member_type: fields.member_type ?? 'adult',
+    programme: fields.programme ?? null,
+    level: fields.level ?? null,
+    level_year: fields.level_year ?? null,
+    guardian_name: fields.guardian_name ?? null,
     photo_file_id: null,
     birth_month: fields.birth_month ?? null,
     birth_day: fields.birth_day ?? null,
@@ -427,11 +651,20 @@ export async function listMembers(
     status?: string
     constituencyId?: string
     homeService?: string
+    /** `adult` | `student` | `child`. Anything else is dropped, as `status` is. */
+    memberType?: string
   } = {},
 ): Promise<Member[]> {
   const base: string[] = []
   if (filters.status === 'active' || filters.status === 'inactive') {
     base.push(Query.equal('status', filters.status))
+  }
+  // Server-side on the `by_member_type` index. This only works once every row
+  // HAS a value — Appwrite cannot match "attribute absent" — which is what
+  // `scripts/backfill-member-type.ts` is for. Until it has run, a filter on
+  // `adult` misses everyone registered before the field existed.
+  if (isMemberType(filters.memberType)) {
+    base.push(Query.equal('member_type', filters.memberType))
   }
   // Which service the member usually attends. Validated HERE rather than at the
   // route, exactly as `status` above is: an unrecognised value is dropped and
@@ -561,4 +794,162 @@ export async function deleteMemberCascade(
 
   await databases.deleteDocument(DATABASE_ID, COLLECTIONS.members, id)
   return { templates, roster, records, basontas, released, messages, contributions }
+}
+
+/**
+ * The members named by `ids`, in no particular order, skipping any that do
+ * not exist. Fetched in chunks rather than one `getDocument` per id: the bulk
+ * actions on /members and /students take a whole selection at once.
+ */
+export async function getMembersByIds(databases: Databases, ids: string[]): Promise<Member[]> {
+  const unique = [...new Set(ids)]
+  const out: Member[] = []
+  for (let i = 0; i < unique.length; i += PAGE) {
+    const chunk = unique.slice(i, i + PAGE)
+    const res = await databases.listDocuments(DATABASE_ID, COLLECTIONS.members, [
+      Query.equal('$id', chunk),
+      Query.limit(chunk.length),
+    ])
+    out.push(
+      ...res.documents.map((d) => memberDocToMember(d as Models.Document & Record<string, unknown>)),
+    )
+  }
+  return out
+}
+
+/**
+ * Move a selection of members into one category — the bulk "Move to Save
+ * Church" / "Mark as student" / "Mark as adult" on /members.
+ *
+ * Each member goes through `validateMemberInput` with their OWN stored type
+ * and number, so the same rule that refuses a single edit refuses a bulk one:
+ * a child with no call number cannot be made an adult here either. A refusal
+ * is REPORTED per member, never thrown, because one person with no phone must
+ * not stop the other thirty-nine being moved.
+ *
+ * The patch is the same for every member who passes — the target type plus
+ * the fields that type does not carry, cleared — so it is ONE bulk write per
+ * hundred, not a round trip per member. Clearing a field that is already null
+ * is harmless, and it is what makes the patch uniform.
+ */
+export async function bulkSetMemberType(
+  databases: Databases,
+  memberIds: string[],
+  memberType: MemberType,
+): Promise<{ updated: number; unchanged: number; failed: BulkMemberOutcome[] }> {
+  const members = await getMembersByIds(databases, memberIds)
+  const found = new Map(members.map((m) => [m.$id, m]))
+  const failed: BulkMemberOutcome[] = []
+  const okIds: string[] = []
+  let unchanged = 0
+
+  for (const id of new Set(memberIds)) {
+    const m = found.get(id)
+    if (!m) {
+      failed.push({ member_id: id, name: id, error: 'No such member.' })
+      continue
+    }
+    if (m.member_type === memberType) {
+      unchanged += 1
+      continue
+    }
+    const v = validateMemberInput(
+      { member_type: memberType },
+      { partial: true, currentType: m.member_type, currentCallNumber: m.call_number },
+    )
+    if (!v.ok) {
+      failed.push({ member_id: id, name: fullName(m), error: v.error })
+      continue
+    }
+    okIds.push(id)
+  }
+
+  const patch: Record<string, unknown> = { member_type: memberType }
+  if (memberType !== 'student') {
+    patch.programme = null
+    patch.level = null
+    patch.level_year = null
+  }
+  if (memberType !== 'child') patch.guardian_name = null
+
+  // Bulk API when the SDK has it, one document at a time when it does not —
+  // the same fallback `deleteMemberCascade` carries, for the same reason.
+  const dbAny = databases as unknown as {
+    updateDocuments?: (
+      db: string,
+      coll: string,
+      data: object,
+      queries?: string[],
+    ) => Promise<unknown>
+  }
+  for (let i = 0; i < okIds.length; i += PAGE) {
+    const chunk = okIds.slice(i, i + PAGE)
+    if (typeof dbAny.updateDocuments === 'function') {
+      await dbAny.updateDocuments(DATABASE_ID, COLLECTIONS.members, patch, [
+        Query.equal('$id', chunk),
+        Query.limit(chunk.length),
+      ])
+    } else {
+      await Promise.all(
+        chunk.map((id) => databases.updateDocument(DATABASE_ID, COLLECTIONS.members, id, patch)),
+      )
+    }
+  }
+
+  return { updated: okIds.length, unchanged, failed }
+}
+
+/**
+ * Apply one rollover action to a selection of students.
+ *
+ * The transitions are the pure ones in `./students`; this only fetches, applies
+ * and writes. A refusal (promote at the top level, a non-student in the
+ * selection) is reported by name against the member and the rest of the batch
+ * proceeds. The patch differs per member for `promote`, so this is one write
+ * per student, in parallel batches, rather than a bulk query.
+ */
+export async function rolloverStudents(
+  databases: Databases,
+  memberIds: string[],
+  action: RolloverAction,
+  todayISO: string,
+): Promise<{ updated: number; failed: BulkMemberOutcome[] }> {
+  const members = await getMembersByIds(databases, memberIds)
+  const found = new Map(members.map((m) => [m.$id, m]))
+  const failed: BulkMemberOutcome[] = []
+  const writes: { id: string; name: string; patch: Record<string, unknown> }[] = []
+
+  for (const id of new Set(memberIds)) {
+    const m = found.get(id)
+    if (!m) {
+      failed.push({ member_id: id, name: id, error: 'No such member.' })
+      continue
+    }
+    const t = applyRollover(action, m, todayISO)
+    if (!t.ok) {
+      failed.push({ member_id: id, name: fullName(m), error: t.error })
+      continue
+    }
+    writes.push({ id, name: fullName(m), patch: t.patch as Record<string, unknown> })
+  }
+
+  let updated = 0
+  const BATCH = 10
+  for (let i = 0; i < writes.length; i += BATCH) {
+    await Promise.all(
+      writes.slice(i, i + BATCH).map(async (w) => {
+        try {
+          await databases.updateDocument(DATABASE_ID, COLLECTIONS.members, w.id, w.patch)
+          updated += 1
+        } catch (err) {
+          failed.push({
+            member_id: w.id,
+            name: w.name,
+            error: err instanceof Error ? err.message : 'Could not save.',
+          })
+        }
+      }),
+    )
+  }
+  return { updated, failed }
 }

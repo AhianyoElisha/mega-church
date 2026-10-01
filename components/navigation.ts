@@ -11,6 +11,7 @@ import {
   CakeIcon,
   ChatBubbleLeftRightIcon,
   BanknotesIcon,
+  AcademicCapIcon,
 } from '@heroicons/react/24/outline'
 import type { UserLabel } from '@/lib/auth/types'
 
@@ -61,6 +62,15 @@ export const NAVIGATION: NavItem[] = [
     icon: UsersIcon,
     roles: ['admin', 'usher', 'shepherd'],
     quick: true,
+    group: 'people',
+  },
+  // The student roll: a view of the registry, so it sits beside Members. A
+  // shepherd reads it; every write on the page is gated on the admin label.
+  {
+    name: 'Students',
+    href: '/students',
+    icon: AcademicCapIcon,
+    roles: ['admin', 'shepherd'],
     group: 'people',
   },
   {

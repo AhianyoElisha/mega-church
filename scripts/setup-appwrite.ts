@@ -24,6 +24,7 @@ import {
   COLLECTIONS,
   DATABASE_ID,
   FINGER_LABELS,
+  MEMBER_TYPES,
   SERVICE_DEFINITIONS,
   SMS_CATEGORIES,
 } from '../lib/appwrite/config'
@@ -127,6 +128,35 @@ async function ensureStringAttribute(
     // Older SDK/server — fall through.
   }
   stats.attributes.exists++
+}
+
+/**
+ * Relax an existing REQUIRED string attribute to optional.
+ *
+ * `ensureStringAttribute` never touches `required` on an attribute that
+ * already exists — growing a size is the only update it makes — so an
+ * attribute that shipped required and later needs to admit an empty row
+ * (`members.call_number`, since Save Church) needs this explicit step. It is
+ * idempotent: an attribute already optional is left alone. It only ever
+ * relaxes; tightening is refused by Appwrite when null rows exist and is not
+ * something a re-runnable script should attempt.
+ */
+async function ensureOptional(collId: string, key: string, size: number) {
+  const existing = (await databases.getAttribute(DATABASE_ID, collId, key)) as {
+    required?: boolean
+    size?: number
+  }
+  if (existing.required !== true) return
+  await databases.updateStringAttribute(
+    DATABASE_ID,
+    collId,
+    key,
+    false,
+    null as unknown as string,
+    Math.max(size, existing.size ?? size),
+  )
+  stats.attributes.created++
+  console.log(`    ↓ ${collId}.${key} relaxed to optional`)
 }
 
 /**
@@ -358,8 +388,39 @@ async function setupMembers() {
   await ensureIntegerAttribute(COLLECTIONS.members, 'birth_month', false, { min: 1, max: 12 })
   await ensureIntegerAttribute(COLLECTIONS.members, 'birth_day', false, { min: 1, max: 31 })
   await ensureStringAttribute(COLLECTIONS.members, 'address', 256, false)
-  await ensureStringAttribute(COLLECTIONS.members, 'call_number', 32, true)
+  /**
+   * OPTIONAL at the schema since Save Church: a child is registered with a
+   * name and little else, and the number on a child's row is a parent's. The
+   * VALIDATOR still requires it for an adult or a student
+   * (`validateMemberInput`, by `member_type`) — the schema cannot express
+   * "required for some rows", so the rule lives where the type is known.
+   *
+   * It shipped required, and `ensureStringAttribute` never touches `required`
+   * on an existing attribute, so the relax is an explicit step below.
+   */
+  await ensureStringAttribute(COLLECTIONS.members, 'call_number', 32, false)
+  await ensureOptional(COLLECTIONS.members, 'call_number', 32)
   await ensureStringAttribute(COLLECTIONS.members, 'whatsapp_number', 32, false)
+  /**
+   * adult | student | child — see `MEMBER_TYPES` in lib/appwrite/config.ts.
+   *
+   * OPTIONAL for the same reason as `member_no` and `benmp_partner`: the
+   * collection has rows, and required-and-defaulted is refused outright.
+   * `scripts/backfill-member-type.ts` writes `adult` onto every row without
+   * one, and every writer supplies it explicitly from then on. Read as
+   * "absent ⇒ adult" everywhere, because an adult is what every existing row
+   * was, and the wrong reading in the other direction would silently stop
+   * texting somebody or send them to Save Church.
+   */
+  await ensureEnumAttribute(COLLECTIONS.members, 'member_type', [...MEMBER_TYPES], false)
+  // Students only. `level_year` is the academic year `level` was last
+  // confirmed in — the rollover compares it with today's academic year rather
+  // than editing anything on a schedule.
+  await ensureStringAttribute(COLLECTIONS.members, 'programme', 128, false)
+  await ensureIntegerAttribute(COLLECTIONS.members, 'level', false, { min: 100, max: 800 })
+  await ensureIntegerAttribute(COLLECTIONS.members, 'level_year', false, { min: 2000, max: 2200 })
+  // Children only: who the `call_number` reaches.
+  await ensureStringAttribute(COLLECTIONS.members, 'guardian_name', 128, false)
   // No defaults on these: `validateMemberInput` fills both in on create, so a
   // schema default would only ever mask a writer that forgot to.
   await ensureEnumAttribute(COLLECTIONS.members, 'home_service', ['first', 'second'], true)
@@ -467,6 +528,8 @@ async function setupMembers() {
   // "Who are the partners?" is the monthly reminder list, and it is the only
   // query this field is ever asked.
   await ensureIndex(COLLECTIONS.members, 'by_benmp', 'key', ['benmp_partner'])
+  // "Every student" — the roll, the rollover, and a students-only broadcast.
+  await ensureIndex(COLLECTIONS.members, 'by_member_type', 'key', ['member_type'])
 }
 
 async function setupConstituencies() {
@@ -765,7 +828,8 @@ async function setupMeetings() {
   await ensureStringAttribute(COLLECTIONS.meetings, 'name', 96, true)
   await ensureStringAttribute(COLLECTIONS.meetings, 'description', 512, false)
   await ensureEnumAttribute(COLLECTIONS.meetings, 'kind', ['service', 'meeting'], true)
-  await ensureEnumAttribute(COLLECTIONS.meetings, 'service_slot', ['first', 'second'], false)
+  // `save` was added with Save Church; `ensureEnumAttribute` widens in place.
+  await ensureEnumAttribute(COLLECTIONS.meetings, 'service_slot', ['first', 'second', 'save'], false)
   // `restricted` especially must not have a default. Getting it wrong in
   // either direction is bad — a defaulted `false` silently opens a committee
   // meeting to the whole congregation — so every writer states it outright.
@@ -778,7 +842,7 @@ async function setupMeetings() {
   await ensureIndex(COLLECTIONS.meetings, 'by_kind', 'key', ['kind'])
   await ensureIndex(COLLECTIONS.meetings, 'by_archived', 'key', ['archived'])
 
-  console.log('  seeding the two services…')
+  console.log('  seeding the services…')
   for (const s of SERVICE_DEFINITIONS) {
     await ensureDocument(COLLECTIONS.meetings, s.id, {
       name: s.name,
@@ -836,8 +900,18 @@ async function setupOccurrences() {
   await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'closed_by', 128, false)
   // Written as 0 by activateOccurrence and frozen to the real tally on close.
   await ensureIntegerAttribute(COLLECTIONS.meeting_occurrences, 'present_count', true)
+  /**
+   * Set ⇒ a COMPANION: the Save Church occurrence opened alongside an adult
+   * service. A companion never holds the scanner — every liveness check
+   * ignores rows with this set — and is closed when its parent closes.
+   * Optional because every ordinary occurrence has none. PRD §1.5.
+   */
+  await ensureStringAttribute(COLLECTIONS.meeting_occurrences, 'parent_occurrence_id', 64, false)
 
   await waitForAttributes(COLLECTIONS.meeting_occurrences)
+  // "Which companion belongs to this open service?" — asked on every child's
+  // scan and on every close.
+  await ensureIndex(COLLECTIONS.meeting_occurrences, 'by_parent', 'key', ['parent_occurrence_id'])
   // The hot query: "is anything open?" — asked on every page load and every
   // scan. PRD §2.2 makes the answer at most one row.
   await ensureIndex(COLLECTIONS.meeting_occurrences, 'by_status', 'key', ['status'])

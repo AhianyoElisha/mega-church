@@ -38,7 +38,7 @@ export function looksLikeMemberNo(term: string): boolean {
  */
 export function matchesMemberSearch(
   member: Pick<Member, 'first_name' | 'last_name' | 'other_names' | 'member_no'> & {
-    call_number?: string
+    call_number?: string | null
   },
   rawTerm: string,
   opts: { phone?: boolean } = {},

@@ -13,23 +13,32 @@ import { listConstituencies } from '@/lib/groups/server'
 import { listMembers } from '@/lib/members/server'
 import { fullName, type Member } from '@/lib/members/types'
 
-export type DayScope = 'first' | 'second' | 'absent' | 'all'
+export type DayScope = 'first' | 'second' | 'save' | 'absent' | 'all'
 
-export const DAY_SCOPES: DayScope[] = ['first', 'second', 'absent', 'all']
+export const DAY_SCOPES: DayScope[] = ['first', 'second', 'save', 'absent', 'all']
 
 export function isDayScope(v: string): v is DayScope {
   return (DAY_SCOPES as string[]).includes(v)
 }
 
-/** Where a member was on the day. `both` is not a mistake — a member may
- *  legitimately attend First and Second Service (PRD §2.1), and hiding that
- *  would make the two service lists silently disagree with the headcount. */
-export type DayStatus = 'first' | 'second' | 'both' | 'absent'
+/**
+ * Where a member was on the day. `both` is not a mistake — a member may
+ * legitimately attend First and Second Service (PRD §2.1), and hiding that
+ * would make the two service lists silently disagree with the headcount.
+ *
+ * `save` is Save Church, the children's service. A CHILD is only ever `save`
+ * or `absent`: the kiosk redirects them away from the adult services, so
+ * "absent from First Service" is not a thing that can be true of them, and a
+ * call list that named every child as missing from a service they cannot
+ * attend would be a call list nobody worked down twice.
+ */
+export type DayStatus = 'first' | 'second' | 'both' | 'save' | 'absent'
 
 export const STATUS_LABEL: Record<DayStatus, string> = {
   first: 'First Service',
   second: 'Second Service',
   both: 'Both services',
+  save: 'Save Church',
   absent: 'Absent',
 }
 
@@ -39,8 +48,10 @@ export type DayRow = {
   /** ISO timestamps, null when they were not at that service. */
   first_marked_at: string | null
   second_marked_at: string | null
+  save_marked_at: string | null
   first_method: string | null
   second_method: string | null
+  save_method: string | null
 }
 
 /** The bucket a member with no constituency falls into.
@@ -54,12 +65,19 @@ export const NO_CONSTITUENCY = '__none__'
 
 export type DayReport = {
   date: string
-  /** True when no service occurrence exists for the date at all. Without this
-   *  a day nobody opened a service on looks identical to a day everybody
-   *  missed — and the absent list would name the entire congregation. */
-  held: { first: boolean; second: boolean }
+  /** True when no occurrence exists for the date at all. Without this a day
+   *  nobody opened a service on looks identical to a day everybody missed —
+   *  and the absent list would name the entire congregation. */
+  held: { first: boolean; second: boolean; save: boolean }
   rows: DayRow[]
-  totals: { first: number; second: number; both: number; absent: number; active: number }
+  totals: {
+    first: number
+    second: number
+    both: number
+    save: number
+    absent: number
+    active: number
+  }
   /**
    * Every constituency, plus the `NO_CONSTITUENCY` bucket when anybody is in
    * it. Resolved once here rather than per sheet, so a workbook with fifteen
@@ -86,7 +104,9 @@ async function listAll<T extends Models.Document>(
   return out
 }
 
-/** member_id -> earliest mark, across every occurrence of one meeting that day. */
+/** member_id -> earliest mark, across every occurrence of one meeting that day.
+ *  For Save Church that is every companion of the day — one per adult service
+ *  held — which is why a child at both is still one row. */
 async function presenceFor(
   databases: Databases,
   meetingId: string,
@@ -120,34 +140,63 @@ async function presenceFor(
   return { held: true, marks }
 }
 
+type Mark = { at: string; method: string } | null
+
+/**
+ * The one definition of a member's status for the day. Pure, so the child
+ * rule is testable without a database.
+ *
+ * A child is `save` or `absent` and nothing else, whatever the adult columns
+ * hold — a child marked at First Service before being reclassified keeps that
+ * timestamp on the row (nothing is lost) but is not listed as having attended
+ * an adult service. An adult with only a Save Church mark (a child reclassified
+ * after the day) reads `save`, because that is where they were.
+ */
+export function dayStatus(
+  member: Pick<Member, 'member_type'>,
+  first: Mark,
+  second: Mark,
+  save: Mark,
+): DayStatus {
+  if (member.member_type === 'child') return save ? 'save' : 'absent'
+  if (first && second) return 'both'
+  if (first) return 'first'
+  if (second) return 'second'
+  if (save) return 'save'
+  return 'absent'
+}
+
 export async function buildDayReport(
   databases: Databases,
   date: string,
 ): Promise<DayReport> {
-  const [members, first, second, allConstituencies] = await Promise.all([
+  const [members, first, second, save, allConstituencies] = await Promise.all([
     listMembers(databases, { status: 'active' }),
     presenceFor(databases, SERVICE_IDS.first, date),
     presenceFor(databases, SERVICE_IDS.second, date),
+    presenceFor(databases, SERVICE_IDS.save, date),
     listConstituencies(databases),
   ])
 
   const rows: DayRow[] = members.map((member) => {
     const f = first.marks.get(member.$id) ?? null
     const s = second.marks.get(member.$id) ?? null
-    const status: DayStatus = f && s ? 'both' : f ? 'first' : s ? 'second' : 'absent'
+    const sv = save.marks.get(member.$id) ?? null
     return {
       member,
-      status,
+      status: dayStatus(member, f, s, sv),
       first_marked_at: f?.at ?? null,
       second_marked_at: s?.at ?? null,
+      save_marked_at: sv?.at ?? null,
       first_method: f?.method ?? null,
       second_method: s?.method ?? null,
+      save_method: sv?.method ?? null,
     }
   })
 
   // Grouped in reading order, alphabetical inside each group: the sheet is
   // worked down a column by someone making phone calls.
-  const ORDER: DayStatus[] = ['first', 'both', 'second', 'absent']
+  const ORDER: DayStatus[] = ['first', 'both', 'second', 'save', 'absent']
   rows.sort((a, b) => {
     const g = ORDER.indexOf(a.status) - ORDER.indexOf(b.status)
     return g !== 0 ? g : fullName(a.member).localeCompare(fullName(b.member))
@@ -163,13 +212,14 @@ export async function buildDayReport(
 
   return {
     date,
-    held: { first: first.held, second: second.held },
+    held: { first: first.held, second: second.held, save: save.held },
     rows,
     constituencies,
     totals: {
       first: rows.filter((r) => r.status === 'first' || r.status === 'both').length,
       second: rows.filter((r) => r.status === 'second' || r.status === 'both').length,
       both: rows.filter((r) => r.status === 'both').length,
+      save: rows.filter((r) => r.status === 'save').length,
       absent: rows.filter((r) => r.status === 'absent').length,
       active: rows.length,
     },
@@ -179,7 +229,10 @@ export async function buildDayReport(
 /** Rows for one scope, in the order the sheet should present them. */
 export function rowsForScope(report: DayReport, scope: DayScope): DayRow[] {
   if (scope === 'all') return report.rows
+  // Children who were not at Save Church are here too. They are absent from
+  // the one service they can attend, and the call list is for exactly that.
   if (scope === 'absent') return report.rows.filter((r) => r.status === 'absent')
+  if (scope === 'save') return report.rows.filter((r) => r.status === 'save')
   if (scope === 'first') {
     return report.rows.filter((r) => r.status === 'first' || r.status === 'both')
   }

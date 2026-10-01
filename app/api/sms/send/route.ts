@@ -1,12 +1,22 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { Query } from 'node-appwrite'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
-import { COLLECTIONS, DATABASE_ID, SMS_CATEGORIES, type SmsCategory } from '@/lib/appwrite/config'
+import {
+  COLLECTIONS,
+  DATABASE_ID,
+  SMS_AUDIENCES,
+  SMS_CATEGORIES,
+  type SmsAudience,
+  type SmsCategory,
+} from '@/lib/appwrite/config'
 import { memberDocToMember } from '@/lib/attendance/server'
 import { todayInAccra } from '@/lib/attendance/occurrenceResolver'
+import { buildDayReport } from '@/lib/reports/day'
 import { createSmsService } from '@/lib/sms/mnotify'
 import { getTemplate, sendToMembers, type SendTarget } from '@/lib/sms/server'
 import { canSendSmsCategory } from '@/lib/sms/permissions'
+import { isSmsAudience, narrowAudience } from '@/lib/sms/audience'
+import { servicesAttendedText, type ServicesAttended } from '@/lib/sms/render'
 import { contributionsForPeriod } from '@/lib/benmp/server'
 import { currentPeriod, periodLabel } from '@/lib/benmp/period'
 import { outstandingPartners } from '@/lib/benmp/unpaid'
@@ -47,7 +57,12 @@ export async function POST(request: NextRequest) {
   const auth = await requireRole(['admin', 'treasurer', 'leader'])
   if ('error' in auth) return auth.error
 
-  let body: { member_ids?: unknown; template_id?: unknown; category?: unknown }
+  let body: {
+    member_ids?: unknown
+    template_id?: unknown
+    category?: unknown
+    audience?: unknown
+  }
   try {
     body = (await request.json()) as typeof body
   } catch {
@@ -62,6 +77,20 @@ export async function POST(request: NextRequest) {
   if (typeof body.template_id !== 'string') return bad('Pick a message template.')
   if (!isCategory(body.category)) {
     return bad(`category must be one of: ${SMS_CATEGORIES.join(', ')}.`)
+  }
+  /*
+   * `audience` defaults to `all` when ABSENT and is refused by name when
+   * WRONG. The two are different: an older client that never sends the field
+   * means "everyone I picked", but a client sending `audience: 'student'`
+   * (singular) meant something narrower and must not be widened to the whole
+   * congregation because of a typo.
+   */
+  let audience: SmsAudience = 'all'
+  if (body.audience !== undefined) {
+    if (!isSmsAudience(body.audience)) {
+      return bad(`audience must be one of: ${SMS_AUDIENCES.join(', ')}.`)
+    }
+    audience = body.audience
   }
 
   /**
@@ -126,7 +155,22 @@ export async function POST(request: NextRequest) {
   // the church last month.
   let eligible = members.filter((m) => m.status === 'active')
   let excluded = 0
-  let excludedReason = ''
+  const reasons: string[] = []
+
+  /*
+   * The audience, and the children.
+   *
+   * `narrowAudience` drops a Save Church child from EVERY audience, `all`
+   * included, and says so. `sendToMembers` would drop them again silently —
+   * that is the guarantee — but a count with no reason is a count the sender
+   * reads as a bug, so the reason is attached here where it can reach the
+   * screen. The `/sms` picker applies the same function so nobody is offered
+   * a name the server is about to discard.
+   */
+  const narrowed = narrowAudience(eligible, audience)
+  eligible = narrowed.kept
+  excluded += narrowed.excluded
+  if (narrowed.reason) reasons.push(narrowed.reason)
 
   /*
    * A BENMP reminder resolves its OWN recipients, and does not trust the ids it
@@ -148,8 +192,13 @@ export async function POST(request: NextRequest) {
     const paidRows = await contributionsForPeriod(databases, period)
     const before = eligible.length
     eligible = outstandingPartners(eligible, paidRows, period)
-    excluded = before - eligible.length
-    excludedReason = `already paid for ${periodLabel(period)}, or are not BENMP partners`
+    const paidOrNotPartner = before - eligible.length
+    excluded += paidOrNotPartner
+    if (paidOrNotPartner > 0) {
+      reasons.push(
+        `${paidOrNotPartner} already paid for ${periodLabel(period)}, or are not BENMP partners`,
+      )
+    }
 
     /*
      * A head reminds their OWN constituency's partners.
@@ -169,18 +218,59 @@ export async function POST(request: NextRequest) {
       const outOfScope = beforeScope - eligible.length
       if (outOfScope > 0) {
         excluded += outOfScope
-        excludedReason = `already paid for ${periodLabel(period)}, are not BENMP partners, or are not in a constituency you head`
+        reasons.push(`${outOfScope} are not in a constituency you head`)
       }
     }
   }
 
-  const targets: SendTarget[] = eligible.map((member) => ({ member, template }))
+  /*
+   * A thank-you sent BY HAND — an admin re-running the Sunday 14:00 job that
+   * did not fire — still gets its wording from the attendance rows, never from
+   * the request. `{{services_attended}}` is a fact about who was in the
+   * building, and the only source for it is the day report; a member the
+   * report does not show at First or Second Service is dropped with a reason,
+   * because there is no true sentence to send them.
+   *
+   * Track B is adding a `save` status for children marked at Save Church.
+   * Anything other than first/second/both is treated as "not an adult
+   * attendee" — the children are already gone by this point, and an unknown
+   * status must fail towards not texting.
+   */
+  const extrasByMember = new Map<string, Record<string, string>>()
+  if (body.category === 'attendance_thanks') {
+    const report = await buildDayReport(databases, todayInAccra())
+    const status = new Map(report.rows.map((r) => [r.member.$id, r.status as string]))
+    const before = eligible.length
+    eligible = eligible.filter((m) => {
+      const s = status.get(m.$id)
+      if (s !== 'first' && s !== 'second' && s !== 'both') return false
+      extrasByMember.set(m.$id, {
+        services_attended: servicesAttendedText(s as ServicesAttended),
+      })
+      return true
+    })
+    const notPresent = before - eligible.length
+    if (notPresent > 0) {
+      excluded += notPresent
+      reasons.push(`${notPresent} ${notPresent === 1 ? 'was' : 'were'} not marked present today`)
+    }
+  }
+
+  const targets: SendTarget[] = eligible.map((member) => ({
+    member,
+    template,
+    extras: extrasByMember.get(member.$id),
+  }))
 
   if (targets.length === 0) {
     return bad(
       body.category === 'benmp'
         ? `Nobody to remind — everyone you picked has already paid for ${periodLabel(currentPeriod())}, or is not a BENMP partner you can reach.`
-        : 'None of those members are active.',
+        : body.category === 'attendance_thanks'
+          ? 'Nobody to thank — none of the members you picked was marked present at First or Second Service today.'
+          : reasons.length > 0
+            ? `Nobody to send to — ${reasons.join('; ')}.`
+            : 'None of those members are active.',
     )
   }
 
@@ -197,7 +287,7 @@ export async function POST(request: NextRequest) {
       failed: report.failed,
       skipped: report.skipped,
       excluded,
-      excluded_reason: excluded > 0 ? excludedReason : undefined,
+      excluded_reason: excluded > 0 ? reasons.join('; ') : undefined,
       no_phone: report.no_phone,
       provider_message: report.provider_message,
       credit_left: report.credit_left,

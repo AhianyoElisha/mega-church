@@ -74,9 +74,15 @@ export default function GroupRosterTable({
               <TableCell className="tabular-nums">
                 {/* A head's most common action is ringing somebody, so the
                     number is a tel: link rather than text to copy out. */}
-                <Link href={`tel:${m.call_number}`} className="hover:underline">
-                  {m.call_number}
-                </Link>
+                {/* A child registered with a name alone has no number; a
+                    `tel:null` link would dial nothing and look like a bug. */}
+                {m.call_number ? (
+                  <Link href={`tel:${m.call_number}`} className="hover:underline">
+                    {m.call_number}
+                  </Link>
+                ) : (
+                  <span className="text-neutral-400">—</span>
+                )}
               </TableCell>
               <TableCell>
                 {m.birth_month && m.birth_day ? (

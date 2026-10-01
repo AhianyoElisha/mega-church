@@ -3,12 +3,11 @@ import { type Models } from 'node-appwrite'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 import {
+  hydrateSession,
   loadLiveStats,
-  meetingDocToMeeting,
   occurrenceDocToOccurrence,
   resolveActiveSession,
 } from '@/lib/attendance/server'
-import { rosterMemberIds } from '@/lib/biometrics/server'
 import type { LiveStatsResponse } from '@/lib/attendance/types'
 import type { ActiveSession } from '@/lib/meetings/types'
 
@@ -34,22 +33,12 @@ export async function GET(request: NextRequest) {
         COLLECTIONS.meeting_occurrences,
         occurrenceId,
       )
-      const occurrence = occurrenceDocToOccurrence(
-        occDoc as Models.Document & Record<string, unknown>,
+      // The same hydration the poll uses, so a past service reports its Save
+      // Church count exactly as a live one does.
+      session = await hydrateSession(
+        databases,
+        occurrenceDocToOccurrence(occDoc as Models.Document & Record<string, unknown>),
       )
-      const meetingDoc = await databases.getDocument(
-        DATABASE_ID,
-        COLLECTIONS.meetings,
-        occurrence.meeting_id,
-      )
-      const meeting = meetingDocToMeeting(meetingDoc as Models.Document & Record<string, unknown>)
-      session = {
-        occurrence,
-        meeting,
-        roster_size: meeting.restricted
-          ? (await rosterMemberIds(databases, meeting.$id)).length
-          : 0,
-      }
     } catch {
       return NextResponse.json<LiveStatsResponse>(
         { ok: false, error: 'No such session.' },

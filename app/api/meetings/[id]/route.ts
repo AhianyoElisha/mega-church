@@ -89,7 +89,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   if (typeof body.archived === 'boolean') {
     if (isProtected(id) && body.archived) {
       return NextResponse.json<MeetingDetailResponse>(
-        { ok: false, error: 'The two services cannot be archived.' },
+        { ok: false, error: 'The services cannot be archived.' },
         { status: 400 },
       )
     }

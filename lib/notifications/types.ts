@@ -46,6 +46,40 @@ export type PushPayload = {
   tag?: string
 }
 
+/**
+ * What the three scheduled service texts answer with — `sunday-reminder`,
+ * `midweek-reminder` and `attendance-thanks` share one shape because they are
+ * one job with three recipient rules (`lib/notifications/serviceSms.ts`).
+ *
+ * `nobody` is a real outcome, not an error: a Sunday with no attendance rows
+ * is a Sunday the kiosk was never opened, and the run must say so rather than
+ * look like a scheduler that never fired. Every `ok: true` exit is RECORDED in
+ * `notification_runs` for the same reason.
+ */
+export type ServiceSmsResponse =
+  | {
+      ok: true
+      status: 'sent' | 'nobody' | 'no_template' | 'not_configured'
+      /** Which of the three, so a scheduler log line is self-describing. */
+      kind: string
+      run_date: string
+      /** Non-child recipients the job resolved, before claims and phones. */
+      recipient_count: number
+      /** Save Church children dropped BEFORE the send. Never zero by silence:
+       *  a child in the attendance rows is reported, not texted. */
+      excluded_children: number
+      sent: number
+      failed: number
+      /** Already texted for this category today — the dedupe index on a
+       *  second call. `sent` 0 with `skipped` N is what "it did not send
+       *  twice" looks like from a scheduler log. */
+      skipped: number
+      /** Recipients with no usable number. Named, so they can be fixed. */
+      no_phone: string[]
+      credit_left: number | null
+    }
+  | { ok: false; error: string }
+
 export type BirthdayRunResponse =
   | {
       ok: true

@@ -6,7 +6,7 @@ import {
   templateNameTaken,
   updateTemplate,
 } from '@/lib/sms/server'
-import { PLACEHOLDERS, unknownPlaceholders } from '@/lib/sms/render'
+import { PLACEHOLDERS, extrasForCategory, unknownPlaceholders } from '@/lib/sms/render'
 import type { TemplateResponse } from '@/lib/sms/types'
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -45,11 +45,16 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       return bad('A template needs a message.')
     }
     if (body.body.length > 1024) return bad('That message is longer than 1024 characters.')
-    const unknown = unknownPlaceholders(body.body)
+    // Against the STORED category's extras — the category cannot be changed on
+    // a PATCH, so a thank-you keeps `{{services_attended}}` and nothing else
+    // gains it.
+    const extras = extrasForCategory(existing.category)
+    const unknown = unknownPlaceholders(body.body, extras)
     if (unknown.length > 0) {
       return bad(
-        `${unknown.map((u) => `{{${u}}}`).join(', ')} is not a placeholder the system knows. ` +
-          `Use one of: ${PLACEHOLDERS.map((p) => `{{${p}}}`).join(', ')}.`,
+        `${unknown.map((u) => `{{${u}}}`).join(', ')} is not a placeholder the system knows` +
+          `${unknown.includes('services_attended') ? ` in a ${existing.category} template — it is only for attendance_thanks` : ''}. ` +
+          `Use one of: ${[...PLACEHOLDERS, ...extras].map((p) => `{{${p}}}`).join(', ')}.`,
       )
     }
     fields.body = body.body

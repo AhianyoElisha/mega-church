@@ -21,6 +21,10 @@ for the phase breakdowns.
 | M | Head accounts created in-app | ✅ done — Plan 3 |
 | N | Per-constituency attendance exports | ✅ done — Plan 3 |
 | O | Bulk SMS (mNotify) | ✅ done — Plan 3, verified against a real handset |
+| P | Save Church (companion occurrence + kiosk redirect) | ⚠️ built — Plan 6; tsc/vitest/build green, schema + backfill applied live 2026-10-01, **no browser pass** |
+| Q | Students (programme, level, yearly rollover) | ⚠️ built — Plan 6; same caveat |
+| R | Photos that render + crop step | ⚠️ built — Plan 6; same caveat |
+| S | Scheduled service SMS + audiences | ⚠️ built — Plan 6; same caveat, and the Vercel plan must allow 5 crons |
 
 ## Verified
 
@@ -1755,7 +1759,7 @@ posture `isUnicode` already takes.
 class — `/[^<NUL>-ÿ]/`, which renders as `/[^ -ÿ]/` in every editor and
 terminal. **Git classified the whole file as binary**, so every diff of the code
 that decides what the congregation receives showed `Bin 5900 -> 8880 bytes` and
-was never reviewable. It predates this change; it is now written ` `, which
+was never reviewable. It predates this change; it is now written `\x00`, which
 is the same regex and is text.
 
 ### Applied to the live project
@@ -2033,3 +2037,69 @@ production, not to a dev server, and passwords are not something this account
 types — so `/basontas`, the rebuilt `/bacentas`, the care table, the BENMP tick
 box and the treasurer's refusal are type-checked, unit-tested and built, but
 have not been clicked. `npm run e2e` is the harness that would close it.
+
+## Plan 6 — Save Church, students, photos, scheduled SMS (2026-09-30)
+
+Built as four parallel tracks on a shared foundation; see
+`.agent/plans/6.save-church-students-photos-scheduled-sms.md` for the design
+and the reasoning behind each decision. PRD §1.1b, §1.5 (companions), §2.11–2.14
+and CLAUDE.md carry the rules.
+
+### Verified
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — 26 files, 505 passed, 4 skipped (the corpus skips).
+  New suites: `lib/members/__tests__/{students,validate,crop}.test.ts`,
+  `lib/sms/__tests__/{audience,sendToMembers}.test.ts`; extended:
+  occurrenceResolver (companions, Save Church activation refused,
+  `attendanceTarget`), day report (`save` status, children never on adult
+  sheets), tree (`member_type` constituency-tier), render (thanks-only
+  placeholder), permissions.
+- `npm run build` — compiles, `/students` and the five notification routes
+  present.
+- The sharp upload pipeline was exercised against a synthetic EXIF-rotated
+  JPEG: 800×800, upright, orientation tag stripped.
+
+### Applied to the live project, 2026-10-01
+
+1. `npm run setup:appwrite` — first run: 10 attributes, 2 indexes, the
+   `save-church` row, `service_slot` and both SMS enums widened. Second run:
+   created 0 across the board. Read back afterwards: `call_number` is
+   `required=false`, every new attribute `available`.
+2. `npm run verify:appwrite` — all checks passed; the three service rows and
+   slots are checked. (A Second Service occurrence was OPEN on the live
+   project at the time, left over from before this deploy; it has no
+   companion and will get one lazily on the first child's scan.)
+3. `npm run backfill:member-type` — 192 members, none answered; `--apply` set
+   all 192 to `adult`; a third dry run reports 0 with no value.
+4. `npm run seed:sms` — created the three defaults (Sunday reminder 133
+   chars, Midweek reminder 116, Thank you for coming 138 with the longest
+   wording; all one part), left the five existing seeds alone. The wording
+   is a starting point; edit it on /sms, Templates tab.
+
+### NOT verified — what the next session must do, in order
+
+5. **Vercel plan.** `vercel.json` now declares five crons; Hobby runs two.
+   Pro, or an external scheduler calling each `/api/notifications/*` route
+   with the bearer token (GET, `User-Agent: vercel-cron/1.0`).
+6. Browser pass: register a child (name only), scan one during First Service
+   and read "Marked present — Save Church"; Services and Monitor show
+   "Save Church: N"; `/students` promote/repeat/graduate and the shepherd's
+   read-only view; `/members` bulk "Move to Save Church"; photos render on
+   members, kiosk, sms, birthdays; crop from file and from camera; `/sms`
+   audience select and the excluded-children count.
+7. `E2E_ALLOW_LIVE=1 npm run e2e` — extended to assert the companion is
+   created on activate and closed on close.
+
+### Decisions worth knowing before touching it
+
+- A companion occurrence is closed only by its parent. Closing, pausing or
+  resuming one by its own id is refused by name.
+- An adult with only a Save Church mark reads `save` in the day report — a
+  child reclassified after the day — rather than being guessed absent.
+- A head's registration may set `member_type` (they are looking at the
+  person); a non-elevated head EDITING may not.
+- `/api/occurrences` history now lists companion rows as "Save Church"; if
+  that reads as noise, filter on `parent_occurrence_id` there.
+- Nothing is committed. The changed set is 67 modified and 19 new files;
+  the church's habit is one PR per plan.

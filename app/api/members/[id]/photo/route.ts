@@ -1,13 +1,35 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { ID } from 'node-appwrite'
+import sharp from 'sharp'
 import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import { canReadGroup } from '@/lib/groups/server'
 import { BUCKETS, COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
 
 type Ctx = { params: Promise<{ id: string }> }
 
+/** Cap on what is ACCEPTED, not what is stored — the stored file is far smaller. */
 const MAX_BYTES = 5 * 1024 * 1024
+/**
+ * What sharp is asked to decode. The cropper always sends JPEG, so this list
+ * only matters for a client that bypasses it; kept narrow so an iPhone HEIC —
+ * which this sharp build cannot decode — is refused by name rather than by a
+ * decoder error that reads like the server broke.
+ */
 const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
+
+/**
+ * Every stored photo is the same shape: an EXIF-upright 800x800 JPEG.
+ *
+ * Normalising here rather than trusting the client means a phone JPEG that
+ * arrives sideways (orientation only in EXIF, which `<img>` honours and the
+ * kiosk canvas does not) is rotated for real; a 12-megapixel original does not
+ * become a 4 MB download on a tablet over church wifi; and whatever mime the
+ * client claimed, what is stored is what sharp actually decoded.
+ */
+const OUTPUT_SIDE = 800
+const OUTPUT_QUALITY = 85
+const OUTPUT_NAME = 'photo.jpg'
+const OUTPUT_MIME = 'image/jpeg'
 
 /**
  * POST /api/members/[id]/photo — replace a member's profile photo.
@@ -94,7 +116,29 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     )
   }
 
-  const created = await storage.createFile(BUCKETS.member_photos, ID.unique(), file)
+  let normalised: Buffer
+  try {
+    normalised = await sharp(Buffer.from(await file.arrayBuffer()))
+      // Apply the EXIF orientation to the pixels and drop the tag.
+      .rotate()
+      .resize(OUTPUT_SIDE, OUTPUT_SIDE, { fit: 'cover', position: 'centre' })
+      .jpeg({ quality: OUTPUT_QUALITY, mozjpeg: true })
+      .toBuffer()
+  } catch {
+    // A file with an image mime and no image in it — truncated, mislabelled,
+    // or a format this build cannot read. Said plainly, because the user's
+    // next move is to pick a different file, not to retry this one.
+    return NextResponse.json(
+      { ok: false, error: 'That file could not be read as an image. Try a different photo.' },
+      { status: 400 },
+    )
+  }
+
+  // A `File` rather than `InputFile.fromBuffer`: the SDK's `InputFile.toFile()`
+  // builds `new File([data], name)` with NO type, and a mime-less part is
+  // stored as whatever Storage guesses. A File carries its own.
+  const upload = new File([new Uint8Array(normalised)], OUTPUT_NAME, { type: OUTPUT_MIME })
+  const created = await storage.createFile(BUCKETS.member_photos, ID.unique(), upload)
   await databases.updateDocument(DATABASE_ID, COLLECTIONS.members, id, {
     photo_file_id: created.$id,
   })

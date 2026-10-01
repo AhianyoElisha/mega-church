@@ -28,7 +28,7 @@ import { canReadGroup } from '@/lib/groups/server'
  *
  * Two modes:
  *
- *   ?date=YYYY-MM-DD&scope=first|second|absent|all
+ *   ?date=YYYY-MM-DD&scope=first|second|save|absent|all
  *       The Sunday view. A day can hold both services, so the unit people
  *       actually ask for is the DAY, not one session.
  *
@@ -81,17 +81,33 @@ function titleBlock(ws: ExcelJS.Worksheet, span: string, title: string, subtitle
 const SCOPE_TITLE: Record<Exclude<DayScope, 'all'>, string> = {
   first: 'First Service attendance',
   second: 'Second Service attendance',
+  save: 'Save Church attendance',
   absent: 'Absent members',
 }
 
 const SHEET_NAME: Record<Exclude<DayScope, 'all'>, string> = {
   first: 'First Service',
   second: 'Second Service',
+  save: 'Save Church',
   absent: 'Absent',
 }
 
+/** The tabs of the `all` workbook, in the order a Sunday happens. */
+const ALL_SCOPES: Exclude<DayScope, 'all'>[] = ['first', 'second', 'save', 'absent']
+
+/** A number to ring, or a dash. A child may have none (PRD §1.1), and an
+ *  empty cell in a call list reads as "not filled in" rather than "none". */
+const phone = (v: string | null) => v ?? '—'
+
+/** Which service a member usually attends, in words. A child's is the
+ *  service their Save Church session runs beside, so it is still named. */
+function usualService(m: { home_service: string; member_type: string }): string {
+  const parent = m.home_service === 'first' ? 'First Service' : 'Second Service'
+  return m.member_type === 'child' ? `Save Church (${parent})` : parent
+}
+
 /**
- * One tab. `all` is not a tab — it is the three of these in one workbook.
+ * One tab. `all` is not a tab — it is the four of these in one workbook.
  *
  * `group` narrows the sheet to one constituency. It is passed rather than
  * filtered by the caller so that "absent, in Ahodwo" is defined once, in
@@ -115,9 +131,11 @@ function buildDaySheet(
   // The "nobody opened a service" case. Without saying so, a day with no
   // service looks exactly like a day the whole congregation missed, and the
   // absent list would name everyone.
+  // The absent sheet is about all three; a service sheet only about itself.
   const notHeld: string[] = []
-  if (!report.held.first && scope !== 'second') notHeld.push('First Service')
-  if (!report.held.second && scope !== 'first') notHeld.push('Second Service')
+  if (!report.held.first && (scope === 'first' || scope === 'absent')) notHeld.push('First Service')
+  if (!report.held.second && (scope === 'second' || scope === 'absent')) notHeld.push('Second Service')
+  if (!report.held.save && (scope === 'save' || scope === 'absent')) notHeld.push('Save Church')
   const caveat =
     notHeld.length > 0 ? `  ·  NOT HELD on this date: ${notHeld.join(', ')}` : ''
 
@@ -126,22 +144,48 @@ function buildDaySheet(
       ws,
       'D',
       `${SCOPE_TITLE.absent} — ${report.date}${group ? ` — ${group.name}` : ''}`,
-      `${rows.length}${group ? '' : ` of ${report.totals.active} active members`} were at neither service` + caveat,
+      `${rows.length}${group ? '' : ` of ${report.totals.active} active members`} were at no service` +
+        ' (children: not at Save Church)' +
+        caveat,
     )
     header(ws, ['Name', 'Call number', 'WhatsApp', 'Usual service'])
-    ws.columns = [{ width: 30 }, { width: 18 }, { width: 18 }, { width: 18 }]
+    ws.columns = [{ width: 30 }, { width: 18 }, { width: 18 }, { width: 26 }]
     for (const r of rows) {
       ws.addRow([
         fullName(r.member),
-        r.member.call_number,
+        phone(r.member.call_number),
         r.member.whatsapp_number ?? '',
+        usualService(r.member),
+      ])
+    }
+    return ws
+  }
+
+  if (scope === 'save') {
+    // The children's service. The number on a child's row reaches a PARENT,
+    // and the column says so — a sheet headed "Call number" would have an
+    // usher ringing a nine-year-old.
+    titleBlock(
+      ws,
+      'E',
+      `${SCOPE_TITLE.save} — ${report.date}${group ? ` — ${group.name}` : ''}`,
+      `${rows.length} present` + caveat,
+    )
+    header(ws, ['Name', 'Parent or guardian', 'Guardian name', 'Marked at', "Parents' service"])
+    ws.columns = [{ width: 30 }, { width: 18 }, { width: 24 }, { width: 12 }, { width: 18 }]
+    for (const r of rows) {
+      ws.addRow([
+        fullName(r.member),
+        phone(r.member.call_number),
+        r.member.guardian_name ?? '',
+        time(r.save_marked_at),
         r.member.home_service === 'first' ? 'First Service' : 'Second Service',
       ])
     }
     return ws
   }
 
-  // A single service.
+  // A single adult service.
   const isFirst = scope === 'first'
   titleBlock(
     ws,
@@ -154,7 +198,7 @@ function buildDaySheet(
   for (const r of rows) {
     ws.addRow([
       fullName(r.member),
-      r.member.call_number,
+      phone(r.member.call_number),
       r.member.whatsapp_number ?? '',
       time(isFirst ? r.first_marked_at : r.second_marked_at),
       r.status === 'both' ? 'Yes' : '',
@@ -231,7 +275,7 @@ export async function GET(request: NextRequest) {
     const scopeRaw = params.get('scope') ?? 'all'
     if (!isDayScope(scopeRaw)) {
       return Response.json(
-        { ok: false, error: 'scope must be first, second, absent or all.' },
+        { ok: false, error: 'scope must be first, second, save, absent or all.' },
         { status: 400 },
       )
     }
@@ -259,8 +303,7 @@ export async function GET(request: NextRequest) {
     // on the collision.
     const used = new Set<string>()
 
-    const scopes: Exclude<DayScope, 'all'>[] =
-      scopeRaw === 'all' ? ['first', 'second', 'absent'] : [scopeRaw]
+    const scopes: Exclude<DayScope, 'all'>[] = scopeRaw === 'all' ? ALL_SCOPES : [scopeRaw]
 
     if (byConstituency) {
       // One workbook the admin can split up and hand out: every constituency,
@@ -357,7 +400,7 @@ export async function GET(request: NextRequest) {
     const hit = present.get(m.$id)
     ws.addRow([
       fullName(m),
-      m.call_number,
+      phone(m.call_number),
       m.whatsapp_number ?? '',
       hit ? 'Yes' : 'No',
       time(hit?.marked_at ?? null),

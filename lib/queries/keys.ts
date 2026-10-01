@@ -10,6 +10,7 @@ export const queryKeys = {
       status?: string
       constituency?: string
       service?: string
+      type?: string
     } = {},
   ) =>
     [
@@ -21,6 +22,9 @@ export const queryKeys = {
       // rows must not share a cache entry, or switching service shows the
       // previous service's members until the refetch lands.
       filters.service ?? '',
+      // Same reason: the students roll and the registry must not share a
+      // cache entry.
+      filters.type ?? '',
     ] as const,
   member: (id: string) => ['members', 'one', id] as const,
   memberStats: ['members', 'stats'] as const,

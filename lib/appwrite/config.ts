@@ -138,6 +138,15 @@ export const COLLECTIONS = {
 export const NOTIFICATION_KINDS = {
   birthday_push: 'birthday',
   birthday_sms: 'birthday-sms',
+  /**
+   * The three scheduled service texts. All three are RECORDS like
+   * `birthday-sms`, not claims: each is idempotent per MEMBER on
+   * `sms_messages.dedupe_key`, so a run that dies halfway can be re-run for
+   * the members it never reached.
+   */
+  sunday_reminder: 'sunday-reminder',
+  midweek_reminder: 'midweek-reminder',
+  attendance_thanks: 'attendance-thanks',
 } as const
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[keyof typeof NOTIFICATION_KINDS]
@@ -209,16 +218,37 @@ export type UserLabel = (typeof USER_LABELS)[keyof typeof USER_LABELS]
 // --- Domain constants -------------------------------------------------------
 
 /**
- * The two service definitions are seeded with fixed document ids so code can
+ * The service definitions are seeded with fixed document ids so code can
  * reference them without a lookup, and so they survive a re-run of the setup
  * script. They are not deletable through the UI.
+ *
+ * `save` is Save Church — the children's service. It is never activated on
+ * its own: it runs DURING First or Second Service as a COMPANION occurrence
+ * (`meeting_occurrences.parent_occurrence_id`), opened and closed with its
+ * parent. A child who touches the one scanner during an adult service is
+ * marked here instead, by `resolveAndRecord`. PRD §1.5, §2.2.
  */
 export const SERVICE_IDS = {
   first: 'first-service',
   second: 'second-service',
+  save: 'save-church',
 } as const
 
 export type ServiceSlot = keyof typeof SERVICE_IDS
+
+/**
+ * The services an adult member can call "mine". A member's `home_service` is
+ * one of THESE, never `save`: a child keeps a home service too — it says which
+ * adult service their Save Church session runs beside — and `member_type` is
+ * what says they are a child. Two facts, two fields.
+ */
+export const HOME_SERVICES = ['first', 'second'] as const
+export type HomeService = (typeof HOME_SERVICES)[number]
+
+/** The adult services — the ones that hold the scanner and get a companion. */
+export function isAdultServiceSlot(slot: string | null | undefined): slot is HomeService {
+  return slot === 'first' || slot === 'second'
+}
 
 export const SERVICE_DEFINITIONS = [
   {
@@ -237,7 +267,60 @@ export const SERVICE_DEFINITIONS = [
     service_slot: 'second' as const,
     sort_order: 2,
   },
+  {
+    id: SERVICE_IDS.save,
+    name: 'Save Church',
+    alias: "Children's church",
+    description: 'The children\'s service, for members under 12. Runs alongside First and Second Service.',
+    service_slot: 'save' as const,
+    sort_order: 3,
+  },
 ]
+
+// --- Member types -----------------------------------------------------------
+
+/**
+ * What KIND of member somebody is. One field, three values:
+ *
+ *   adult    — the ordinary case, and what every row registered before this
+ *              field existed is read as.
+ *   student  — at university (nearly always KNUST). Carries `programme`,
+ *              `level` and `level_year`; can be targeted by a broadcast.
+ *   child    — Save Church, under 12. Registered with less, redirected to the
+ *              Save Church companion occurrence when they scan during an adult
+ *              service, and NEVER texted.
+ *
+ * An absent or unrecognised value reads as `adult`, because that is the safe
+ * misreading: an adult gets texts and attends adult services, which is exactly
+ * what every existing row did before this field existed. Setting it is
+ * constituency-head tier, beside `status` — it changes what the kiosk does
+ * with somebody and whether the church spends credit on them.
+ */
+export const MEMBER_TYPES = ['adult', 'student', 'child'] as const
+export type MemberType = (typeof MEMBER_TYPES)[number]
+
+export const MEMBER_TYPE_LABEL: Record<MemberType, string> = {
+  adult: 'Adult',
+  student: 'University student',
+  child: 'Save Church (under 12)',
+}
+
+export function isMemberType(v: unknown): v is MemberType {
+  return typeof v === 'string' && (MEMBER_TYPES as readonly string[]).includes(v)
+}
+
+/**
+ * The month the academic year turns over, 1-12. August: KNUST's first
+ * semester opens around then, and a student whose `level_year` is older than
+ * the academic year that contains today is DUE for a rollover. A constant
+ * because the church may decide September; nothing else should hard-code it.
+ */
+export const ACADEMIC_YEAR_START_MONTH = 8
+
+/** Lowest and highest university level the roll accepts. 700/800 = postgrad. */
+export const LEVEL_MIN = 100
+export const LEVEL_MAX = 800
+export const LEVEL_STEP = 100
 
 /** The four fingers enrolled for every member, in capture order. PRD §1.2. */
 export const FINGER_LABELS = [
@@ -284,7 +367,17 @@ export const BIRTHDAY_HORIZON_DAYS = 30
  * What an SMS is FOR. The category decides which templates are offered and, for
  * `birthday`, which one the automatic run reaches for.
  */
-export const SMS_CATEGORIES = ['birthday', 'tithe', 'general', 'benmp'] as const
+export const SMS_CATEGORIES = [
+  'birthday',
+  'tithe',
+  'general',
+  'benmp',
+  // The three scheduled service texts. `attendance_thanks` is the only
+  // category in which `{{services_attended}}` is a valid placeholder.
+  'sunday_reminder',
+  'midweek_reminder',
+  'attendance_thanks',
+] as const
 export type SmsCategory = (typeof SMS_CATEGORIES)[number]
 
 export const SMS_CATEGORY_LABEL: Record<SmsCategory, string> = {
@@ -292,7 +385,31 @@ export const SMS_CATEGORY_LABEL: Record<SmsCategory, string> = {
   tithe: 'Tithe',
   general: 'General',
   benmp: 'BENMP dues',
+  sunday_reminder: 'Sunday service reminder',
+  midweek_reminder: 'Midweek service reminder',
+  attendance_thanks: 'Thank you for attending',
 }
+
+/**
+ * Who a manual broadcast is FOR. Children are never an option — they are
+ * excluded from every send, at the chokepoint, regardless of audience.
+ */
+export const SMS_AUDIENCES = ['all', 'students', 'non_students'] as const
+export type SmsAudience = (typeof SMS_AUDIENCES)[number]
+
+export const SMS_AUDIENCE_LABEL: Record<SmsAudience, string> = {
+  all: 'Everyone',
+  students: 'University students only',
+  non_students: 'Everyone except students',
+}
+
+/** Service times as they appear in the reminder texts. Literal, on purpose:
+ *  a placeholder that renders a time nobody set is a text nobody can trust. */
+export const SERVICE_TIMES = {
+  first: '7:30am',
+  second: '10:30am',
+  midweek: '6:00pm',
+} as const
 
 /**
  * The church's name as it appears inside a message body via `{{church}}`.

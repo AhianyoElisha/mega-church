@@ -11,7 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from './fetcher'
 import { queryKeys } from './keys'
-import type { SmsCategory } from '@/lib/appwrite/config'
+import type { SmsAudience, SmsCategory } from '@/lib/appwrite/config'
 import type {
   ListSmsLogResponse,
   ListTemplatesResponse,
@@ -72,7 +72,14 @@ export function useDeleteTemplate() {
 export function useSendSms() {
   return useSmsMutation<
     SendSmsResponse,
-    { member_ids: string[]; template_id: string; category: SmsCategory }
+    {
+      member_ids: string[]
+      template_id: string
+      category: SmsCategory
+      /** Who the picked list was narrowed to. The server narrows again and
+       *  reports the drop; sending it lets the two agree about why. */
+      audience?: SmsAudience
+    }
   >((vars) => apiFetch('/api/sms/send', { method: 'POST', body: JSON.stringify(vars) }))
 }
 

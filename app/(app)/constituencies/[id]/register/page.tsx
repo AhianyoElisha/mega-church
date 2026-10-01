@@ -143,7 +143,7 @@ export default function RegisterIntoConstituencyPage({
       <PageHeader
         back={{ href: `/constituencies/${id}`, label: group.name }}
         title={`Register a member into ${group.name}`}
-        subtitle="Name and call number are required. The photo comes next, on the following screen."
+        subtitle="Name and call number are required — a Save Church child needs only a name. The photo comes next, on the following screen."
       />
       <Card>
         <MemberForm

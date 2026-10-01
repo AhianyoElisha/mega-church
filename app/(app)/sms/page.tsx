@@ -46,13 +46,18 @@ import { currentYear, periodLabel } from '@/lib/benmp/period'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { fullName, initials } from '@/lib/members/types'
 import { matchesMemberSearch } from '@/lib/members/search'
-import { countParts, render } from '@/lib/sms/render'
+import { countParts, render, sampleExtras } from '@/lib/sms/render'
 import { sendableCategories } from '@/lib/sms/permissions'
+import { narrowAudience } from '@/lib/sms/audience'
 import { useAuth } from '@/components/auth'
 import {
   CHURCH_TIMEZONE,
+  SERVICE_TIMES,
+  SMS_AUDIENCES,
+  SMS_AUDIENCE_LABEL,
   SMS_CATEGORIES,
   SMS_CATEGORY_LABEL,
+  type SmsAudience,
   type SmsCategory,
 } from '@/lib/appwrite/config'
 import type { SmsTemplate } from '@/lib/sms/types'
@@ -67,13 +72,56 @@ type Tab = 'send' | 'templates' | 'log'
  * would write a `birthday:<member>:<today>` dedupe key and silently suppress
  * the real message that morning.
  */
-const MANUAL_CATEGORIES: readonly SmsCategory[] = ['tithe', 'benmp', 'general']
+/*
+ * The three scheduled service texts ARE offered by hand, unlike birthday, and
+ * the difference is deliberate: a birthday manual send would collide with the
+ * morning run's dedupe key and suppress the real message, whereas a manual
+ * Sunday reminder IS the morning run — the same `automatic` key is not used
+ * here, so a re-run after a cron that did not fire is exactly what this is
+ * for. `sendableCategories` narrows the list to an admin.
+ */
+const MANUAL_CATEGORIES: readonly SmsCategory[] = [
+  'tithe',
+  'benmp',
+  'general',
+  'sunday_reminder',
+  'midweek_reminder',
+  'attendance_thanks',
+]
 
 const MANUAL_CATEGORY_LABEL: Record<SmsCategory, string> = {
   birthday: 'Birthday',
   tithe: 'Tithe — thank somebody who paid',
   benmp: 'BENMP dues — remind whoever has not paid this month',
   general: 'General — anything else',
+  sunday_reminder: `Sunday reminder — tomorrow's services at ${SERVICE_TIMES.first} and ${SERVICE_TIMES.second}`,
+  midweek_reminder: `Midweek reminder — this evening's service at ${SERVICE_TIMES.midweek}`,
+  attendance_thanks: 'Thank you — everyone marked present at a service today',
+}
+
+/**
+ * When the scheduler sends each automatic category, in the church's own
+ * words. Shown on the Templates tab so whoever edits the wording knows when
+ * it goes out and does not send it again by hand an hour before.
+ */
+const SCHEDULE_NOTE: Partial<Record<SmsCategory, string>> = {
+  sunday_reminder:
+    `Sent automatically every Saturday at 6:00pm to every adult and student member, ` +
+    `reminding them of First Service at ${SERVICE_TIMES.first} and Second Service at ${SERVICE_TIMES.second}.`,
+  midweek_reminder:
+    `Sent automatically every Wednesday at 8:00am to every adult and student member, ` +
+    `about the ${SERVICE_TIMES.midweek} midweek service.`,
+  attendance_thanks:
+    `Sent automatically every Sunday at 2:00pm to everyone marked present at First or Second ` +
+    `Service that day. {{services_attended}} is filled in per member — "First Service", ` +
+    `"Second Service" or "both First and Second Service" — and exists only in this category.`,
+}
+
+/** What each audience choice means, in a sentence, beside the picker. */
+const AUDIENCE_NOTE: Record<SmsAudience, string> = {
+  all: 'Every adult and student member. Save Church children are never texted.',
+  students: 'Members recorded as students only.',
+  non_students: 'Working adults only — no students, and never children.',
 }
 
 /**
@@ -127,7 +175,7 @@ export default function SmsPage() {
     <PageWrap>
       <PageHeader
         title="Messages"
-        subtitle="Birthday wishes go out on their own. Tithe thank-yous are sent from here."
+        subtitle="Birthday wishes, service reminders and Sunday thank-yous go out on their own. Everything else is sent from here."
       />
 
       {/* Said once, at the top, and shown before any Send button is offered.
@@ -233,6 +281,14 @@ function SendTab({ canSend }: { canSend: boolean }) {
   // picker on purpose — those send themselves, and offering a manual birthday
   // blast beside them invites somebody to send the same wishes twice.
   const [category, setCategory] = useState<SmsCategory>('tithe')
+  /**
+   * Who the list is narrowed to. Applied CLIENT-side with the same
+   * `narrowAudience` the server runs, so the names on screen are the names
+   * the server will keep — and so a Save Church child is never listed at all,
+   * whichever audience is chosen. BENMP has its own narrowing (below) and is
+   * not offered an audience: its recipients are "partners who owe", full stop.
+   */
+  const [audience, setAudience] = useState<SmsAudience>('all')
   const [templateId, setTemplateId] = useState('')
   const [search, setSearch] = useState('')
   const [picked, setPicked] = useState<Set<string>>(new Set())
@@ -267,8 +323,13 @@ function SendTab({ canSend }: { canSend: boolean }) {
 
   const everyone = useMemo(() => (members.data?.ok ? members.data.members : []), [members.data])
 
+  const hasAudience = category !== 'benmp'
+
   const all = useMemo(() => {
-    if (category !== 'benmp') return everyone
+    // Children are dropped from EVERY list by `narrowAudience`, BENMP's
+    // included — `all` there means "every partner who owes", and no partner
+    // is a child.
+    if (category !== 'benmp') return narrowAudience(everyone, audience).kept
     if (!benmp) return []
     const paidThisMonth = new Set(
       benmp.contributions.filter((c) => c.period === benmp.current_period).map((c) => c.member_id),
@@ -279,8 +340,11 @@ function SendTab({ canSend }: { canSend: boolean }) {
     // Intersected with the real member records rather than rebuilt from the
     // grid's trimmed rows: the send needs phone numbers and titles, and this
     // list is what the cost preview renders against.
-    return everyone.filter((m) => outstanding.has(m.$id))
-  }, [category, everyone, benmp])
+    return narrowAudience(
+      everyone.filter((m) => outstanding.has(m.$id)),
+      'all',
+    ).kept
+  }, [category, audience, everyone, benmp])
 
   const visible = useMemo(() => {
     if (!search.trim()) return all
@@ -316,11 +380,14 @@ function SendTab({ canSend }: { canSend: boolean }) {
     if (!template) return null
     const sample = all.find((m) => picked.has(m.$id))
     if (!sample) return null
-    const rendered = render(template.body, sample)
+    // A thank-you's `{{services_attended}}` is decided by the server from the
+    // attendance rows; the preview uses the LONGEST wording so the price
+    // quoted is the highest a member can cost.
+    const rendered = render(template.body, sample, sampleExtras(category))
     if (!rendered.ok) return null
     const parts = countParts(rendered.text).parts
     return { parts, credits: parts * picked.size, preview: rendered.text }
-  }, [template, all, picked])
+  }, [template, all, picked, category])
 
   /**
    * Whether this specific send would outrun the balance.
@@ -378,6 +445,7 @@ function SendTab({ canSend }: { canSend: boolean }) {
       member_ids: [...picked],
       template_id: template.$id,
       category,
+      audience: hasAudience ? audience : 'all',
     })
     if (!res.ok) {
       setError(res.error)
@@ -477,17 +545,44 @@ function SendTab({ canSend }: { canSend: boolean }) {
           </p>
         )}
 
+        {/* Above the picker, because it decides what the picker shows. Not
+            offered for BENMP, whose list is already "partners who owe". */}
+        {hasAudience && (
+          <div className="mt-4 max-w-md">
+            <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+              Who to
+            </label>
+            <Select
+              value={audience}
+              onChange={(e) => setAudience(e.target.value as SmsAudience)}
+            >
+              {SMS_AUDIENCES.map((a) => (
+                <option key={a} value={a}>
+                  {SMS_AUDIENCE_LABEL[a]}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              {AUDIENCE_NOTE[audience]}
+            </p>
+          </div>
+        )}
+
+        {category === 'attendance_thanks' && (
+          <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+            Only members marked present at First or Second Service <strong>today</strong> will be
+            thanked — anyone else you tick is skipped and counted. The wording is filled in from
+            the attendance rows, not from this screen.
+          </p>
+        )}
+
         {template && (
           <div className="mt-4 rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900/40">
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               {cost ? 'What the first person you ticked receives' : 'Preview'}
             </p>
             <p className="whitespace-pre-wrap break-words text-sm text-neutral-950 dark:text-white">
-              {cost?.preview ?? render(template.body, { first_name: 'Ama', last_name: 'Serwaa' }).ok
-                ? cost?.preview ??
-                  (render(template.body, { first_name: 'Ama', last_name: 'Serwaa' }) as { text: string })
-                    .text
-                : template.body}
+              {cost?.preview ?? previewText(template, category)}
             </p>
           </div>
         )}
@@ -588,6 +683,20 @@ function SendTab({ canSend }: { canSend: boolean }) {
   )
 }
 
+/**
+ * A template as a sample member would receive it, with the category's extras
+ * filled in — so a thank-you previews as words rather than as a refusal — or
+ * the raw body when it cannot render at all.
+ */
+function previewText(template: SmsTemplate, category: SmsCategory): string {
+  const r = render(
+    template.body,
+    { first_name: 'Ama', last_name: 'Serwaa' },
+    sampleExtras(category),
+  )
+  return r.ok ? r.text : template.body
+}
+
 // --- templates --------------------------------------------------------------
 
 function TemplatesTab() {
@@ -670,6 +779,17 @@ function TemplatesTab() {
         </Banner>
       )}
 
+      {/* One line per automatic category saying WHEN it goes out. The
+          standard template is the one the scheduler reaches for, so whoever
+          is editing it should know it leaves at a fixed hour without anybody
+          pressing anything. */}
+      {SCHEDULE_NOTE[category] && (
+        <Banner tone="info">
+          {SCHEDULE_NOTE[category]} The <strong>standard</strong> template is the one it sends.
+          Save Church children are never texted.
+        </Banner>
+      )}
+
       {!isAdmin && (
         <Banner tone="info">
           You can add {SMS_CATEGORY_LABEL[category].toLowerCase()} templates. Changing or
@@ -718,7 +838,11 @@ function TemplatesTab() {
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {list.map((t) => {
-            const preview = render(t.body, { first_name: 'Ama', last_name: 'Serwaa' })
+            const preview = render(
+              t.body,
+              { first_name: 'Ama', last_name: 'Serwaa' },
+              sampleExtras(t.category),
+            )
             const parts = countParts(preview.ok ? preview.text : t.body)
             return (
               <Card key={t.$id}>

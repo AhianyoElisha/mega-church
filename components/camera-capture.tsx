@@ -63,9 +63,14 @@ export default function CameraCapture({
 }: {
   open: boolean
   onClose: () => void
-  /** Called with a JPEG the caller can upload as-is. */
+  /**
+   * Called with the RAW frame as a JPEG. The caller frames it in the cropper
+   * and uploads the result; nothing is sent from here. By the time this fires
+   * the stream has already been stopped (at capture), so the caller may close
+   * this dialog immediately without the lens staying live for a moment.
+   */
   onCapture: (file: File) => void | Promise<void>
-  /** The upload is in flight — keep the review open and the buttons disabled. */
+  /** Something downstream is in flight — keep the review open and the buttons disabled. */
   busy?: boolean
   title?: string
 }) {
@@ -208,6 +213,9 @@ export default function CameraCapture({
 
   const use = async () => {
     if (!shot) return
+    // Hand the frame up as it is. The stream was released at `capture` and is
+    // not restarted here, so whatever opens next — the cropper — opens with
+    // the camera off.
     await onCapture(shot.file)
   }
 
