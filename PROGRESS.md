@@ -2143,11 +2143,11 @@ its REAL capture loop and scan route — not a hand-crafted `curl`.
 
 Things noticed on the way, none of them Plan 6 regressions:
 
-- `components/member-form.tsx` and `app/(app)/members/[id]/page.tsx` label
-  the SERVING-GROUP section "Bacentas" (since 482c4b4, 2026-08-30). Per
-  CLAUDE.md those are basontas; the place field just above is also called
-  "Bacenta". Wording only, but it is the exact confusion the split existed
-  to end.
+- `components/member-form.tsx` and `app/(app)/members/[id]/page.tsx`
+  labelled the SERVING-GROUP section "Bacentas" (since 482c4b4,
+  2026-08-30) while the place field just above was also "Bacenta" — the
+  exact confusion the split existed to end. **Fixed on this branch:** the
+  legend, the detail term and every hint sentence now say basonta.
 - `deleteMemberCascade` does not remove `photo_file_id`'s file from the
   `member-photos` bucket, so every deleted member leaves an orphan file
   behind. The photo route does bin the PREVIOUS file on replace, so this is

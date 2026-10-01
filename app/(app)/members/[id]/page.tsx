@@ -226,7 +226,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 {constituencyName ?? <span className="text-neutral-400">Not recorded</span>}
               </DescriptionDetails>
 
-              <DescriptionTerm>Bacentas</DescriptionTerm>
+              <DescriptionTerm>Basontas</DescriptionTerm>
               <DescriptionDetails>
                 {memberBasontas.length === 0 ? (
                   <span className="text-neutral-400">None</span>

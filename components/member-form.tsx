@@ -36,7 +36,7 @@ import { levelOptions } from '@/lib/members/students'
  *                 into the group whose page they came from, and offering the
  *                 full list would offer neighbours' constituencies they would
  *                 then be refused for picking.
- *   bacentas      only the ones they head, and the whole section disappears
+ *   basontas      only the ones they head, and the whole section disappears
  *                 when they head none — which is the common case, since most
  *                 constituency heads run no choir.
  *   status        an `inactive` member is invisible to the scanner. Not a
@@ -92,7 +92,7 @@ export default function MemberForm({
   onCancel,
 }: {
   initial?: Member
-  /** Which bacentas this member already serves in, when editing. */
+  /** Which basontas this member already serves in, when editing. */
   initialBasontaIds?: string[]
   /** Set when a group head is filling this in. Omitted ⇒ the admin form. */
   restrict?: MemberFormRestriction
@@ -169,12 +169,12 @@ export default function MemberForm({
   /**
    * The tick-list, from whichever source this form has.
    *
-   * For an admin it is the same tree the bacentas page renders, so the choices
+   * For an admin it is the same tree the basontas page renders, so the choices
    * are grouped exactly as they arranged them: choirs under Choir, Technical
-   * Team on its own. Orphans are included rather than hidden — a bacenta with
+   * Team on its own. Orphans are included rather than hidden — a basonta with
    * real members in it must remain pickable even if its category was deleted.
    *
-   * For a head it is just the bacentas they run, grouped by the category name
+   * For a head it is just the basontas they run, grouped by the category name
    * that came with them. One shape either way, so the markup below does not
    * fork on who is looking at it.
    */
@@ -273,7 +273,7 @@ export default function MemberForm({
       // '' is the "—" option, which means "not recorded", not a group id.
       constituency_id: constituency || null,
       // Always sent, including as `[]`. The route treats an absent key as
-      // "leave bacentas alone" and an empty array as "clear them" — and this
+      // "leave basontas alone" and an empty array as "clear them" — and this
       // form always knows the complete answer for this person, so it says so.
       basonta_ids: [...basontas],
       // Always sent, by a head as well as an admin: this form shows the tick
@@ -676,30 +676,30 @@ export default function MemberForm({
         )}
 
         <FieldGroup>
-          <Legend>Bacentas</Legend>
+          <Legend>Basontas</Legend>
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
             {restrict
-              ? "The bacentas you head. Tick any this member also serves in — somebody can sing in two choirs and run the sound desk at the same time."
-              : "The work groups this member serves in. Tick as many as apply — someone can sing in two choirs and run the sound desk at the same time."}
+              ? "The basontas you head. Tick any this member also serves in — somebody can sing in two choirs and run the sound desk at the same time."
+              : "The serving groups this member serves in. Tick as many as apply — someone can sing in two choirs and run the sound desk at the same time."}
           </p>
           {restrict && initial && (
             // Said plainly, because the alternative reading of an unticked list
-            // is "this member is in no other bacenta", and a head who believes
+            // is "this member is in no other basonta", and a head who believes
             // that will report the choir membership as missing.
             <p className="text-sm text-neutral-500 dark:text-neutral-400">
-              Only the bacentas you head are shown. If this member also serves in one you do
+              Only the basontas you head are shown. If this member also serves in one you do
               not head, it stays exactly as it is — saving this form cannot remove them
               from it.
             </p>
           )}
 
           {basontaQuery.isLoading ? (
-            <p className="text-sm text-neutral-400">Loading bacentas…</p>
+            <p className="text-sm text-neutral-400">Loading basontas…</p>
           ) : !basontaSections || basontaSections.length === 0 ? (
             <p className="text-sm text-neutral-500 dark:text-neutral-400">
               {restrict
-                ? "You do not head a bacenta, so there is none to put this member into. An administrator, or the head of the bacenta, can add them afterwards."
-                : "No bacentas have been created yet."}
+                ? "You do not head a basonta, so there is none to put this member into. An administrator, or the head of the basonta, can add them afterwards."
+                : "No basontas have been created yet."}
             </p>
           ) : (
             <div className="max-h-72 space-y-4 overflow-y-auto rounded-xl bg-neutral-50 p-4 ring-1 ring-neutral-900/5 dark:bg-neutral-900/40 dark:ring-white/10">
