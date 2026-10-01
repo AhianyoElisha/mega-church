@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { UsersIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/shared/Button'
@@ -8,24 +8,53 @@ import { Badge } from '@/shared/Badge'
 import Avatar from '@/shared/Avatar'
 import Input from '@/shared/Input'
 import Select from '@/shared/Select'
+import { Checkbox } from '@/shared/Checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/table'
-import { Card, EmptyState, LoadingRow, PageHeader, PageWrap } from '@/components/ui'
+import { Banner, Card, EmptyState, LoadingRow, PageHeader, PageWrap } from '@/components/ui'
 import { useAuth } from '@/components/auth'
-import { useMembers } from '@/lib/queries/members'
+import { useDialog } from '@/components/dialog'
+import { useBulkMemberType, useMembers } from '@/lib/queries/members'
 import { useConstituencies } from '@/lib/queries/groups'
 import { memberPhotoUrl } from '@/lib/members/photo'
 import { birthdayLabel, fullName, initials } from '@/lib/members/types'
 import { matchesMemberSearch } from '@/lib/members/search'
-import { TEMPLATES_PER_MEMBER } from '@/lib/appwrite/config'
+import {
+  MEMBER_TYPES,
+  MEMBER_TYPE_LABEL,
+  TEMPLATES_PER_MEMBER,
+  type MemberType,
+} from '@/lib/appwrite/config'
+
+/**
+ * The category, as a badge — for a student or a child only. An adult is the
+ * ordinary case and most of the registry, so badging every one of them would
+ * bury the two that matter under a column of identical pills.
+ */
+function MemberTypeBadge({ type }: { type: MemberType }) {
+  if (type === 'student') return <Badge color="sky">Student</Badge>
+  if (type === 'child') return <Badge color="yellow">Save Church</Badge>
+  return <span className="text-neutral-400">Adult</span>
+}
 
 export default function MembersPage() {
   const { user } = useAuth()
+  const dialog = useDialog()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [enrolment, setEnrolment] = useState('')
   const [constituency, setConstituency] = useState('')
   const [service, setService] = useState('')
   const [benmp, setBenmp] = useState('')
+  const [type, setType] = useState('')
+
+  // Bulk category mode: admin only, and off by default. Rows stop being
+  // links while it is on — a checkbox inside a linked row is a checkbox that
+  // navigates.
+  const [bulk, setBulk] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [notice, setNotice] = useState<ReactNode | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const bulkType = useBulkMemberType()
 
   const constituencies = useConstituencies()
 
@@ -36,20 +65,23 @@ export default function MembersPage() {
   // "unassigned" case is filtered here — Appwrite cannot express "is null" as
   // a query, so asking for it server-side would return everybody.
   //
-  // Service is server-side for the same reason as constituency: it is an
-  // indexed enum with no null case, so there is nothing to fix up afterwards.
+  // Service and category are server-side for the same reason as constituency:
+  // indexed enums with no null case, so there is nothing to fix up afterwards.
   const { data, isLoading } = useMembers({
     search: search.trim().length >= 2 ? search.trim() : undefined,
     status: status || undefined,
     constituency: constituency && constituency !== '__none__' ? constituency : undefined,
     service: service || undefined,
+    type: type || undefined,
   })
 
   // Every filter, so the empty state can tell "nothing matches" from "nobody is
   // registered". Listing them individually is how `constituency` came to be
   // left out of that test, which offered "Register a member" to an admin whose
   // only problem was a filter set to a constituency nobody is in yet.
-  const filtered = Boolean(search || status || enrolment || constituency || service || benmp)
+  const filtered = Boolean(
+    search || status || enrolment || constituency || service || benmp || type,
+  )
 
   const rows = useMemo(() => {
     let list = data?.ok ? data.members : []
@@ -74,6 +106,67 @@ export default function MembersPage() {
 
   const isAdmin = user?.label === 'admin'
 
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const allVisibleSelected = rows.length > 0 && rows.every((m) => selected.has(m.$id))
+  const toggleAll = () =>
+    setSelected(allVisibleSelected ? new Set() : new Set(rows.map((m) => m.$id)))
+
+  const leaveBulk = () => {
+    setBulk(false)
+    setSelected(new Set())
+  }
+
+  const applyType = async (target: MemberType) => {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    setError(null)
+    setNotice(null)
+    const ok = await dialog.confirm({
+      title: `Mark ${ids.length} member${ids.length === 1 ? '' : 's'} as ${MEMBER_TYPE_LABEL[target]}?`,
+      message:
+        target === 'child'
+          ? 'A Save Church child is marked at Save Church when they touch the scanner during First or Second Service, and is never sent an SMS. Anyone without a call number can still be moved here.'
+          : target === 'student'
+            ? 'Their programme and level can be filled in afterwards on the Students page. Anyone with no call number will be skipped and named.'
+            : 'Any programme, level or guardian on these members is cleared. Anyone with no call number will be skipped and named.',
+      confirmText: 'Apply',
+    })
+    if (!ok) return
+    try {
+      const res = await bulkType.mutateAsync({ member_ids: ids, member_type: target })
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      setNotice(
+        <>
+          <p>
+            {res.updated} moved to {MEMBER_TYPE_LABEL[target]}
+            {res.unchanged > 0 && `, ${res.unchanged} already were`}.
+          </p>
+          {res.failed.length > 0 && (
+            <ul className="mt-1 list-disc pl-5">
+              {res.failed.map((f) => (
+                <li key={f.member_id}>
+                  <span className="font-medium">{f.name}</span> — {f.error}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>,
+      )
+      setSelected(new Set())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change categories.')
+    }
+  }
+
   return (
     <PageWrap>
       <PageHeader
@@ -81,9 +174,20 @@ export default function MembersPage() {
         subtitle="Everyone registered with the church."
         actions={
           isAdmin && (
-            <Button color="primary" href="/members/new">
-              Register a member
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {bulk ? (
+                <Button outline onClick={leaveBulk}>
+                  Done
+                </Button>
+              ) : (
+                <Button outline onClick={() => setBulk(true)}>
+                  Change categories
+                </Button>
+              )}
+              <Button color="primary" href="/members/new">
+                Register a member
+              </Button>
+            </div>
           )
         }
       />
@@ -91,10 +195,12 @@ export default function MembersPage() {
       <Card className="mb-6" padded={false}>
         {/* `grid-cols-1`, not a bare `grid`: an implicit column takes a floor
             from its widest item and refuses to shrink below it, which is what
-            put /sms into a horizontal scroll on a phone. Six controls at
-            three across, so both rows are full. */}
-        <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+            put /sms into a horizontal scroll on a phone. Seven controls at
+            four across with the search taking two cells, so both rows are
+            full. */}
+        <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Input
+            className="lg:col-span-2"
             placeholder="Search by name or member no…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -103,6 +209,14 @@ export default function MembersPage() {
             <option value="">All statuses</option>
             <option value="active">Active only</option>
             <option value="inactive">Inactive only</option>
+          </Select>
+          <Select value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="">Any category</option>
+            {MEMBER_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {MEMBER_TYPE_LABEL[t]}
+              </option>
+            ))}
           </Select>
           <Select value={enrolment} onChange={(e) => setEnrolment(e.target.value)}>
             <option value="">Any enrolment</option>
@@ -134,6 +248,55 @@ export default function MembersPage() {
         </div>
       </Card>
 
+      {notice && (
+        <Banner tone="success" className="mb-4" onDismiss={() => setNotice(null)}>
+          {notice}
+        </Banner>
+      )}
+      {error && (
+        <Banner tone="error" className="mb-4" onDismiss={() => setError(null)}>
+          {error}
+        </Banner>
+      )}
+
+      {bulk && isAdmin && (
+        <Card className="mb-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-sm text-neutral-700 dark:text-neutral-300">
+              <span className="font-semibold tabular-nums">{selected.size}</span> selected
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                color="primary"
+                disabled={selected.size === 0 || bulkType.isPending}
+                onClick={() => applyType('child')}
+              >
+                Move to Save Church
+              </Button>
+              <Button
+                outline
+                disabled={selected.size === 0 || bulkType.isPending}
+                onClick={() => applyType('student')}
+              >
+                Mark as student
+              </Button>
+              <Button
+                outline
+                disabled={selected.size === 0 || bulkType.isPending}
+                onClick={() => applyType('adult')}
+              >
+                Mark as adult
+              </Button>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+            Tick members below. The category decides whether the scanner sends somebody to Save
+            Church and whether the church texts them, so a refused move is named rather than
+            skipped quietly.
+          </p>
+        </Card>
+      )}
+
       {isLoading ? (
         <Card padded={false}>
           <LoadingRow label="Loading members…" />
@@ -163,8 +326,19 @@ export default function MembersPage() {
           <Table dense grid striped>
             <TableHead>
               <TableRow>
+                {bulk && (
+                  <TableHeader>
+                    <Checkbox
+                      checked={allVisibleSelected}
+                      onChange={toggleAll}
+                      color="amber"
+                      aria-label="Select every member shown"
+                    />
+                  </TableHeader>
+                )}
                 <TableHeader>Member no.</TableHeader>
                 <TableHeader>Name</TableHeader>
+                <TableHeader>Category</TableHeader>
                 <TableHeader>Call number</TableHeader>
                 <TableHeader>Birthday</TableHeader>
                 <TableHeader>Fingerprints</TableHeader>
@@ -175,7 +349,17 @@ export default function MembersPage() {
               {rows.map((m) => {
                 const photo = memberPhotoUrl(m.photo_file_id, 64)
                 return (
-                  <TableRow key={m.$id} href={`/members/${m.$id}`}>
+                  <TableRow key={m.$id} href={bulk ? undefined : `/members/${m.$id}`}>
+                    {bulk && (
+                      <TableCell>
+                        <Checkbox
+                          checked={selected.has(m.$id)}
+                          onChange={() => toggle(m.$id)}
+                          color="amber"
+                          aria-label={`Select ${fullName(m)}`}
+                        />
+                      </TableCell>
+                    )}
                     {/* First column, and `whitespace-nowrap`: this is the
                         number read down a phone and written on paper, so it
                         must never wrap mid-number. `tabular-nums` keeps the
@@ -201,7 +385,12 @@ export default function MembersPage() {
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className="tabular-nums">{m.call_number}</TableCell>
+                    <TableCell>
+                      <MemberTypeBadge type={m.member_type} />
+                    </TableCell>
+                    <TableCell className="tabular-nums">
+                      {m.call_number ?? <span className="text-neutral-400">—</span>}
+                    </TableCell>
                     <TableCell>
                       {birthdayLabel(m) ?? <span className="text-neutral-400">—</span>}
                     </TableCell>

@@ -15,8 +15,11 @@ type BulkDatabases = {
 }
 const bulk = (db: Databases): BulkDatabases => db as unknown as BulkDatabases
 
-/** The two seeded services. Protected from rename-away and deletion. */
-export const PROTECTED_MEETING_IDS: readonly string[] = [SERVICE_IDS.first, SERVICE_IDS.second]
+/** The three seeded services — First, Second and Save Church. Protected from
+ *  rename-away and deletion: every one is referenced by id in code, and Save
+ *  Church in particular is created as a companion on every Sunday activation,
+ *  which would 404 the moment its row was gone. */
+export const PROTECTED_MEETING_IDS: readonly string[] = Object.values(SERVICE_IDS)
 
 export function isProtected(id: string): boolean {
   return PROTECTED_MEETING_IDS.includes(id)
@@ -186,7 +189,7 @@ export async function deleteMeetingCascade(
   if (isProtected(id)) {
     return {
       ok: false,
-      error: 'The two services cannot be deleted. Archive is not available for them either.',
+      error: 'The services cannot be deleted. Archive is not available for them either.',
     }
   }
 

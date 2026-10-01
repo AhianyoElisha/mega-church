@@ -82,7 +82,11 @@ export default function ServicesPage() {
     else if (res?.ok) {
       await dialog.alert({
         title: `${name} is open`,
-        message: 'Kiosks will start accepting scans within a few seconds.',
+        message:
+          'Kiosks will start accepting scans within a few seconds.' +
+          (res.session.companion
+            ? ` ${res.session.companion.meeting.name} is open alongside it — children who scan are marked there.`
+            : ''),
       })
     }
   }
@@ -164,6 +168,7 @@ export default function ServicesPage() {
                 {session.meeting.restricted
                   ? `${session.roster_size} authorised member${session.roster_size === 1 ? '' : 's'}`
                   : 'Open to every active member'}
+                {session.companion && ` · ${session.companion.meeting.name} running alongside`}
               </p>
             </div>
             <div className="flex gap-3">
@@ -184,7 +189,7 @@ export default function ServicesPage() {
           </div>
 
           {stats.data?.ok && (
-            <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            <div className={`mt-6 grid gap-4 ${session.companion ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3'}`}>
               <StatCard label="Present" value={stats.data.stats.present} accent />
               <StatCard label="Expected" value={stats.data.stats.expected} />
               <StatCard
@@ -192,6 +197,15 @@ export default function ServicesPage() {
                 value={stats.data.stats.by_method.biometric}
                 hint={`${stats.data.stats.by_method.manual} marked manually`}
               />
+              {/* Children are marked at the companion, not here, and were
+                  never in "Expected" — so their count is its own card. */}
+              {session.companion && (
+                <StatCard
+                  label={session.companion.meeting.name}
+                  value={stats.data.stats.companion_present ?? '—'}
+                  hint="Children's service, closes with this one"
+                />
+              )}
             </div>
           )}
         </Card>
@@ -257,13 +271,46 @@ export default function ServicesPage() {
           <LoadingRow />
         </Card>
       ) : (
-        <div className="mb-10 grid gap-4 sm:grid-cols-2">
+        <div className="mb-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {services.map((m) => {
             const isOpen = session?.meeting.$id === m.$id
             // A PAUSED session does not block anything — that is the point of
             // pausing — so `disabled` deliberately looks only at the open one.
             const pausedHere = pausedFor(m.$id)
             const disabled = !!session
+            // Save Church has no Activate button at all. It opens as the
+            // COMPANION of First or Second Service and closes with it; the
+            // server refuses a direct activation with 409, and a button that
+            // only ever answers 409 is a puzzle, not a control.
+            const companionOnly = m.$id === SERVICE_IDS.save
+            const runningAlongside = companionOnly && session?.companion?.meeting.$id === m.$id
+            if (companionOnly) {
+              return (
+                <Card key={m.$id} className={runningAlongside ? 'ring-2 ring-primary-500!' : undefined}>
+                  <div className="flex h-full flex-col">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="wrap-anywhere text-lg font-semibold text-neutral-950 dark:text-white">
+                          {m.name}
+                        </h3>
+                        <p className="mt-0.5 wrap-anywhere text-sm text-neutral-500 dark:text-neutral-400">
+                          {m.description}
+                        </p>
+                      </div>
+                      {runningAlongside && <Badge color="green">Open</Badge>}
+                    </div>
+                    <p className="mb-4 text-xs text-neutral-400 dark:text-neutral-500">
+                      Children under 12. Last held {m.last_held ?? 'never'}.
+                    </p>
+                    <p className="mt-auto text-xs text-neutral-500 dark:text-neutral-400">
+                      {runningAlongside
+                        ? `Running with ${session?.meeting.name}. It ends when that session ends.`
+                        : 'Opens automatically with First or Second Service — a child who scans during either is marked here.'}
+                    </p>
+                  </div>
+                </Card>
+              )
+            }
             return (
               <Card key={m.$id} className={isOpen ? 'ring-2 ring-primary-500!' : undefined}>
                 <div className="flex h-full flex-col">

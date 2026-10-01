@@ -3,7 +3,7 @@ import { createAdminClient, requireRole } from '@/lib/appwrite/server'
 import { SMS_CATEGORIES, type SmsCategory } from '@/lib/appwrite/config'
 import { createSmsService } from '@/lib/sms/mnotify'
 import { createTemplate, listTemplates, templateNameTaken } from '@/lib/sms/server'
-import { unknownPlaceholders, PLACEHOLDERS } from '@/lib/sms/render'
+import { extrasForCategory, unknownPlaceholders, PLACEHOLDERS } from '@/lib/sms/render'
 import { canManageTemplateCategory } from '@/lib/sms/permissions'
 import type { ListTemplatesResponse, TemplateResponse } from '@/lib/sms/types'
 
@@ -103,11 +103,17 @@ export async function POST(request: NextRequest) {
   // Caught HERE rather than at send time. A template saved with `{{name}}` in
   // it looks fine in the list and then refuses on the celebrant's birthday
   // morning, which is the one moment nobody is watching the screen.
-  const unknown = unknownPlaceholders(body.body)
+  //
+  // Checked against THIS category's extras: `{{services_attended}}` is a
+  // placeholder inside a thank-you and a refusal inside anything else, because
+  // no other send knows what to put there.
+  const extras = extrasForCategory(body.category)
+  const unknown = unknownPlaceholders(body.body, extras)
   if (unknown.length > 0) {
     return bad(
-      `${unknown.map((u) => `{{${u}}}`).join(', ')} is not a placeholder the system knows. ` +
-        `Use one of: ${PLACEHOLDERS.map((p) => `{{${p}}}`).join(', ')}.`,
+      `${unknown.map((u) => `{{${u}}}`).join(', ')} is not a placeholder the system knows` +
+        `${unknown.includes('services_attended') ? ` in a ${body.category} template — it is only for attendance_thanks` : ''}. ` +
+        `Use one of: ${[...PLACEHOLDERS, ...extras].map((p) => `{{${p}}}`).join(', ')}.`,
     )
   }
 

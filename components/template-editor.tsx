@@ -15,7 +15,15 @@ import Textarea from '@/shared/Textarea'
 import { Description, Field, Label } from '@/shared/fieldset'
 import { Badge } from '@/shared/Badge'
 import { Banner } from '@/components/ui'
-import { PLACEHOLDERS, PLACEHOLDER_HINT, countParts, render } from '@/lib/sms/render'
+import {
+  PLACEHOLDERS,
+  PLACEHOLDER_HINT,
+  countParts,
+  extrasForCategory,
+  render,
+  sampleExtras,
+  type ExtraPlaceholder,
+} from '@/lib/sms/render'
 import type { SmsCategory } from '@/lib/appwrite/config'
 import type { SmsTemplate } from '@/lib/sms/types'
 import { MEMBER_TITLES, TITLES } from '@/lib/members/titles'
@@ -76,9 +84,18 @@ export default function TemplateEditor({
   const [isDefault, setIsDefault] = useState(existing?.is_default ?? false)
   const [error, setError] = useState<string | null>(null)
 
-  const preview = useMemo(() => render(body, SAMPLE), [body])
+  /**
+   * The extras THIS category may use — `{{services_attended}}` in a thank-you,
+   * nothing anywhere else. Previewed with the longest wording so the price on
+   * screen is the worst case, and offered as a chip only here, so an author of
+   * a birthday message is never shown a token the server will refuse.
+   */
+  const extras = useMemo(() => sampleExtras(category), [category])
+  const extraChips = extrasForCategory(category) as readonly ExtraPlaceholder[]
+
+  const preview = useMemo(() => render(body, SAMPLE, extras), [body, extras])
   // Priced against the longest title, not the previewed one — see WORST_CASE.
-  const worst = useMemo(() => render(body, WORST_CASE), [body])
+  const worst = useMemo(() => render(body, WORST_CASE, extras), [body, extras])
   const parts = useMemo(
     () => countParts(worst.ok ? worst.text : preview.ok ? preview.text : body),
     [worst, preview, body],
@@ -127,7 +144,7 @@ export default function TemplateEditor({
         />
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-neutral-500 dark:text-neutral-400">Insert:</span>
-          {PLACEHOLDERS.map((p) => (
+          {[...PLACEHOLDERS, ...extraChips].map((p) => (
             <button
               key={p}
               type="button"
@@ -139,6 +156,13 @@ export default function TemplateEditor({
             </button>
           ))}
         </div>
+        {extraChips.length > 0 && (
+          <Description>
+            <code>{'{{services_attended}}'}</code> becomes &ldquo;First Service&rdquo;,
+            &ldquo;Second Service&rdquo; or &ldquo;both First and Second Service&rdquo; for each
+            member, from the day&rsquo;s attendance. It only exists in thank-you messages.
+          </Description>
+        )}
       </Field>
 
       {/* The preview and the cost, together. Separating them lets somebody

@@ -15,6 +15,13 @@ import { useSmsTemplates } from '@/lib/queries/sms'
 import { buildBasontaTree } from '@/lib/groups/tree'
 import type { Member, MemberInput } from '@/lib/members/types'
 import { MEMBER_TITLES, TITLES, isMemberTitle } from '@/lib/members/titles'
+import {
+  MEMBER_TYPES,
+  MEMBER_TYPE_LABEL,
+  type HomeService,
+  type MemberType,
+} from '@/lib/appwrite/config'
+import { levelOptions } from '@/lib/members/students'
 
 /**
  * The form a constituency HEAD fills in, expressed as what they are NOT asked.
@@ -104,7 +111,11 @@ export default function MemberForm({
   const [address, setAddress] = useState(initial?.address ?? '')
   const [call, setCall] = useState(initial?.call_number ?? '')
   const [whatsapp, setWhatsapp] = useState(initial?.whatsapp_number ?? '')
-  const [homeService, setHomeService] = useState(initial?.home_service ?? 'second')
+  const [homeService, setHomeService] = useState<HomeService>(initial?.home_service ?? 'second')
+  const [memberType, setMemberType] = useState<MemberType>(initial?.member_type ?? 'adult')
+  const [programme, setProgramme] = useState(initial?.programme ?? '')
+  const [level, setLevel] = useState(initial?.level ? String(initial.level) : '')
+  const [guardian, setGuardian] = useState(initial?.guardian_name ?? '')
   const [status, setStatus] = useState(initial?.status ?? 'active')
   const [constituency, setConstituency] = useState(
     restrict?.constituency.id ?? initial?.constituency_id ?? '',
@@ -127,6 +138,20 @@ export default function MemberForm({
    * three formerly admin-only controls appear.
    */
   const elevated = !!restrict?.elevated
+  /**
+   * May this form SET the category?
+   *
+   * An admin always; an elevated head (runs the member's constituency) on an
+   * edit; and ANY head on a REGISTRATION — `POST /api/members` accepts it from
+   * them, because the person in front of the desk is a child or a student or
+   * neither, and that is a thing the desk knows. On an edit by a non-elevated
+   * head the control is withheld AND the key is not sent, for the same reason
+   * `status` is: `headEditScope` refuses its presence by name, so posting it
+   * unchanged would 403 an edit that only touched a phone number.
+   */
+  const canSetType = !restricted || elevated || !initial
+  const isChild = memberType === 'child'
+  const isStudent = memberType === 'student'
   const constituencyQuery = useConstituencies({ enabled: !restricted })
   // Both of these now serve a leader too — `/api/sms/templates` GET and
   // `/api/bacentas` GET admit one, the latter narrowed server-side to the
@@ -214,8 +239,11 @@ export default function MemberForm({
       setLocalError('First and last name are both required.')
       return
     }
-    if (!call.trim()) {
-      setLocalError('A call number is required.')
+    // A child is never texted, so their row needs no number of its own — the
+    // one on it is a parent's, and a registration with a name alone is real.
+    // The server applies the same rule from the RESULTING type.
+    if (!isChild && !call.trim()) {
+      setLocalError('A call number is required for an adult or a student.')
       return
     }
     // Half a birthday is not useful and would render as a broken date.
@@ -231,9 +259,17 @@ export default function MemberForm({
       birth_month: month ? Number(month) : null,
       birth_day: day ? Number(day) : null,
       address: address.trim() || null,
-      call_number: call.trim(),
+      call_number: call.trim() || null,
       whatsapp_number: whatsapp.trim() || null,
       home_service: homeService,
+      // The category-specific fields are sent as `null` when the category does
+      // not carry them, never omitted: `null` is always accepted (clearing is
+      // fine on anyone), and it means the form never leaves a level behind on
+      // somebody who has just stopped being a student.
+      programme: isStudent ? programme.trim() || null : null,
+      level: isStudent && level ? Number(level) : null,
+      guardian_name: isChild ? guardian.trim() || null : null,
+      ...(canSetType ? { member_type: memberType } : {}),
       // '' is the "—" option, which means "not recorded", not a group id.
       constituency_id: constituency || null,
       // Always sent, including as `[]`. The route treats an absent key as
@@ -296,16 +332,27 @@ export default function MemberForm({
           <Legend>Contact</Legend>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>
-              <Label>Call number</Label>
+              <Label>{isChild ? 'Parent or guardian’s number' : 'Call number'}</Label>
               <Input
                 type="tel"
                 value={call}
                 onChange={(e) => setCall(e.target.value)}
                 placeholder="024 123 4567"
-                required
+                required={!isChild}
               />
-              <Description>Required. Stored as +233… so lookups work either way.</Description>
+              <Description>
+                {isChild
+                  ? 'Optional. A child is never texted; this is only how to reach whoever brings them.'
+                  : 'Required. Stored as +233… so lookups work either way.'}
+              </Description>
             </Field>
+            {isChild && (
+              <Field>
+                <Label>Parent or guardian’s name</Label>
+                <Input value={guardian} onChange={(e) => setGuardian(e.target.value)} />
+                <Description>Who the number above reaches.</Description>
+              </Field>
+            )}
             <Field>
               <Label>WhatsApp number</Label>
               <Input
@@ -369,21 +416,45 @@ export default function MemberForm({
         <FieldGroup>
           <Legend>Membership</Legend>
           <div className="grid gap-4 sm:grid-cols-2">
+            {canSetType && (
+              <Field>
+                <Label>Category</Label>
+                <Select
+                  value={memberType}
+                  onChange={(e) => setMemberType(e.target.value as MemberType)}
+                >
+                  {MEMBER_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {MEMBER_TYPE_LABEL[t]}
+                    </option>
+                  ))}
+                </Select>
+                <Description>
+                  A Save Church child is marked at Save Church when they touch the scanner
+                  during a service, and is never texted. A student carries a programme and
+                  level and can be messaged as a group.
+                </Description>
+              </Field>
+            )}
             <Field>
-              <Label>Usual service</Label>
+              <Label>{isChild ? 'Parents’ service' : 'Usual service'}</Label>
               <Select
                 value={homeService}
-                onChange={(e) => setHomeService(e.target.value as 'first' | 'second')}
+                onChange={(e) => setHomeService(e.target.value as HomeService)}
               >
                 <option value="first">First Service (Psalms Chapel)</option>
                 <option value="second">Second Service</option>
               </Select>
               <Description>
-                For your records only. Attendance is never restricted by this — anyone may be
-                marked present at either service.
+                {isChild
+                  ? 'The service their Save Church session runs beside.'
+                  : 'For your records only. Attendance is never restricted by this — anyone may be marked present at either service.'}
               </Description>
             </Field>
-            {(!restricted || elevated) && (
+            {/* A title on a child addresses a Save Church SMS that is never
+                sent; hidden rather than disabled, because an empty select is
+                a question and a hidden one is not. */}
+            {(!restricted || elevated) && !isChild && (
               <Field>
                 <Label>How they are addressed</Label>
                 <Select value={title} onChange={(e) => setTitle(e.target.value)}>
@@ -449,6 +520,37 @@ export default function MemberForm({
             </Description>
           </CheckboxField>
         </FieldGroup>
+
+        {isStudent && (
+          <FieldGroup>
+            <Legend>University</Legend>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <Label>Programme</Label>
+                <Input
+                  value={programme}
+                  onChange={(e) => setProgramme(e.target.value)}
+                  placeholder="BSc Computer Science"
+                />
+              </Field>
+              <Field>
+                <Label>Level</Label>
+                <Select value={level} onChange={(e) => setLevel(e.target.value)}>
+                  <option value="">— not yet known —</option>
+                  {levelOptions().map((l) => (
+                    <option key={l} value={l}>
+                      Level {l}
+                    </option>
+                  ))}
+                </Select>
+                <Description>
+                  Setting a level counts as confirming it for this academic year. The students
+                  page rolls everyone over once a year.
+                </Description>
+              </Field>
+            </div>
+          </FieldGroup>
+        )}
 
         <FieldGroup>
           <Legend>Constituency</Legend>
@@ -543,7 +645,9 @@ export default function MemberForm({
           )}
         </FieldGroup>
 
-        {(!restricted || elevated) && (
+        {/* Not for a child: no birthday text is ever sent to one, so a choice
+            of wording would be a choice that changes nothing. */}
+        {(!restricted || elevated) && !isChild && (
           <FieldGroup>
             <Legend>Birthday message</Legend>
             <Field>

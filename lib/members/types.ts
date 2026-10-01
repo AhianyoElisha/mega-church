@@ -1,7 +1,7 @@
 // Member registry contracts. Pure types — no Appwrite imports, so this module
 // is safe to pull into a browser bundle.
 
-import type { ServiceSlot } from '@/lib/appwrite/config'
+import type { HomeService, MemberType } from '@/lib/appwrite/config'
 import type { MemberTitle } from './titles'
 
 export type MemberStatus = 'active' | 'inactive'
@@ -37,16 +37,44 @@ export type Member = {
   /** 1-31. */
   birth_day: number | null
   address: string | null
-  /** Required. The number you ring. */
-  call_number: string
+  /**
+   * The number you ring. Required for an adult or a student; OPTIONAL for a
+   * child, where it is the parent or guardian's number. A child is never
+   * texted, so this is only ever a contact for a person — there is no separate
+   * guardian phone field to disagree with it.
+   */
+  call_number: string | null
   /**
    * Optional. Very often the same digits as `call_number`, but stored
    * independently because some members keep the two separate — collapsing them
    * into one field loses that and cannot be recovered.
    */
   whatsapp_number: string | null
-  /** Descriptive only. NEVER gates attendance (PRD §2.1). */
-  home_service: ServiceSlot
+  /**
+   * Descriptive only. NEVER gates attendance (PRD §2.1). Always `first` or
+   * `second`, even for a child — for whom it means "the parents' service", the
+   * one their Save Church session runs beside.
+   */
+  home_service: HomeService
+  /**
+   * adult | student | child. Absent on every row written before the field
+   * existed and read as `adult` — see `MEMBER_TYPES` in config. `child` is
+   * what the kiosk redirects to Save Church and what SMS never reaches.
+   */
+  member_type: MemberType
+  /** Students only. What they read. */
+  programme: string | null
+  /** Students only. 100, 200 … 800. */
+  level: number | null
+  /**
+   * Students only. The ACADEMIC YEAR in which `level` was last confirmed.
+   * The rollover works by comparing this with today's academic year: older
+   * means due for an update. Nothing is edited on a schedule — the fact that
+   * somebody confirmed this year is stored, and "due" is derived.
+   */
+  level_year: number | null
+  /** Children only. Who the `call_number` reaches. */
+  guardian_name: string | null
   /**
    * Where this member LIVES — exactly one, so it is a field rather than a join
    * (PRD §1.7). Null for anyone registered before the constituencies existed;
@@ -127,9 +155,18 @@ export type MemberInput = {
   birth_month?: number | null
   birth_day?: number | null
   address?: string | null
-  call_number: string
+  /** Required for adult and student; optional (or null) for a child. */
+  call_number?: string | null
   whatsapp_number?: string | null
-  home_service?: ServiceSlot
+  home_service?: HomeService
+  /** Defaults to `adult` on create. Constituency-head tier on edit. */
+  member_type?: MemberType
+  /** Students only; refused by name on anyone else. `null` clears. */
+  programme?: string | null
+  level?: number | null
+  level_year?: number | null
+  /** Children only; refused by name on anyone else. `null` clears. */
+  guardian_name?: string | null
   constituency_id?: string | null
   /**
    * The basontas this member serves in. Many-to-many, so it is NOT a column on

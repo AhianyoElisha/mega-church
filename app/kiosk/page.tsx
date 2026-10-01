@@ -824,13 +824,19 @@ function MemberBlock({
   name: string
 }) {
   const photo = memberPhotoUrl(photoFileId, 320)
+  // A photo that fails to load (deleted file, session gone) swaps to the
+  // "No photo" box rather than the alt text in a border — the usher must not
+  // see a name where a face should be and read it as a match. Keyed on the
+  // URL, so the next member's photo is tried afresh.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
   return (
     <>
-      {photo ? (
+      {photo && failedUrl !== photo ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={photo}
           alt={name}
+          onError={() => setFailedUrl(photo)}
           // The photo, not the name, is what an usher actually checks a face
           // against — so it gets the space. See the note on `kiosk-name`.
           className="mx-auto mb-4 size-48 rounded-2xl border-2 border-white/15 object-cover"
@@ -856,14 +862,34 @@ function ResultPanel({ result, onNext }: { result: ScanResult; onNext: () => voi
     </button>
   )
 
+  // A child during an adult service is marked at Save Church, not at the
+  // service on the header pill. The card SAYS so — in the label and in a badge
+  // line, not just by colour (PRD §2.4) — because a child told "marked
+  // present" under a "First Service" pill has been told something untrue, and
+  // the usher checking the monitor would not find them there.
+  const landed =
+    result.kind === 'marked' || result.kind === 'already_marked'
+      ? { redirected: result.redirected, name: result.meeting_name }
+      : { redirected: false, name: '' }
+  const redirected = landed.redirected
+  const badge = redirected ? (
+    <p className="mt-3 inline-block rounded-full bg-primary-500 px-3 py-1 text-sm font-semibold text-neutral-950">
+      {landed.name} · children&apos;s service
+    </p>
+  ) : null
+
   if (result.kind === 'marked') {
     return (
       <div className="flex w-full max-w-2xl flex-col items-center">
-        <ResultCard tone="success" label="✓ Marked present">
+        <ResultCard
+          tone="success"
+          label={redirected ? `✓ Marked present — ${result.meeting_name}` : '✓ Marked present'}
+        >
           <MemberBlock photoFileId={result.member.photo_file_id} name={result.member.full_name} />
+          {badge}
           {result.sequence > 0 && (
             <p className="mt-3 text-sm text-white/60">
-              Number {result.sequence} in today&apos;s session
+              Number {result.sequence} at {result.meeting_name} today
             </p>
           )}
         </ResultCard>
@@ -875,8 +901,14 @@ function ResultPanel({ result, onNext }: { result: ScanResult; onNext: () => voi
   if (result.kind === 'already_marked') {
     return (
       <div className="flex w-full max-w-2xl flex-col items-center">
-        <ResultCard tone="warning" label="✓ Already marked present">
+        <ResultCard
+          tone="warning"
+          label={
+            redirected ? `✓ Already marked at ${result.meeting_name}` : '✓ Already marked present'
+          }
+        >
           <MemberBlock photoFileId={result.member.photo_file_id} name={result.member.full_name} />
+          {badge}
           <p className="mt-3 text-sm text-white/70">
             Your attendance was already recorded — nothing new was saved.
           </p>
@@ -958,6 +990,14 @@ function ConfirmPanel({
         Confirm identity
       </p>
       <MemberBlock photoFileId={result.member.photo_file_id} name={result.member.full_name} />
+      {result.redirected && (
+        // The dry run already knows where the mark will land. Saying so here
+        // lets the usher catch a grown-up filed as a child BEFORE the row is
+        // written, rather than after the card says "Save Church".
+        <p className="mt-3 inline-block rounded-full bg-primary-500 px-3 py-1 text-sm font-semibold text-neutral-950">
+          Will be marked at {result.meeting_name} · children&apos;s service
+        </p>
+      )}
       <p className="mt-5 mb-6 rounded-xl bg-white/5 px-4 py-3 text-base text-white/70">
         Check the photo and name against the person in front of you before confirming.
       </p>

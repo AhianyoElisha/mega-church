@@ -33,7 +33,7 @@ export default function NewMemberPage() {
       <PageHeader
         back={{ href: '/members', label: 'Members' }}
         title="Register a member"
-        subtitle="Name and call number are required. The photo and fingerprints come next."
+        subtitle="Name and call number are required — a Save Church child needs only a name. The photo and fingerprints come next."
       />
       <Card>
         <MemberForm

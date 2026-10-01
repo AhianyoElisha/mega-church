@@ -24,7 +24,7 @@ import { Card } from '@/components/ui'
 import { todayInAccra } from '@/lib/attendance/occurrenceResolver'
 import { useConstituencies } from '@/lib/queries/groups'
 
-type Scope = 'first' | 'second' | 'absent' | 'all'
+type Scope = 'first' | 'second' | 'save' | 'absent' | 'all'
 
 /** Sentinel for "one workbook, every constituency, tabs per group". Not a real
  *  id, and never sent as `constituency_id` — it switches the request to
@@ -43,14 +43,19 @@ const SCOPES: { scope: Scope; label: string; hint: string; primary?: boolean }[]
     hint: 'Everyone marked present at Second Service.',
   },
   {
+    scope: 'save',
+    label: 'Save Church',
+    hint: "Children marked at the children's service, with a parent or guardian's number.",
+  },
+  {
     scope: 'absent',
     label: 'Absent',
-    hint: 'Active members who were at neither service — the call list.',
+    hint: 'Active members who were at no service — the call list. Children count as absent only from Save Church.',
   },
   {
     scope: 'all',
-    label: 'All three, one workbook',
-    hint: 'One file with three tabs — First Service, Second Service, Absent.',
+    label: 'All four, one workbook',
+    hint: 'One file with four tabs — First Service, Second Service, Save Church, Absent.',
     primary: true,
   },
 ]

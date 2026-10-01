@@ -138,7 +138,7 @@ export default function HeadMemberClaim({
                   {fullName(m)}
                 </span>
                 <span className="block truncate text-xs text-neutral-500 dark:text-neutral-400">
-                  {m.call_number}
+                  {m.call_number ?? '—'}
                   {birthdayLabel(m) && ` · ${birthdayLabel(m)}`}
                 </span>
               </span>

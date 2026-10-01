@@ -16,7 +16,23 @@ import type { UserLabel } from '@/lib/auth/types'
  * is refusal, and a new thing does not have to be remembered.
  */
 const SENDABLE: Partial<Record<UserLabel, readonly SmsCategory[]>> = {
-  admin: ['birthday', 'tithe', 'general', 'benmp'],
+  /**
+   * The three scheduled service texts are an ADMIN's by hand and nobody
+   * else's. They go out from crons; the manual grant exists because a cron
+   * that did not fire at 18:00 on Saturday is a real Saturday, and the person
+   * who notices needs a button. A treasurer's remit is money and a leader's is
+   * their own partners — neither is "text the whole congregation about
+   * Sunday", which is what these three are.
+   */
+  admin: [
+    'birthday',
+    'tithe',
+    'general',
+    'benmp',
+    'sunday_reminder',
+    'midweek_reminder',
+    'attendance_thanks',
+  ],
   /**
    * The treasurer's whole job, and their whole reach.
    *

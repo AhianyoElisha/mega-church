@@ -71,6 +71,19 @@ export type MeetingOccurrence = {
   closed_by: string | null
   /** Denormalised tally, written when the occurrence is closed. */
   present_count: number
+  /**
+   * Set ⇒ this is a COMPANION: the Save Church occurrence opened alongside an
+   * adult service. A companion never holds the scanner, so every liveness
+   * check (`resolveOpenOccurrence`, the paused list, `canActivate`) ignores
+   * it; it is opened by its parent's activation and closed by its parent's
+   * close. Null for every ordinary occurrence. PRD §1.5.
+   */
+  parent_occurrence_id: string | null
+}
+
+/** A companion occurrence — see `parent_occurrence_id`. */
+export function isCompanion(o: Pick<MeetingOccurrence, 'parent_occurrence_id'>): boolean {
+  return o.parent_occurrence_id !== null
 }
 
 /** An occurrence plus the meeting it belongs to — what the kiosk and monitor
@@ -80,6 +93,14 @@ export type ActiveSession = {
   meeting: Meeting
   /** Size of the authorised roster. 0 and `restricted: false` = open to all. */
   roster_size: number
+  /**
+   * The Save Church occurrence running alongside this one, when this is an
+   * adult service. Null for a meeting, for Save Church itself, and for a
+   * service opened before companions existed (the redirect creates one on
+   * demand — see `ensureCompanion`). Carried here so the kiosk, the Services
+   * page and the monitor learn about it from the poll they already make.
+   */
+  companion: { occurrence: MeetingOccurrence; meeting: Meeting } | null
 }
 
 export type MeetingInput = {

@@ -3,7 +3,8 @@
 # CLAUDE.md
 
 **The Mega Church Biometric Attendance System** — fingerprint attendance for a
-church running two Sunday services plus an open-ended set of smaller meetings.
+church running two Sunday services, a children's service (Save Church) beside them,
+and an open-ended set of smaller meetings.
 
 `PRD.md` is the source of truth for data shapes, collection schema, the session
 lifecycle, and every module's scope. Read it before writing code.
@@ -266,6 +267,26 @@ large type; body text is black. Never yellow text on white below 18pt.
   leadDays)` with lead 1 and 0, so the 29 February observance and the
   December→January wrap cannot drift apart between them. Neither substitutes
   for the other; point the scheduler at both.
+- **A Save Church child is NEVER texted, and the guarantee is at the
+  chokepoint.** `sendToMembers` drops `member_type === 'child'` targets before
+  claiming and reports them as `excluded_children`; every route ALSO filters
+  earlier so the screen can say how many and why. The number on a child's row
+  is a parent's, and a birthday text or a service reminder addressed to the
+  child is wrong at that number. The birthday PUSH to the team still names
+  them — a flyer for a child is fine. Never add a child-reaching category.
+- **`{{services_attended}}` is valid in `attendance_thanks` and nowhere
+  else.** `render()` takes per-render `extras`; `unknownPlaceholders(body,
+  extrasForCategory(category))` refuses the token by name in any other
+  category. It is only ever rendered for somebody who was there, so the empty
+  case cannot be expressed — the same discipline as the composed title forms.
+- **The three service texts are RECORDS, not claims, like `birthday-sms`.**
+  Idempotent per MEMBER on `dedupe_key`, so a run that dies at member forty can
+  be re-run for the rest. A per-day claim would either forbid the retry or
+  license a second text to the first forty.
+- **A manual broadcast's `audience` narrows on the SERVER and reports the
+  drop.** `narrowAudience()` is pure and children are excluded whatever the
+  audience says. The picker offers the same three so nobody selects a doomed
+  name; the route is the enforcement.
 - **An SMS is CLAIMED by an INSERT, not by a check** — same rule as
   `notification_runs`. The unique index on `sms_messages.dedupe_key` is what
   stops a retried cron texting a member twice on their birthday. Automatic
@@ -420,6 +441,12 @@ large type; body text is black. Never yellow text on white below 18pt.
   `vercel-cron/1.0`, method GET — not the way it is convenient to call by
   hand. Never add `dynamic = 'force-static'` to these: a cached 200 would
   report success forever while sending nothing.
+- **There are FIVE crons now, and Vercel's Hobby plan runs two.** Birthday
+  push 06:00, birthday SMS 06:00, Sunday reminder Sat 18:00, midweek reminder
+  Wed 08:00, thanks Sun 14:00 — all in `vercel.json`, all UTC = Accra. On
+  Hobby the last three silently never fire; the project needs Pro or an
+  external scheduler calling each route with the bearer token. Check the plan
+  before assuming a quiet Saturday means nobody needed reminding.
 - **`/api/notifications/*` is exempt from the proxy's session gate** because a
   cron has no cookie jar. It is not unauthenticated — the route requires a
   constant-time-compared bearer token or an admin session. Gating it in
@@ -461,7 +488,42 @@ large type; body text is black. Never yellow text on white below 18pt.
   still in the middle of.
 - **Attendance is never gated by `home_service`.** Any active member may be
   marked at either service. Only `restricted` meetings gate, and only via
-  `meeting_members`.
+  `meeting_members`. **`member_type === 'child'` is the one thing that
+  REDIRECTS a mark, and it is a separate field for exactly that reason** — a
+  child keeps a `home_service` (the parents' service), and widening that enum
+  with `save` would have made a descriptive field into a gate.
+- **Save Church is a COMPANION occurrence, never the open session.**
+  `meeting_occurrences.parent_occurrence_id` set ⇒ companion. Activating First
+  or Second creates one; closing the parent closes it; `resolveOpenOccurrence`,
+  the paused list and `canActivate` all IGNORE rows with it set, so the
+  single-open rule is untouched. Never make `save-church` activatable on its
+  own — it would then hold the scanner, and a child's scan during First Service
+  would be a 409 instead of a mark. PRD §1.5, §2.11.
+- **The redirect is decided in `attendanceTarget()`, pure, and applied in
+  `resolveAndRecord`.** Companion iff `member_type === 'child'` AND the open
+  meeting is a `first`/`second` service. `existingRecord`, the insert and
+  `countRecords` all run against the TARGET; the matcher's `already_marked`
+  hint stays parent-only because it is a hint. A child at a restricted meeting
+  is judged by the roster like anybody else. The result carries `redirected`
+  and `meeting_name` so the kiosk says "Marked present — Save Church" rather
+  than the name of a service the child is not at.
+- **Absent `member_type` reads as `adult`, always.** Every row written before
+  the field existed was an adult in every way the system cared about, and the
+  other reading either stops texting somebody or sends them to the children's
+  service. `scripts/backfill-member-type.ts` writes it so server-side filters
+  see every row; `isMemberType` narrows rather than casts.
+- **`call_number` is required by TYPE, not by the schema.** A child needs a
+  name and nothing else, so the attribute is optional and `validateMemberInput`
+  demands a number for an adult or a student from the member's RESULTING type.
+  `ensureOptional` in the setup script is the explicit relax step —
+  `ensureStringAttribute` never touches `required` on an existing attribute,
+  and a re-run must not quietly tighten it back.
+- **A student's level is CONFIRMED, never incremented on a schedule.**
+  `level_year` records the academic year the level was last confirmed in; "due"
+  is derived by comparing it with `academicYear(today)`
+  (`ACADEMIC_YEAR_START_MONTH`, August). Promote / Repeat / Graduate each stamp
+  it. Repeat exists so the student who repeated is one button and not an
+  exception somebody has to remember to skip in a bulk edit.
 - **An unauthorised member must still be identified.** `not_authorised` names
   them; `no_match` does not. Never collapse the two — see PRD §2.3.
 - **`null` from `BiometricService.match()` means exactly one thing:** the
@@ -523,6 +585,20 @@ large type; body text is black. Never yellow text on white below 18pt.
   same file, so they cannot drift into disagreeing about scores. A rebuild that
   forgot the copy would leave the deployed matcher stale, and the symptom is
   nothing at all: the old build works, just slowly.
+- **Photos are served by `/api/photos/[fileId]`, never by a Storage URL.**
+  The browser holds NO Appwrite session — login stores it as an httpOnly
+  cookie on the app's domain — and the bucket grants read to `Role.users()`
+  only, so a direct `getFilePreview` URL is a 401 and every `<img>` showed its
+  `alt` for months. The route streams through the admin client, any signed-in
+  label may read (the kiosk must), and the response is `immutable` because a
+  new upload is a new file id. Uploads are normalised with `sharp` to 800×800
+  JPEG. Never "fix" this by making the bucket public: a face photo with a
+  guessable URL is not the same thing as a photo behind a login.
+- **Every photo goes through the CROP step, from either door.** The file input
+  and the camera's "Use this photo" both hand a raw file to
+  `components/photo-cropper.tsx`, whose Save is the only thing that calls the
+  upload mutation. A photo that skipped the crop is a face in a corner of the
+  kiosk card.
 - **A member photo can be TAKEN as well as uploaded, and upload never goes
   away.** `navigator.mediaDevices` is undefined outside a secure context, which
   is exactly how a kiosk PC on a church LAN is reached over plain http — so

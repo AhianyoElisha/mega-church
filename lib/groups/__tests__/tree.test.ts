@@ -594,6 +594,55 @@ describe('headEditScope', () => {
  * between a head and an irreversible write, which is exactly why it is pure and
  * tested here rather than only reachable through a live route.
  */
+describe('headEditScope — member_type is constituency-tier', () => {
+  const heads = { constituencies: ['c1'], bacentas: ['p1'], basontas: ['b1'] }
+
+  it('lets the head of the member’s OWN constituency set it', () => {
+    const out = headEditScope(
+      { fields: { member_type: 'student' }, basonta_ids: undefined },
+      { constituency_id: 'c1', bacenta_id: null, basonta_ids: [] },
+      heads,
+    )
+    expect(out).toEqual({ ok: true, fields: { member_type: 'student' }, basonta_ids: undefined })
+  })
+
+  it('refuses it BY NAME to a bacenta head who reaches the same member', () => {
+    // In scope for a phone number (they head p1) and still refused this one:
+    // the tier is per FIELD. Silently dropping it would return 200 and leave
+    // the head believing the child was moved to Save Church.
+    const out = headEditScope(
+      { fields: { member_type: 'child' }, basonta_ids: undefined },
+      { constituency_id: 'somewhere-else', bacenta_id: 'p1', basonta_ids: [] },
+      heads,
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+    if (out.ok) throw new Error('expected a refusal')
+    expect(out.error).toMatch(/student|Save Church/i)
+  })
+
+  it('refuses it to a basonta head', () => {
+    const out = headEditScope(
+      { fields: { member_type: 'adult' }, basonta_ids: undefined },
+      { constituency_id: 'somewhere-else', bacenta_id: null, basonta_ids: ['b1'] },
+      heads,
+    )
+    expect(out).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('still lets a bacenta head correct programme and level — those are ordinary details', () => {
+    const out = headEditScope(
+      { fields: { programme: 'BSc CS', level: 300 }, basonta_ids: undefined },
+      { constituency_id: 'somewhere-else', bacenta_id: 'p1', basonta_ids: [] },
+      heads,
+    )
+    expect(out).toEqual({
+      ok: true,
+      fields: { programme: 'BSc CS', level: 300 },
+      basonta_ids: undefined,
+    })
+  })
+})
+
 describe('headDeleteScope', () => {
   const heads = { constituencies: ['c1'] }
 

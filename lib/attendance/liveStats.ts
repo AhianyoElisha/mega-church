@@ -24,6 +24,8 @@ export function aggregateLive(
   meeting_id: string,
   expected: number,
   records: AttendanceRecord[],
+  /** Save Church headcount, or null when there is no companion. */
+  companion_present: number | null = null,
 ): LiveStats {
   const by_method = { biometric: 0, manual: 0 }
   const buckets = new Map<string, number>()
@@ -53,5 +55,6 @@ export function aggregateLive(
     timeline: [...buckets.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([at, count]) => ({ at, count })),
+    companion_present,
   }
 }

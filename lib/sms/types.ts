@@ -103,7 +103,10 @@ export type SendSmsResponse =
        * quietly shrank under them.
        */
       excluded: number
-      /** Why, in words, when anything was excluded. */
+      /** Why, in words, when anything was excluded. Several reasons — children
+       *  never texted, outside the audience, already paid — are joined with
+       *  `;` so a sender who picked forty and reached twenty-one reads every
+       *  cause, not the last one written. */
       excluded_reason?: string
       /** Members with no usable phone number. Named, so they can be fixed. */
       no_phone: string[]
@@ -126,6 +129,10 @@ export type BirthdaySmsResponse =
       status: 'sent' | 'nobody_celebrating' | 'no_template' | 'not_configured'
       run_date: string
       celebrant_count: number
+      /** Celebrants who are Save Church children — never texted, and said so.
+       *  The celebrations TEAM still hears about them by push: a flyer for a
+       *  child is fine, a text to a parent's phone is not. */
+      excluded_children: number
       sent: number
       failed: number
       skipped: number

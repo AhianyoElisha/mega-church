@@ -38,8 +38,12 @@ export async function POST(request: NextRequest) {
   const result = await activateOccurrence(databases, meetingId, auth.user.email)
 
   if (!result.ok) {
-    return NextResponse.json<ActivateResponse>(result, {
-      status: result.conflict ? 409 : 400,
+    // 409 for both refusals that are about STATE — something else is open, or
+    // the meeting is Save Church, which only ever opens with a parent. A 400
+    // would read as a malformed request, and this one is well-formed.
+    const { reason, ...body } = result
+    return NextResponse.json<ActivateResponse>(body, {
+      status: result.conflict || reason === 'companion_only' ? 409 : 400,
     })
   }
   return NextResponse.json<ActivateResponse>({ ok: true, session: result.session }, { status: 201 })

@@ -245,7 +245,7 @@ export default function GroupMemberAssigner({
                         {fullName(m)}
                       </span>
                       <span className="block text-xs text-neutral-500 dark:text-neutral-400">
-                        {m.call_number}
+                        {m.call_number ?? '—'}
                       </span>
                     </span>
                     {inGroup && <Badge color="green">In {groupName}</Badge>}

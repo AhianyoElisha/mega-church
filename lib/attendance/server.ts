@@ -15,20 +15,31 @@ import 'server-only'
 
 import { ID, Query, type Databases, type Models } from 'node-appwrite'
 
-import { COLLECTIONS, DATABASE_ID } from '@/lib/appwrite/config'
+import {
+  COLLECTIONS,
+  DATABASE_ID,
+  SERVICE_IDS,
+  isAdultServiceSlot,
+  isMemberType,
+} from '@/lib/appwrite/config'
 import { getBiometricService } from '@/lib/services/biometricService'
 import { rosterMemberIds, warmCandidateCache } from '@/lib/biometrics/server'
 import { isMemberTitle } from '@/lib/members/titles'
 import { fullName, type Member } from '@/lib/members/types'
-import type {
-  ActiveSession,
-  Meeting,
-  MeetingOccurrence,
+import {
+  isCompanion,
+  type ActiveSession,
+  type Meeting,
+  type MeetingOccurrence,
 } from '@/lib/meetings/types'
 import { aggregateLive } from './liveStats'
 import {
+  attendanceTarget,
   canActivate,
   canResume,
+  companionOf,
+  companionOnlyMessage,
+  pausedOccurrences,
   resolveOpenOccurrence,
   resumeBlockedMessage,
   todayInAccra,
@@ -87,9 +98,19 @@ export function memberDocToMember(d: MemberDoc): Member {
     birth_month: (d.birth_month as number | null) ?? null,
     birth_day: (d.birth_day as number | null) ?? null,
     address: (d.address as string | null) ?? null,
-    call_number: String(d.call_number ?? ''),
+    // `|| null`: a child registered without a number has '' here, and '' is
+    // not a number anybody can ring.
+    call_number: (d.call_number as string | null) || null,
     whatsapp_number: (d.whatsapp_number as string | null) ?? null,
-    home_service: (d.home_service as Member['home_service']) ?? 'second',
+    home_service: d.home_service === 'first' ? 'first' : 'second',
+    // Narrowed, not cast, and absent reads as `adult`: every row written before
+    // the field existed is an adult, and the wrong reading in the other
+    // direction would stop texting somebody or redirect them to Save Church.
+    member_type: isMemberType(d.member_type) ? d.member_type : 'adult',
+    programme: (d.programme as string | null) || null,
+    level: typeof d.level === 'number' ? d.level : null,
+    level_year: typeof d.level_year === 'number' ? d.level_year : null,
+    guardian_name: (d.guardian_name as string | null) || null,
     // `|| null`, not `?? null`: an unset optional string comes back from
     // Appwrite as `''`, and `''` would compare unequal to every real
     // constituency id while still being truthy in a `if (m.constituency_id)`.
@@ -156,6 +177,9 @@ export function occurrenceDocToOccurrence(
     opened_by: (d.opened_by as string | null) ?? null,
     closed_by: (d.closed_by as string | null) ?? null,
     present_count: Number(d.present_count ?? 0),
+    // `|| null`: an unset optional string is '' from Appwrite, and '' would
+    // make every ordinary occurrence look like a companion of nothing.
+    parent_occurrence_id: (d.parent_occurrence_id as string | null) || null,
   }
 }
 
@@ -202,21 +226,63 @@ export function invalidateActiveSession(): void {
   activeCache = null
 }
 
-/** An occurrence plus its meeting and roster size. */
-async function hydrate(
+async function loadMeeting(databases: Databases, meetingId: string): Promise<Meeting> {
+  const doc = await databases.getDocument(DATABASE_ID, COLLECTIONS.meetings, meetingId)
+  return meetingDocToMeeting(doc as Models.Document & Record<string, unknown>)
+}
+
+/** The open Save Church companion of `parentId`, straight from the database. */
+async function findCompanionOccurrence(
+  databases: Databases,
+  parentId: string,
+): Promise<MeetingOccurrence | null> {
+  const res = await databases.listDocuments(DATABASE_ID, COLLECTIONS.meeting_occurrences, [
+    Query.equal('parent_occurrence_id', parentId),
+    Query.equal('status', 'open'),
+    Query.limit(1),
+  ])
+  if (res.documents.length === 0) return null
+  return occurrenceDocToOccurrence(res.documents[0] as Models.Document & Record<string, unknown>)
+}
+
+/**
+ * A companion occurrence with its meeting, or null when the companion's
+ * meeting row is gone — a companion pointing at a deleted Save Church is not
+ * worth failing the whole session over, and the redirect will say so itself.
+ */
+async function hydrateCompanion(
+  databases: Databases,
+  occurrence: MeetingOccurrence | null,
+): Promise<ActiveSession['companion']> {
+  if (!occurrence) return null
+  try {
+    return { occurrence, meeting: await loadMeeting(databases, occurrence.meeting_id) }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * An occurrence plus its meeting, roster size and companion.
+ *
+ * `siblings` is the list the caller already fetched (every open and paused
+ * row), so the companion is found without a second round trip on the poll
+ * every screen makes. Without it the companion is looked up directly.
+ */
+export async function hydrateSession(
   databases: Databases,
   occurrence: MeetingOccurrence,
+  siblings?: MeetingOccurrence[],
 ): Promise<ActiveSession> {
-  const meetingDoc = await databases.getDocument(
-    DATABASE_ID,
-    COLLECTIONS.meetings,
-    occurrence.meeting_id,
-  )
-  const meeting = meetingDocToMeeting(meetingDoc as Models.Document & Record<string, unknown>)
+  const meeting = await loadMeeting(databases, occurrence.meeting_id)
   const roster_size = meeting.restricted
     ? (await rosterMemberIds(databases, meeting.$id)).length
     : 0
-  return { occurrence, meeting, roster_size }
+  const companionOccurrence = siblings
+    ? companionOf(occurrence.$id, siblings)
+    : await findCompanionOccurrence(databases, occurrence.$id)
+  const companion = await hydrateCompanion(databases, companionOccurrence)
+  return { occurrence, meeting, roster_size, companion }
 }
 
 export async function resolveSessions(
@@ -248,9 +314,9 @@ export async function resolveSessions(
   }
 
   const paused: ActiveSession[] = []
-  for (const o of occurrences.filter((o) => o.status === 'paused')) {
+  for (const o of pausedOccurrences(occurrences)) {
     try {
-      paused.push(await hydrate(databases, o))
+      paused.push(await hydrateSession(databases, o, occurrences))
     } catch {
       // Its meeting was deleted out from under it. A paused session nobody can
       // name is not worth failing the whole endpoint over — the kiosk and the
@@ -258,7 +324,10 @@ export async function resolveSessions(
     }
   }
 
-  const session = resolved.kind === 'open' ? await hydrate(databases, resolved.occurrence) : null
+  const session =
+    resolved.kind === 'open'
+      ? await hydrateSession(databases, resolved.occurrence, occurrences)
+      : null
   const value: SessionSnapshot = { session, paused }
   activeCache = { at: Date.now(), value }
   return value
@@ -276,7 +345,99 @@ export async function resolveActiveSession(
 
 export type ActivateOutcome =
   | { ok: true; session: ActiveSession }
-  | { ok: false; error: string; conflict?: ActiveSession }
+  | {
+      ok: false
+      error: string
+      conflict?: ActiveSession
+      /** Set when the refusal is a rule about the MEETING rather than about
+       *  what is open, so the route can pick a status without parsing text. */
+      reason?: 'companion_only'
+    }
+
+/**
+ * The fields every new occurrence row is written with. Spelled out once so the
+ * parent and its companion cannot drift — `present_count: 0` and the three
+ * nulls are what `closeOccurrence` and the mappers rely on.
+ */
+function newOccurrenceFields(
+  meetingId: string,
+  now: Date,
+  openedBy: string,
+  parentOccurrenceId: string | null,
+) {
+  return {
+    meeting_id: meetingId,
+    occurrence_date: todayInAccra(now),
+    status: 'open' as const,
+    opened_at: now.toISOString(),
+    paused_at: null,
+    closed_at: null,
+    opened_by: openedBy,
+    closed_by: null,
+    present_count: 0,
+    parent_occurrence_id: parentOccurrenceId,
+  }
+}
+
+/**
+ * Open the Save Church companion of `parent`.
+ *
+ * Throws if the Save Church meeting row does not exist. That is a project the
+ * setup script has not been run on, and the message says so — a companion for
+ * a meeting that is not there would be a row nobody could ever name.
+ */
+async function createCompanion(
+  databases: Databases,
+  parent: MeetingOccurrence,
+  openedBy: string,
+): Promise<NonNullable<ActiveSession['companion']>> {
+  let meeting: Meeting
+  try {
+    meeting = await loadMeeting(databases, SERVICE_IDS.save)
+  } catch {
+    throw new Error(
+      'Save Church is not set up on this project — run `npm run setup:appwrite` to seed it.',
+    )
+  }
+  const doc = await databases.createDocument(
+    DATABASE_ID,
+    COLLECTIONS.meeting_occurrences,
+    ID.unique(),
+    newOccurrenceFields(meeting.$id, new Date(), openedBy, parent.$id),
+  )
+  return {
+    occurrence: occurrenceDocToOccurrence(doc as Models.Document & Record<string, unknown>),
+    meeting,
+  }
+}
+
+/**
+ * Today's open Save Church companion for `session`, found or created.
+ *
+ * Exists for the service that was ALREADY open when this shipped: its
+ * activation predates companions, so the first child to scan would otherwise
+ * have nowhere to go. Called only on the redirect path, so a session with no
+ * children present never grows a companion it does not need after the fact —
+ * activation is what creates one in the ordinary case.
+ */
+export async function ensureCompanion(
+  databases: Databases,
+  session: ActiveSession,
+): Promise<NonNullable<ActiveSession['companion']>> {
+  const existing = await hydrateCompanion(
+    databases,
+    await findCompanionOccurrence(databases, session.occurrence.$id),
+  )
+  if (existing) return existing
+  const created = await createCompanion(
+    databases,
+    session.occurrence,
+    session.occurrence.opened_by ?? 'system',
+  )
+  // The cached snapshot says `companion: null`; the next poll must not.
+  invalidateActiveSession()
+  return created
+}
 
 /**
  * Open an occurrence for `meetingId`.
@@ -285,6 +446,10 @@ export type ActivateOutcome =
  * server, and this is the only place it is enforced. The Services page also
  * greys out the button, but that is a courtesy — a second browser tab, a stale
  * page, or a curl would otherwise walk straight past it.
+ *
+ * Activating First or Second Service ALSO opens a Save Church companion for
+ * it, in the same call. Children who scan during the service are redirected
+ * there by `resolveAndRecord`; nobody has to remember to open it.
  */
 export async function activateOccurrence(
   databases: Databases,
@@ -311,6 +476,9 @@ export async function activateOccurrence(
   const check = canActivate(meeting, existing ? [existing.occurrence] : [])
 
   if (!check.ok) {
+    if (check.reason === 'companion_only') {
+      return { ok: false, error: companionOnlyMessage(meeting.name), reason: 'companion_only' }
+    }
     if (check.reason === 'archived') {
       return { ok: false, error: `${meeting.name} is archived. Restore it before activating.` }
     }
@@ -323,23 +491,27 @@ export async function activateOccurrence(
     }
   }
 
-  const now = new Date()
   const doc = await databases.createDocument(
     DATABASE_ID,
     COLLECTIONS.meeting_occurrences,
     ID.unique(),
-    {
-      meeting_id: meetingId,
-      occurrence_date: todayInAccra(now),
-      status: 'open',
-      opened_at: now.toISOString(),
-      paused_at: null,
-      closed_at: null,
-      opened_by: openedBy,
-      closed_by: null,
-      present_count: 0,
-    },
+    newOccurrenceFields(meetingId, new Date(), openedBy, null),
   )
+  const occurrence = occurrenceDocToOccurrence(doc as Models.Document & Record<string, unknown>)
+
+  // The children's service runs alongside both adult services and nowhere
+  // else. A restricted meeting, or Save Church itself, gets no companion.
+  let companion: ActiveSession['companion'] = null
+  if (meeting.kind === 'service' && isAdultServiceSlot(meeting.service_slot)) {
+    try {
+      companion = await createCompanion(databases, occurrence, openedBy)
+    } catch (e) {
+      // The adult service is open and must stay open — a missing Save Church
+      // row is a setup fault, not a reason to turn the congregation away. The
+      // redirect path retries through `ensureCompanion` and refuses by name.
+      console.warn(`[attendance] no companion for ${meeting.name}: ${(e as Error).message}`)
+    }
+  }
 
   invalidateActiveSession()
   // Start loading the gallery NOW, so the first member of the service does not
@@ -349,11 +521,49 @@ export async function activateOccurrence(
     meeting_id: meeting.$id,
     restricted: meeting.restricted,
   })
-  const occurrence = occurrenceDocToOccurrence(doc as Models.Document & Record<string, unknown>)
   const roster_size = meeting.restricted
     ? (await rosterMemberIds(databases, meeting.$id)).length
     : 0
-  return { ok: true, session: { occurrence, meeting, roster_size } }
+  return { ok: true, session: { occurrence, meeting, roster_size, companion } }
+}
+
+/** The refusal for closing, pausing or resuming a companion BY ITS OWN ID. */
+function companionActedOnAlone(): { ok: false; error: string } {
+  return {
+    ok: false,
+    error:
+      'Save Church runs with its parent service. End, pause or resume that service instead — ' +
+      'Save Church follows it.',
+  }
+}
+
+/** Freeze one occurrence: count its rows and mark it closed. */
+async function closeOne(
+  databases: Databases,
+  occurrenceId: string,
+  closedBy: string,
+): Promise<{ occurrence: MeetingOccurrence; present_count: number }> {
+  // Freeze the tally at close so history does not have to re-count thousands
+  // of rows every time someone opens a report.
+  const records = await listAll(databases, COLLECTIONS.attendance_records, [
+    Query.equal('occurrence_id', occurrenceId),
+    Query.select(['$id']),
+  ])
+  const updated = await databases.updateDocument(
+    DATABASE_ID,
+    COLLECTIONS.meeting_occurrences,
+    occurrenceId,
+    {
+      status: 'closed',
+      closed_at: new Date().toISOString(),
+      closed_by: closedBy,
+      present_count: records.length,
+    },
+  )
+  return {
+    occurrence: occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
+    present_count: records.length,
+  }
 }
 
 export async function closeOccurrence(
@@ -383,32 +593,28 @@ export async function closeOccurrence(
   if (occurrence.status === 'closed') {
     return { ok: false, error: 'That session is already closed.' }
   }
+  if (isCompanion(occurrence)) return companionActedOnAlone()
 
-  // Freeze the tally at close so history does not have to re-count thousands
-  // of rows every time someone opens a report.
-  const records = await listAll(databases, COLLECTIONS.attendance_records, [
-    Query.equal('occurrence_id', occurrenceId),
-    Query.select(['$id']),
-  ])
-
-  const updated = await databases.updateDocument(
-    DATABASE_ID,
+  // Companions FIRST, then the parent. Each gets its own frozen tally, computed
+  // from its own rows exactly as the parent's is. Every open or paused one is
+  // closed, not just today's: a companion left open by a crash between the two
+  // writes would otherwise sit there forever, invisible to every liveness
+  // check, collecting nothing.
+  const companions = await listAll<Models.Document & Record<string, unknown>>(
+    databases,
     COLLECTIONS.meeting_occurrences,
-    occurrenceId,
-    {
-      status: 'closed',
-      closed_at: new Date().toISOString(),
-      closed_by: closedBy,
-      present_count: records.length,
-    },
+    [
+      Query.equal('parent_occurrence_id', occurrenceId),
+      Query.equal('status', ['open', 'paused']),
+      Query.select(['$id']),
+    ],
   )
+  for (const c of companions) await closeOne(databases, c.$id, closedBy)
+
+  const closed = await closeOne(databases, occurrenceId, closedBy)
   invalidateActiveSession()
 
-  return {
-    ok: true,
-    occurrence: occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
-    present_count: records.length,
-  }
+  return { ok: true, ...closed }
 }
 
 // === Pause / resume ========================================================
@@ -460,7 +666,11 @@ export async function pauseOccurrence(
   if (occurrence.status === 'paused') {
     return { ok: false, error: 'That session is already paused.' }
   }
+  if (isCompanion(occurrence)) return companionActedOnAlone()
 
+  // The companion is left alone. Pausing takes the PARENT off the scanner, and
+  // the redirect only ever runs from an open parent — so a companion with no
+  // liveness of its own stops receiving marks without changing status.
   const updated = await databases.updateDocument(
     DATABASE_ID,
     COLLECTIONS.meeting_occurrences,
@@ -474,7 +684,7 @@ export async function pauseOccurrence(
   void pausedBy
   return {
     ok: true,
-    session: await hydrate(
+    session: await hydrateSession(
       databases,
       occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
     ),
@@ -496,6 +706,7 @@ export async function resumeOccurrence(
 ): Promise<PauseOutcome> {
   const occurrence = await loadOccurrence(databases, occurrenceId)
   if (!occurrence) return { ok: false, error: 'That session no longer exists.' }
+  if (isCompanion(occurrence)) return companionActedOnAlone()
 
   // Fresh, not cached — this is the check the single-active invariant rests on,
   // and a ten-second-old answer is exactly long enough to let two through.
@@ -529,7 +740,7 @@ export async function resumeOccurrence(
   invalidateActiveSession()
 
   void resumedBy
-  const session = await hydrate(
+  const session = await hydrateSession(
     databases,
     occurrenceDocToOccurrence(updated as Models.Document & Record<string, unknown>),
   )
@@ -619,7 +830,7 @@ async function resolveAndRecord(
 
   // Authorisation. A service is open to every active member regardless of
   // which service they usually attend (PRD §2.1) — `restricted` is false on
-  // both service rows and that is checked here, not assumed.
+  // every service row and that is checked here, not assumed.
   if (session.meeting.restricted) {
     const authorised = await isOnRoster(databases, session.meeting.$id, member.$id)
     if (!authorised) {
@@ -633,22 +844,39 @@ async function resolveAndRecord(
     }
   }
 
-  const already = await existingRecord(databases, session.occurrence.$id, member.$id)
+  // WHERE the mark lands. A child at an adult service goes to the Save Church
+  // companion; everyone else, and every child at a non-service, goes to the
+  // open session. From here down every read and write is against `target`,
+  // never `session.occurrence` — the two are the same row for almost everyone,
+  // and the one place they differ is the whole feature.
+  const redirected = attendanceTarget(session, member) === 'companion'
+  const target = redirected
+    ? (session.companion ?? (await ensureCompanion(databases, session)))
+    : { occurrence: session.occurrence, meeting: session.meeting }
+  const meeting_name = target.meeting.name
+
+  const already = await existingRecord(databases, target.occurrence.$id, member.$id)
   if (already) {
     // The database says they are marked; teach the ordering hint, which may be
     // a fresh instance that has seen nothing yet.
-    noteMarked(session.occurrence.$id, member.$id)
-    return { kind: 'already_marked', member: summary, marked_at: already.marked_at }
+    noteMarked(target.occurrence.$id, member.$id)
+    return {
+      kind: 'already_marked',
+      member: summary,
+      marked_at: already.marked_at,
+      meeting_name,
+      redirected,
+    }
   }
 
   const marked_at = new Date().toISOString()
   if (opts.dryRun) {
-    return { kind: 'marked', member: summary, marked_at, sequence: 0 }
+    return { kind: 'marked', member: summary, marked_at, sequence: 0, meeting_name, redirected }
   }
 
   const payload: AttendanceRecordPayload = {
-    occurrence_id: session.occurrence.$id,
-    meeting_id: session.meeting.$id,
+    occurrence_id: target.occurrence.$id,
+    meeting_id: target.meeting.$id,
     member_id: member.$id,
     marked_at,
     method: opts.method,
@@ -671,21 +899,26 @@ async function resolveAndRecord(
     if (e && typeof e === 'object' && (e as { code?: number }).code === 409) {
       // They ARE marked, so the ordering hint should know it even though this
       // path did not write the row.
-      noteMarked(session.occurrence.$id, member.$id)
-      return { kind: 'already_marked', member: summary, marked_at }
+      noteMarked(target.occurrence.$id, member.$id)
+      return { kind: 'already_marked', member: summary, marked_at, meeting_name, redirected }
     }
     throw e
   }
 
   // Ordering hint only — they now go to the back of the gallery for subsequent
   // scans at this occurrence. Never read as truth; see `markedByOccurrence`.
-  noteMarked(session.occurrence.$id, member.$id)
+  // Keyed by the TARGET, so a child marked at Save Church is noted under the
+  // companion; the parent's hint stays about the parent, and being a hint it
+  // is allowed to know nothing about them.
+  noteMarked(target.occurrence.$id, member.$id)
 
   return {
     kind: 'marked',
     member: summary,
     marked_at,
-    sequence: await countRecords(databases, session.occurrence.$id),
+    sequence: await countRecords(databases, target.occurrence.$id),
+    meeting_name,
+    redirected,
   }
 }
 
@@ -778,34 +1011,59 @@ export async function processManual(
 
 // === Reads =================================================================
 
-/** How many people this occurrence expects: a roster for a restricted meeting,
- *  the active membership for an open service. */
-async function expectedFor(databases: Databases, session: ActiveSession): Promise<number> {
-  if (session.meeting.restricted) return session.roster_size
+/** `.total` of one members query. Capped server-side, but far above any
+ *  congregation this is counting. */
+async function countMembers(databases: Databases, queries: string[]): Promise<number> {
   const res = await databases.listDocuments(DATABASE_ID, COLLECTIONS.members, [
-    Query.equal('status', 'active'),
+    ...queries,
     Query.limit(1),
   ])
   return res.total
+}
+
+/**
+ * How many people this occurrence expects: a roster for a restricted meeting,
+ * the active membership for an open service.
+ *
+ * An ADULT service expects the active members who are not children — a child
+ * who scans there is redirected to Save Church, so counting them would leave
+ * "still to come" never reaching zero on a full house. Computed as active
+ * minus active-children rather than `notEqual('member_type', 'child')`: most
+ * live rows predate the field entirely, and a NOT-EQUAL never matches a row
+ * where the attribute is absent, which would have counted nobody.
+ */
+async function expectedFor(databases: Databases, session: ActiveSession): Promise<number> {
+  if (session.meeting.restricted) return session.roster_size
+  const active = [Query.equal('status', 'active')]
+  if (!isAdultServiceSlot(session.meeting.service_slot)) {
+    return countMembers(databases, active)
+  }
+  const [everyone, children] = await Promise.all([
+    countMembers(databases, active),
+    countMembers(databases, [...active, Query.equal('member_type', 'child')]),
+  ])
+  return Math.max(0, everyone - children)
 }
 
 export async function loadLiveStats(
   databases: Databases,
   session: ActiveSession,
 ): Promise<LiveStats> {
-  const [docs, expected] = await Promise.all([
+  const [docs, expected, companionPresent] = await Promise.all([
     listAll<Models.Document & Record<string, unknown>>(
       databases,
       COLLECTIONS.attendance_records,
       [Query.equal('occurrence_id', session.occurrence.$id)],
     ),
     expectedFor(databases, session),
+    session.companion ? countRecords(databases, session.companion.occurrence.$id) : null,
   ])
   return aggregateLive(
     session.occurrence.$id,
     session.meeting.$id,
     expected,
     docs.map(recordDocToRecord),
+    companionPresent,
   )
 }
 

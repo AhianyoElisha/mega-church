@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
       status: 'not_configured',
       run_date: runDate,
       celebrant_count: 0,
+      excluded_children: 0,
       sent: 0,
       failed: 0,
       skipped: 0,
@@ -105,6 +106,7 @@ export async function POST(request: NextRequest) {
       status: 'nobody_celebrating',
       run_date: runDate,
       celebrant_count: 0,
+      excluded_children: 0,
       sent: 0,
       failed: 0,
       skipped: 0,
@@ -115,9 +117,20 @@ export async function POST(request: NextRequest) {
 
   const byId = new Map(members.map((m) => [m.$id, m]))
   const targets: SendTarget[] = []
+  /*
+   * A Save Church child's birthday is celebrated — the team was pushed about
+   * it yesterday and can make the flyer — but the child is not TEXTED: the
+   * number on the row is a parent's. Counted here so the response says so;
+   * `sendToMembers` would drop them again regardless, which is the guarantee.
+   */
+  let excludedChildren = 0
   for (const c of celebrants) {
     const member = byId.get(c.$id)
     if (!member) continue
+    if (member.member_type === 'child') {
+      excludedChildren++
+      continue
+    }
     // Per member, because the whole point is that not everyone is addressed
     // the same way: their own override first, then the birthday default.
     const template = await resolveBirthdayTemplate(databases, member)
@@ -126,15 +139,18 @@ export async function POST(request: NextRequest) {
   }
 
   if (targets.length === 0) {
-    // There ARE celebrants and there is no template to send them. Said out
-    // loud rather than reported as success with zero sent, which would look
-    // exactly like a quiet day and hide the missing template until somebody
-    // noticed the church had stopped texting anyone.
+    // There ARE celebrants and there is no template to send them — or every
+    // celebrant is a child, which is a quiet day for SMS and says so in
+    // `excluded_children`. Said out loud rather than reported as success with
+    // zero sent, which would look exactly like a quiet day and hide the
+    // missing template until somebody noticed the church had stopped texting
+    // anyone.
     return answer({
       ok: true,
-      status: 'no_template',
+      status: excludedChildren === celebrants.length ? 'nobody_celebrating' : 'no_template',
       run_date: runDate,
       celebrant_count: celebrants.length,
+      excluded_children: excludedChildren,
       sent: 0,
       failed: 0,
       skipped: 0,
@@ -155,6 +171,7 @@ export async function POST(request: NextRequest) {
       status: 'sent',
       run_date: runDate,
       celebrant_count: celebrants.length,
+      excluded_children: excludedChildren + report.excluded_children,
       sent: report.sent,
       failed: report.failed,
       // Everyone already texted today. On a second call of the day this is the

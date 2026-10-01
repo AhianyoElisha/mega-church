@@ -101,6 +101,9 @@ const LABEL_ALLOWED_PREFIXES: Record<Exclude<UserLabel, 'admin'>, string[]> = {
   //   /kiosk    an appliance that writes attendance
   shepherd: [
     '/members',
+    // The student roll. Read-only for a shepherd in the same way /members is:
+    // the rollover route asks for admin, and the page hides its buttons.
+    '/students',
     '/constituencies',
     '/bacentas',
     '/basontas',

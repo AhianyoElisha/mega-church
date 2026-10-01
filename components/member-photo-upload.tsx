@@ -9,15 +9,22 @@
 // Uploading stays because it is the only path that works everywhere: there is
 // no camera API outside a secure context, which is exactly how a kiosk PC on a
 // church LAN is often reached.
+//
+// Both doors lead to the CROPPER, and the cropper is the only thing that
+// uploads. A picked file and a captured frame are handed over raw; what leaves
+// the browser is the square the registrar framed, so the kiosk card shows the
+// face they chose and not the centre of whatever the sensor saw.
 
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUpTrayIcon, CameraIcon } from '@heroicons/react/24/outline'
 import Avatar from '@/shared/Avatar'
 import { Button } from '@/shared/Button'
 import CameraCapture, { cameraAvailable } from '@/components/camera-capture'
+import PhotoCropper from '@/components/photo-cropper'
 import { useUploadMemberPhoto } from '@/lib/queries/members'
 import { memberPhotoUrl } from '@/lib/members/photo'
 
+/** Same cap as the route; checked here so a 40 MB scan is refused before the crop. */
 const MAX_BYTES = 5 * 1024 * 1024
 
 export default function MemberPhotoUpload({
@@ -39,6 +46,12 @@ export default function MemberPhotoUpload({
   // looks like the upload failed.
   const [preview, setPreview] = useState<string | null>(null)
   const [cameraOpen, setCameraOpen] = useState(false)
+  // The raw photo waiting to be framed. Non-null IS the cropper being open.
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  // A failed upload is reported INSIDE the cropper, which still holds the
+  // original — so the registrar presses again rather than photographing the
+  // member a second time.
+  const [cropError, setCropError] = useState<string | null>(null)
 
   // Resolved after mount, never during render: `navigator` does not exist on
   // the server, and a control that appears on hydration is much better than one
@@ -49,6 +62,7 @@ export default function MemberPhotoUpload({
   /** One upload path for both doors, so a photo behaves identically either way. */
   const send = async (file: File) => {
     setError(null)
+    setCropError(null)
     const localUrl = URL.createObjectURL(file)
     setPreview(localUrl)
     try {
@@ -56,15 +70,18 @@ export default function MemberPhotoUpload({
       return true
     } catch (err) {
       setPreview(null)
-      setError(err instanceof Error ? err.message : 'Upload failed.')
+      setCropError(err instanceof Error ? err.message : 'Upload failed.')
       return false
     } finally {
       URL.revokeObjectURL(localUrl)
     }
   }
 
-  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    // Cleared at once so the same file can be picked again after a cancel or
+    // a failure — a file input does not fire `change` for a repeat choice.
+    e.target.value = ''
     if (!file) return
     setError(null)
 
@@ -77,9 +94,8 @@ export default function MemberPhotoUpload({
       return
     }
 
-    await send(file)
-    // Let the same file be re-picked after a failure.
-    if (inputRef.current) inputRef.current.value = ''
+    setCropError(null)
+    setPendingFile(file)
   }
 
   const src = preview ?? memberPhotoUrl(photoFileId, 320)
@@ -88,7 +104,9 @@ export default function MemberPhotoUpload({
     <div className="flex flex-col items-center">
       <Avatar
         src={src}
-        initials={src ? undefined : initials}
+        // Always given: they sit UNDER the photo, and are what shows when the
+        // photo cannot be loaded (see `shared/Avatar.tsx`).
+        initials={initials}
         alt={name}
         className="size-32 bg-primary-500 text-neutral-950"
       />
@@ -136,14 +154,31 @@ export default function MemberPhotoUpload({
 
       <CameraCapture
         open={cameraOpen}
-        busy={upload.isPending}
         title={`Photo for ${name}`}
         onClose={() => setCameraOpen(false)}
-        onCapture={async (file) => {
-          // Closed only on success. A failed upload leaves the review on screen
-          // with the photo still on it, so the registrar can press again rather
-          // than photograph the member a second time.
-          if (await send(file)) setCameraOpen(false)
+        onCapture={(file) => {
+          // The camera dialog has already released the stream at capture; it
+          // closes here and the cropper takes over the frame. Nothing is
+          // uploaded until the cropper says so.
+          setCameraOpen(false)
+          setCropError(null)
+          setPendingFile(file)
+        }}
+      />
+
+      <PhotoCropper
+        open={pendingFile !== null}
+        file={pendingFile}
+        busy={upload.isPending}
+        error={cropError}
+        title={`Photo for ${name}`}
+        onCancel={() => {
+          setPendingFile(null)
+          setCropError(null)
+        }}
+        onCropped={async (file) => {
+          // Closed only on success; a failure keeps the original on screen.
+          if (await send(file)) setPendingFile(null)
         }}
       />
     </div>

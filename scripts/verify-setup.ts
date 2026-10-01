@@ -13,7 +13,7 @@ loadEnv({ path: '.env.local' })
 
 import { Query } from 'node-appwrite'
 import { createAdminClient } from '../lib/appwrite/server'
-import { COLLECTIONS, DATABASE_ID, SERVICE_IDS } from '../lib/appwrite/config'
+import { COLLECTIONS, DATABASE_ID, SERVICE_DEFINITIONS } from '../lib/appwrite/config'
 import { listMeetings } from '../lib/meetings/server'
 import { resolveActiveSession } from '../lib/attendance/server'
 import { loadAllCandidateTemplates } from '../lib/biometrics/server'
@@ -54,13 +54,17 @@ async function main() {
     }
   }
 
-  // --- the two services ----------------------------------------------------
+  // --- the three services --------------------------------------------------
+  // First, Second and Save Church. The third is never activated by hand: it is
+  // opened as a companion of the other two on every Sunday activation, so a
+  // missing row does not fail loudly on the Services page — it fails as a
+  // warning in the server log and a child refused at the scanner.
   console.log('\nseeded services')
   const meetings = await listMeetings(databases)
-  for (const wanted of [SERVICE_IDS.first, SERVICE_IDS.second]) {
-    const m = meetings.find((x) => x.$id === wanted)
+  for (const wanted of SERVICE_DEFINITIONS) {
+    const m = meetings.find((x) => x.$id === wanted.id)
     if (!m) {
-      bad(`${wanted} missing`)
+      bad(`${wanted.id} (${wanted.name}) missing — run npm run setup:appwrite`)
       continue
     }
     // The single most consequential field in the schema. `restricted: true` on
@@ -68,7 +72,12 @@ async function main() {
     // member would be refused at the door on Sunday morning (PRD §2.1).
     if (m.restricted) bad(`${m.name} is restricted — it must be open to every active member`)
     else if (m.kind !== 'service') bad(`${m.name} has kind="${m.kind}", expected "service"`)
-    else ok(`${m.name} — open to all, kind=service, slot=${m.service_slot}`)
+    else if (m.service_slot !== wanted.service_slot) {
+      // The slot is what `attendanceTarget` reads to decide whether a child is
+      // redirected; a Save Church row with slot "first" would send children
+      // from Save Church to Save Church's companion.
+      bad(`${m.name} has service_slot="${m.service_slot}", expected "${wanted.service_slot}"`)
+    } else ok(`${m.name} — open to all, kind=service, slot=${m.service_slot}`)
   }
 
   // --- the invariant -------------------------------------------------------

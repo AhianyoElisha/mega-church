@@ -199,6 +199,37 @@ async function main() {
   const occId = act1.body.session.occurrence.$id
   ok('First Service activated')
 
+  // --- Save Church rides along -------------------------------------------
+  // The children's service is a COMPANION: opened by this activation, closed
+  // by this close, never on the scanner itself.
+  const companion = act1.body.session.companion
+  companion?.occurrence?.parent_occurrence_id === occId &&
+  companion?.meeting?.$id === 'save-church' &&
+  companion?.occurrence?.status === 'open'
+    ? ok(`Save Church opened alongside (companion ${companion.occurrence.$id})`)
+    : bad(`no Save Church companion on activation: ${JSON.stringify(companion)}`)
+
+  const activeWithCompanion = await api('/api/attendance/active')
+  activeWithCompanion.body?.session?.occurrence?.$id === occId &&
+  activeWithCompanion.body?.session?.companion?.occurrence?.$id === companion?.occurrence?.$id
+    ? ok('/api/attendance/active reports First Service as THE open session, companion attached')
+    : bad(`active endpoint wrong with a companion open: ${JSON.stringify(activeWithCompanion.body)}`)
+
+  const actSave = await api('/api/occurrences/activate', {
+    method: 'POST',
+    body: JSON.stringify({ meeting_id: 'save-church' }),
+  })
+  actSave.status === 409 && /cannot be activated on its own/.test(actSave.body?.error ?? '')
+    ? ok(`Save Church refused on its own: "${actSave.body.error}"`)
+    : bad(`Save Church activation gave ${actSave.status}: ${JSON.stringify(actSave.body)}`)
+
+  const closeSave = await api(`/api/occurrences/${companion?.occurrence?.$id}/close`, {
+    method: 'POST',
+  })
+  closeSave.status === 400
+    ? ok('a companion cannot be ended by its own id')
+    : bad(`companion close gave ${closeSave.status}`)
+
   const act2 = await api('/api/occurrences/activate', {
     method: 'POST',
     body: JSON.stringify({ meeting_id: 'second-service' }),
@@ -249,6 +280,19 @@ async function main() {
   close.body?.ok
     ? ok(`First Service closed, tally frozen at ${close.body.present_count}`)
     : bad(`close failed: ${JSON.stringify(close.body)}`)
+
+  // The companion closes WITH the parent. Most recent Save Church occurrence
+  // by opened_at is the one this run created.
+  const saveHistory = await api('/api/occurrences?meeting_id=save-church&limit=1')
+  const lastSave = saveHistory.body?.occurrences?.[0]
+  lastSave?.$id === companion?.occurrence?.$id && lastSave?.status === 'closed'
+    ? ok(`Save Church closed with it, tally ${lastSave.present_count}`)
+    : bad(`companion not closed: ${JSON.stringify(lastSave)}`)
+
+  const afterClose = await api('/api/attendance/active')
+  afterClose.body?.ok && afterClose.body.session === null
+    ? ok('nothing open once both are closed')
+    : bad(`something still open after close: ${JSON.stringify(afterClose.body?.session)}`)
 
   const act4 = await api('/api/occurrences/activate', {
     method: 'POST',

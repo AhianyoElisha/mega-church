@@ -242,12 +242,30 @@ export async function resolveBirthdayTemplate(
 export type SendTarget = {
   member: Member & { sms_template_id?: string | null }
   template: SmsTemplate
+  /**
+   * Placeholders valid for THIS member's render only — `services_attended`
+   * on a thank-you, computed from the attendance rows by the route that read
+   * them. Absent for every other category, so a template that names one is
+   * refused at render rather than mailed with a blank.
+   */
+  extras?: Record<string, string>
 }
 
 export type SendReport = {
   sent: number
   failed: number
   skipped: number
+  /**
+   * Targets dropped here because the member is a Save Church child.
+   *
+   * This is the CHOKEPOINT: every send in the app — manual, birthday, the
+   * three service crons — passes through `sendToMembers`, so a child cannot be
+   * texted by a route that forgot to filter. The routes filter earlier too,
+   * with a reason, so the screen can explain the shortfall; this count is the
+   * guarantee behind that courtesy, and it is separate from `skipped` (the
+   * dedupe index) and from a route's `excluded` (which carries the reason).
+   */
+  excluded_children: number
   no_phone: string[]
   provider_message: string | null
   /**
@@ -308,17 +326,28 @@ export async function sendToMembers(
     sent: 0,
     failed: 0,
     skipped: 0,
+    excluded_children: 0,
     no_phone: [],
     provider_message: null,
     credit_left: null,
   }
-  if (targets.length === 0) return report
+
+  /*
+   * Children are dropped BEFORE anything is claimed, and here rather than only
+   * in the routes. A route is one of five callers and a new one is written by
+   * somebody who has not read the other four; this loop is the one place every
+   * message passes through. The number on a child's row is a parent's, and no
+   * message the church sends is addressed to a parent about their child.
+   */
+  const texted = targets.filter((t) => t.member.member_type !== 'child')
+  report.excluded_children = targets.length - texted.length
+  if (texted.length === 0) return report
 
   type Claimed = { docId: string; phone: string; text: string; memberId: string }
   const claimed: Claimed[] = []
 
-  for (const { member, template } of targets) {
-    const rendered = render(template.body, member)
+  for (const { member, template, extras } of texted) {
+    const rendered = render(template.body, member, extras)
     if (!rendered.ok) {
       // A template the system cannot render is an admin-fixable mistake, and
       // failing the whole batch on it is right: sending half a congregation a
@@ -327,7 +356,7 @@ export async function sendToMembers(
       throw new Error(`${template.name}: ${rendered.error}`)
     }
 
-    const phone = toProviderNumber(member.whatsapp_number || member.call_number)
+    const phone = toProviderNumber(member.whatsapp_number || member.call_number || '')
     if (!phone) {
       report.no_phone.push(fullName(member))
       continue

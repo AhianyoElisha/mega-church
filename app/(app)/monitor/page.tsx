@@ -118,7 +118,9 @@ export default function MonitorPage() {
         subtitle={
           session.meeting.restricted
             ? `Authorised members only · ${session.roster_size} on the list`
-            : 'Open to every active member'
+            : session.companion
+              ? `Open to every active member · ${session.companion.meeting.name}: ${s?.companion_present ?? '—'}`
+              : 'Open to every active member'
         }
         actions={
           <>
@@ -147,6 +149,18 @@ export default function MonitorPage() {
           value={s?.by_method.biometric ?? '—'}
           hint={s ? `${s.by_method.manual} marked manually` : undefined}
         />
+        {/* The children's service running alongside. Its count is NOT in
+            "Present" — children were never in "Expected" either — so it gets
+            its own card rather than being folded into a number it would
+            silently inflate. Only rendered when a companion exists: `null` is
+            "no children's service", which is different from 0. */}
+        {session.companion && (
+          <StatCard
+            label={`${session.companion.meeting.name}`}
+            value={s?.companion_present ?? '—'}
+            hint="Children marked at the children's service"
+          />
+        )}
       </div>
 
       {s && s.expected > 0 && (

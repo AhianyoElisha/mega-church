@@ -4,6 +4,7 @@ import {
   createMember,
   listMembers,
   readBasontaIds,
+  stampLevelYear,
   validateMemberInput,
 } from '@/lib/members/server'
 import { emptyEnrolment, enrolmentByMember } from '@/lib/biometrics/server'
@@ -33,13 +34,16 @@ export async function GET(request: NextRequest) {
   const status = request.nextUrl.searchParams.get('status') ?? undefined
   const constituencyId = request.nextUrl.searchParams.get('constituency') ?? undefined
   const homeService = request.nextUrl.searchParams.get('service') ?? undefined
+  // `adult` | `student` | `child`. Validated inside `listMembers`, like the
+  // others: an unrecognised value is dropped rather than emptying the page.
+  const memberType = request.nextUrl.searchParams.get('type') ?? undefined
 
   // Appwrite has no joins; fetch every side in parallel and merge in memory.
   // The bacenta index is ONE pass over the join collection rather than a query
   // per member — a registry of three thousand people would otherwise be three
   // thousand round trips to fill in a column.
   const [members, enrolment, bacentaIndex] = await Promise.all([
-    listMembers(databases, { search, status, constituencyId, homeService }),
+    listMembers(databases, { search, status, constituencyId, homeService, memberType }),
     enrolmentByMember(databases),
     basontaMembershipIndex(databases),
   ])
@@ -150,7 +154,14 @@ export async function POST(request: NextRequest) {
     // campaign — and the head at the desk is who they said it to.
     fields.status = 'active'
     fields.sms_template_id = null
+    // `member_type` is deliberately NOT forced. On an EDIT it is
+    // constituency-head tier, but a head registering here is by construction
+    // registering into a constituency they head — `headRegistrationScope` has
+    // just said so — and the person in front of them is a child or a student
+    // or neither, which is a thing the desk knows and an admin does not.
   }
+
+  stampLevelYear(fields)
 
   // The shape check passed; now check the ids name real groups. A member filed
   // into a constituency that does not exist is invisible on every constituency

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   NO_CONSTITUENCY,
   STATUS_LABEL,
+  dayStatus,
   isDayScope,
   rowsForConstituency,
   rowsForScope,
@@ -12,7 +13,12 @@ import {
 } from '@/lib/reports/day'
 import type { Member } from '@/lib/members/types'
 
-function member(id: string, last: string, constituencyId: string | null = null): Member {
+function member(
+  id: string,
+  last: string,
+  constituencyId: string | null = null,
+  memberType: Member['member_type'] = 'adult',
+): Member {
   return {
     $id: id,
     member_no: null,
@@ -28,6 +34,11 @@ function member(id: string, last: string, constituencyId: string | null = null):
     call_number: `+23324000000${id}`,
     whatsapp_number: null,
     home_service: 'second',
+    member_type: memberType,
+    programme: null,
+    level: null,
+    level_year: null,
+    guardian_name: null,
     constituency_id: constituencyId,
     bacenta_id: null,
     care_of_member_id: null,
@@ -44,27 +55,32 @@ function row(
   last: string,
   status: DayStatus,
   constituencyId: string | null = null,
+  memberType: Member['member_type'] = 'adult',
 ): DayRow {
   return {
-    member: member(id, last, constituencyId),
+    member: member(id, last, constituencyId, memberType),
     status,
     first_marked_at: status === 'first' || status === 'both' ? '2026-08-09T07:40:00.000Z' : null,
     second_marked_at: status === 'second' || status === 'both' ? '2026-08-09T10:20:00.000Z' : null,
+    save_marked_at: status === 'save' ? '2026-08-09T07:55:00.000Z' : null,
     first_method: status === 'first' || status === 'both' ? 'biometric' : null,
     second_method: status === 'second' || status === 'both' ? 'manual' : null,
+    save_method: status === 'save' ? 'biometric' : null,
   }
 }
 
 const report: DayReport = {
   date: '2026-08-09',
-  held: { first: true, second: true },
+  held: { first: true, second: true, save: true },
   rows: [
     row('1', 'Firstonly', 'first'),
     row('2', 'Bothservices', 'both'),
     row('3', 'Secondonly', 'second'),
     row('4', 'Missing', 'absent'),
+    row('5', 'Childpresent', 'save', null, 'child'),
+    row('6', 'Childmissing', 'absent', null, 'child'),
   ],
-  totals: { first: 2, second: 2, both: 1, absent: 1, active: 4 },
+  totals: { first: 2, second: 2, both: 1, save: 1, absent: 2, active: 6 },
   constituencies: [],
 }
 
@@ -80,15 +96,37 @@ describe('rowsForScope', () => {
   })
 
   it('never lists a both-services member as absent', () => {
-    expect(names(rowsForScope(report, 'absent'))).toEqual(['Missing'])
+    expect(names(rowsForScope(report, 'absent'))).toEqual(['Missing', 'Childmissing'])
   })
 
-  it('absent means neither service, not "missed one of them"', () => {
+  it('absent means no service at all, not "missed one of them"', () => {
     const absent = rowsForScope(report, 'absent')
     for (const r of absent) {
       expect(r.first_marked_at).toBeNull()
       expect(r.second_marked_at).toBeNull()
+      expect(r.save_marked_at).toBeNull()
     }
+  })
+
+  it('the Save Church sheet is the children marked there', () => {
+    expect(names(rowsForScope(report, 'save'))).toEqual(['Childpresent'])
+  })
+
+  it('never puts a child on an adult service sheet', () => {
+    // The kiosk redirects children away from First and Second Service, so a
+    // child cannot be present at one — and must not be listed as absent from
+    // one either. Their whole day is Save Church or nothing.
+    for (const scope of ['first', 'second'] as const) {
+      for (const r of rowsForScope(report, scope)) {
+        expect(r.member.member_type).not.toBe('child')
+      }
+    }
+  })
+
+  it('a child who missed Save Church IS on the call list', () => {
+    const absent = rowsForScope(report, 'absent')
+    expect(absent.some((r) => r.member.last_name === 'Childmissing')).toBe(true)
+    expect(absent.some((r) => r.member.last_name === 'Childpresent')).toBe(false)
   })
 
   it('the all scope is every active member, exactly once', () => {
@@ -104,28 +142,69 @@ describe('rowsForScope', () => {
     }
   })
 
-  it('service lists and the absent list together cover everyone', () => {
+  it('the three service lists and the absent list together cover everyone', () => {
     const covered = new Set([
       ...rowsForScope(report, 'first').map((r) => r.member.$id),
       ...rowsForScope(report, 'second').map((r) => r.member.$id),
+      ...rowsForScope(report, 'save').map((r) => r.member.$id),
       ...rowsForScope(report, 'absent').map((r) => r.member.$id),
     ])
     expect(covered.size).toBe(report.totals.active)
   })
 })
 
+// The one definition of where somebody was. A child's answer ignores the
+// adult columns entirely; an adult's reads Save Church only as a last resort.
+describe('dayStatus', () => {
+  const at = { at: '2026-08-09T07:40:00.000Z', method: 'biometric' }
+  const child = { member_type: 'child' as const }
+  const adult = { member_type: 'adult' as const }
+
+  it('a child at Save Church is `save`', () => {
+    expect(dayStatus(child, null, null, at)).toBe('save')
+  })
+
+  it('a child not at Save Church is `absent`, whatever the adult columns say', () => {
+    // Marked at First Service before being reclassified as a child: the
+    // timestamp stays on the row, but the status is about the service they
+    // can attend now.
+    expect(dayStatus(child, at, at, null)).toBe('absent')
+  })
+
+  it('a child is never first, second or both', () => {
+    for (const [f, s] of [[at, null], [null, at], [at, at]] as const) {
+      expect(['save', 'absent']).toContain(dayStatus(child, f, s, at))
+      expect(['save', 'absent']).toContain(dayStatus(child, f, s, null))
+    }
+  })
+
+  it('an adult reads exactly as before', () => {
+    expect(dayStatus(adult, at, at, null)).toBe('both')
+    expect(dayStatus(adult, at, null, null)).toBe('first')
+    expect(dayStatus(adult, null, at, null)).toBe('second')
+    expect(dayStatus(adult, null, null, null)).toBe('absent')
+  })
+
+  it('an adult with only a Save Church mark reads `save` — that is where they were', () => {
+    // A child reclassified as an adult after the day. Saying "absent" would
+    // be untrue; saying "First Service" would be a guess.
+    expect(dayStatus(adult, null, null, at)).toBe('save')
+  })
+})
+
 describe('status labels', () => {
-  it('names all four states in words', () => {
+  it('names all five states in words', () => {
     expect(STATUS_LABEL.first).toBe('First Service')
     expect(STATUS_LABEL.second).toBe('Second Service')
     expect(STATUS_LABEL.both).toBe('Both services')
+    expect(STATUS_LABEL.save).toBe('Save Church')
     expect(STATUS_LABEL.absent).toBe('Absent')
   })
 })
 
 describe('isDayScope', () => {
-  it('accepts the four scopes and rejects anything else', () => {
-    for (const s of ['first', 'second', 'absent', 'all']) expect(isDayScope(s)).toBe(true)
+  it('accepts the five scopes and rejects anything else', () => {
+    for (const s of ['first', 'second', 'save', 'absent', 'all']) expect(isDayScope(s)).toBe(true)
     for (const s of ['', 'FIRST', 'third', 'all-members']) expect(isDayScope(s)).toBe(false)
   })
 })
@@ -138,14 +217,14 @@ describe('isDayScope', () => {
  */
 const grouped: DayReport = {
   date: '2026-08-09',
-  held: { first: true, second: true },
+  held: { first: true, second: true, save: false },
   rows: [
     row('1', 'Ahodwoattended', 'first', 'ahodwo'),
     row('2', 'Ahodwomissing', 'absent', 'ahodwo'),
     row('3', 'Bantamaboth', 'both', 'bantama'),
     row('4', 'Nogroupmissing', 'absent', null),
   ],
-  totals: { first: 2, second: 1, both: 1, absent: 2, active: 4 },
+  totals: { first: 2, second: 1, both: 1, save: 0, absent: 2, active: 4 },
   constituencies: [
     { id: 'ahodwo', name: 'Ahodwo' },
     { id: 'bantama', name: 'Bantama' },

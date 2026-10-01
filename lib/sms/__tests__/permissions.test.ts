@@ -19,7 +19,13 @@ describe('canSendSmsCategory', () => {
   })
 
   it('refuses a treasurer every other category, by name', () => {
-    for (const category of ['birthday', 'general'] as const) {
+    for (const category of [
+      'birthday',
+      'general',
+      'sunday_reminder',
+      'midweek_reminder',
+      'attendance_thanks',
+    ] as const) {
       const res = canSendSmsCategory('treasurer', category)
       expect(res.ok).toBe(false)
       if (res.ok) return
@@ -115,7 +121,18 @@ describe('sendableCategories', () => {
   })
 
   it('offers an admin every category', () => {
-    expect(sendableCategories('admin')).toEqual(['birthday', 'tithe', 'general', 'benmp'])
+    expect(sendableCategories('admin')).toEqual([
+      'birthday',
+      'tithe',
+      'general',
+      'benmp',
+      'sunday_reminder',
+      'midweek_reminder',
+      'attendance_thanks',
+    ])
+    // The list and the config cannot drift: a category added to
+    // `SMS_CATEGORIES` and not here would be one no human could re-run.
+    expect([...sendableCategories('admin')].sort()).toEqual([...SMS_CATEGORIES].sort())
   })
 
   it('offers nothing to a label with no send rights, or to nobody', () => {
@@ -163,7 +180,14 @@ describe('a leader and BENMP', () => {
   })
 
   it('may send NOTHING else, and each refusal names the category', () => {
-    for (const category of ['birthday', 'tithe', 'general'] as const) {
+    for (const category of [
+      'birthday',
+      'tithe',
+      'general',
+      'sunday_reminder',
+      'midweek_reminder',
+      'attendance_thanks',
+    ] as const) {
       const out = canSendSmsCategory('leader', category)
       expect(out.ok).toBe(false)
       if (out.ok) throw new Error('expected a refusal')
@@ -193,5 +217,41 @@ describe('a leader and BENMP', () => {
   it('an usher and a kiosk still send nothing', () => {
     expect(canSendSmsCategory('usher', 'benmp').ok).toBe(false)
     expect(canSendSmsCategory('kiosk', 'benmp').ok).toBe(false)
+  })
+})
+
+/*
+ * The three scheduled service texts are an ADMIN's by hand and nobody else's.
+ *
+ * They go out from crons; the manual grant is for the Saturday the cron did
+ * not fire. A treasurer's remit is money and a leader's is their own partners
+ * — "text the whole congregation about Sunday" is neither.
+ */
+describe('the scheduled service categories', () => {
+  const scheduled = ['sunday_reminder', 'midweek_reminder', 'attendance_thanks'] as const
+
+  it('are an admin\'s to send and to word', () => {
+    for (const c of scheduled) {
+      expect(canSendSmsCategory('admin', c).ok).toBe(true)
+      expect(canManageTemplateCategory('admin', c).ok).toBe(true)
+    }
+  })
+
+  it('are refused to a treasurer and a leader, by name', () => {
+    for (const label of ['treasurer', 'leader'] as const) {
+      for (const c of scheduled) {
+        const out = canSendSmsCategory(label, c)
+        expect(out.ok).toBe(false)
+        if (out.ok) throw new Error('expected a refusal')
+        expect(out.error).toContain(c)
+        expect(sendableCategories(label)).not.toContain(c)
+      }
+    }
+  })
+
+  it('never reach a shepherd, an usher, a kiosk or the celebrations team', () => {
+    for (const label of ['shepherd', 'usher', 'kiosk', 'celebrations'] as const) {
+      for (const c of scheduled) expect(canSendSmsCategory(label, c).ok).toBe(false)
+    }
   })
 })
